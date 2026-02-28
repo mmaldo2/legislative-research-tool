@@ -28,7 +28,7 @@ class Bill(Base):
     congress_bill_id: Mapped[str | None] = mapped_column(String)
     govinfo_package_id: Mapped[str | None] = mapped_column(String)
 
-    source_urls: Mapped[dict | None] = mapped_column(JSONB, default=list)
+    source_urls: Mapped[list[str] | None] = mapped_column(JSONB, default=None)
     last_ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     created_at: Mapped[datetime] = mapped_column(

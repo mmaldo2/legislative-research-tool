@@ -59,9 +59,15 @@ async def _ingest_federal(congress: int):
     default="ca,tx,ny",
     help="Comma-separated state abbreviations (default: ca,tx,ny)",
 )
-def ingest_states(states: str):
+@click.option("--all-states", is_flag=True, help="Ingest all 50 states + DC + PR")
+def ingest_states(states: str, all_states: bool):
     """Ingest state bills from Open States API."""
-    state_list = [s.strip() for s in states.split(",")]
+    if all_states:
+        from src.ingestion.openstates import STATE_JURISDICTIONS
+
+        state_list = list(STATE_JURISDICTIONS.keys())
+    else:
+        state_list = [s.strip() for s in states.split(",")]
     asyncio.run(_ingest_states(state_list))
 
 
@@ -75,6 +81,26 @@ async def _ingest_states(state_list: list[str]):
         try:
             await ingester.ingest()
             logger.info("State ingestion completed successfully")
+        finally:
+            await ingester.close()
+
+
+@ingest.command("legislators")
+def ingest_legislators():
+    """Ingest Congress legislators from unitedstates/congress-legislators."""
+    asyncio.run(_ingest_legislators())
+
+
+async def _ingest_legislators():
+    from src.database import async_session_factory
+    from src.ingestion.congress_legislators import CongressLegislatorsIngester
+
+    logger.info("Starting Congress legislators ingestion")
+    async with async_session_factory() as session:
+        ingester = CongressLegislatorsIngester(session)
+        try:
+            await ingester.ingest()
+            logger.info("Congress legislators ingestion completed")
         finally:
             await ingester.close()
 

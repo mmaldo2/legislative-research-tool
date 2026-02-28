@@ -4,8 +4,9 @@ Fetches bill data from the Open States v3 API.
 Primary source for state legislation.
 """
 
+import hashlib
 import logging
-from datetime import datetime
+from datetime import UTC, date, datetime
 
 import httpx
 from sqlalchemy import select
@@ -220,7 +221,7 @@ class OpenStatesIngester(BaseIngester):
             status=status,
             openstates_id=openstates_id,
             source_urls=bill_data.get("sources", []),
-            last_ingested_at=datetime.now(),
+            last_ingested_at=datetime.now(tz=UTC),
         )
         stmt = stmt.on_conflict_do_update(
             index_elements=["id"],
@@ -228,7 +229,7 @@ class OpenStatesIngester(BaseIngester):
                 "title": title,
                 "status": status,
                 "subject": subject or None,
-                "last_ingested_at": datetime.now(),
+                "last_ingested_at": datetime.now(tz=UTC),
             },
         )
         result = await self.session.execute(stmt)
@@ -288,8 +289,6 @@ class OpenStatesIngester(BaseIngester):
                 continue
 
             try:
-                from datetime import date
-
                 action_date = date.fromisoformat(action_date_str[:10])
             except ValueError:
                 continue
@@ -325,8 +324,6 @@ class OpenStatesIngester(BaseIngester):
             person_id = sponsor_data.get("person", {}).get("id", "")
             if not person_id:
                 # Generate a stable ID from name + jurisdiction
-                import hashlib
-
                 person_id = hashlib.sha256(person_name.encode()).hexdigest()[:16]
 
             # Ensure person exists

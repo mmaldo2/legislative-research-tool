@@ -8,6 +8,10 @@ class Settings(BaseSettings):
     congress_api_key: str = ""
     openstates_api_key: str = ""
 
+    # API security
+    api_key: str = ""  # Required in production; empty = dev mode (no auth)
+    cors_origins: str = "http://localhost:3000"  # Comma-separated allowed origins
+
     # LLM defaults
     summary_model: str = "claude-sonnet-4-6"
     classify_model: str = "claude-haiku-4-5"

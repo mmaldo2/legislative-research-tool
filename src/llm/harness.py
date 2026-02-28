@@ -32,7 +32,7 @@ class LLMHarness:
     """
 
     def __init__(self, db_session: AsyncSession | None = None):
-        self.client = anthropic.Anthropic(api_key=settings.anthropic_api_key)
+        self.client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         self.cost_tracker = CostTracker()
         self.db_session = db_session
 
@@ -122,7 +122,7 @@ class LLMHarness:
         )
 
         # Call Claude with structured output
-        response = self.client.messages.create(
+        response = await self.client.messages.create(
             model=model,
             max_tokens=2048,
             system=summarize_v1.SYSTEM_PROMPT,
@@ -188,7 +188,7 @@ class LLMHarness:
             summary=summary,
         )
 
-        response = self.client.messages.create(
+        response = await self.client.messages.create(
             model=model,
             max_tokens=512,
             system=classify_v1.SYSTEM_PROMPT,
