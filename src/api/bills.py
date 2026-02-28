@@ -5,7 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.api.deps import get_session
+from src.api.deps import escape_like, get_session
 from src.models.bill import Bill
 from src.models.sponsorship import Sponsorship
 from src.schemas.bill import (
@@ -44,7 +44,7 @@ async def list_bills(
     if status:
         stmt = stmt.where(Bill.status == status)
     if q:
-        stmt = stmt.where(Bill.title.ilike(f"%{q}%"))
+        stmt = stmt.where(Bill.title.ilike(f"%{escape_like(q)}%", escape="\\"))
     if subject:
         stmt = stmt.where(Bill.subject.any(subject))
 

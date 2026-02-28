@@ -1,12 +1,13 @@
 """AI analysis endpoints — summarize and classify bills on demand."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.api.deps import get_llm_harness, get_session
+from src.api.deps import get_llm_harness, get_session, limiter
+from src.llm.harness import LLMHarness
 from src.models.bill import Bill
 from src.schemas.analysis import BillSummaryOutput, TopicClassificationOutput
 
@@ -22,13 +23,14 @@ class ClassifyRequest(BaseModel):
 
 
 @router.post("/analyze/summarize", response_model=BillSummaryOutput)
+@limiter.limit("10/minute")
 async def summarize_bill(
+    request: Request,
     req: SummarizeRequest,
     db: AsyncSession = Depends(get_session),
+    harness: LLMHarness = Depends(get_llm_harness),
 ) -> BillSummaryOutput:
     """Generate an AI summary for a bill. Cached by content hash."""
-    harness = await get_llm_harness(db)
-
     stmt = select(Bill).where(Bill.id == req.bill_id).options(selectinload(Bill.texts))
     result = await db.execute(stmt)
     bill = result.scalar_one_or_none()
@@ -55,13 +57,14 @@ async def summarize_bill(
 
 
 @router.post("/analyze/classify", response_model=TopicClassificationOutput)
+@limiter.limit("10/minute")
 async def classify_bill(
+    request: Request,
     req: ClassifyRequest,
     db: AsyncSession = Depends(get_session),
+    harness: LLMHarness = Depends(get_llm_harness),
 ) -> TopicClassificationOutput:
     """Classify a bill into policy topics. Requires an existing summary."""
-    harness = await get_llm_harness(db)
-
     stmt = select(Bill).where(Bill.id == req.bill_id).options(selectinload(Bill.analyses))
     result = await db.execute(stmt)
     bill = result.scalar_one_or_none()

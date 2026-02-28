@@ -26,6 +26,12 @@ class BM25Index:
     def is_built(self) -> bool:
         return self._retriever is not None
 
+    def invalidate(self) -> None:
+        """Mark the index as stale so it will be rebuilt on next search."""
+        self._retriever = None
+        self._corpus = []
+        self._bill_ids = []
+
     async def build(self, session: AsyncSession) -> None:
         """Build the BM25 index from all bills in the database."""
         import bm25s

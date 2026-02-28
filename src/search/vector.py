@@ -21,23 +21,21 @@ async def vector_search(
     """
     params: dict = {"embedding": str(query_embedding), "limit": top_k}
 
-    where_clause = ""
+    # Build query with optional jurisdiction filter — all values are bound params
+    base = (
+        "SELECT be.bill_id, 1 - (be.embedding <=> :embedding::vector) AS similarity"
+        " FROM bill_embeddings be"
+        " JOIN bills b ON b.id = be.bill_id"
+        " WHERE be.embedding IS NOT NULL"
+    )
     if jurisdiction:
-        where_clause = "AND b.jurisdiction_id = :jurisdiction"
+        base += " AND b.jurisdiction_id = :jurisdiction"
         params["jurisdiction"] = jurisdiction
 
-    sql = text(f"""
-        SELECT be.bill_id, 1 - (be.embedding <=> :embedding::vector) AS similarity
-        FROM bill_embeddings be
-        JOIN bills b ON b.id = be.bill_id
-        WHERE be.embedding IS NOT NULL
-        {where_clause}
-        ORDER BY be.embedding <=> :embedding::vector
-        LIMIT :limit
-    """)
+    base += " ORDER BY be.embedding <=> :embedding::vector LIMIT :limit"
 
     try:
-        result = await session.execute(sql, params)
+        result = await session.execute(text(base), params)
         return [(row.bill_id, float(row.similarity)) for row in result.all()]
     except Exception as e:
         logger.warning("Vector search failed (embeddings may not exist yet): %s", e)

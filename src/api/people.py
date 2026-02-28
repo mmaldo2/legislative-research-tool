@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.deps import get_session
+from src.api.deps import escape_like, get_session
 from src.models.person import Person
 from src.schemas.common import MetaResponse
 
@@ -46,7 +46,7 @@ async def list_people(
     if chamber:
         stmt = stmt.where(Person.current_chamber == chamber)
     if q:
-        stmt = stmt.where(Person.name.ilike(f"%{q}%"))
+        stmt = stmt.where(Person.name.ilike(f"%{escape_like(q)}%", escape="\\"))
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = (await db.execute(count_stmt)).scalar_one()

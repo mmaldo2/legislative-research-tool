@@ -4,6 +4,7 @@ Combines BM25 keyword search with pgvector semantic search.
 Falls back gracefully when embeddings or BM25 index are unavailable.
 """
 
+import asyncio
 import logging
 
 from sqlalchemy import select
@@ -15,8 +16,9 @@ from src.search.vector import vector_search
 
 logger = logging.getLogger(__name__)
 
-# Singleton BM25 index — rebuilt on first search or manually
+# Singleton BM25 index — rebuilt on first search or after invalidation
 _bm25_index = BM25Index()
+_bm25_lock = asyncio.Lock()
 
 RRF_K = 60  # Standard RRF constant
 
@@ -37,6 +39,16 @@ def rrf_fuse(
 
     fused = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     return fused[:top_k]
+
+
+async def _ensure_bm25_built(session: AsyncSession) -> None:
+    """Build BM25 index if not already built, with lock to prevent concurrent builds."""
+    if _bm25_index.is_built:
+        return
+    async with _bm25_lock:
+        # Double-check after acquiring lock
+        if not _bm25_index.is_built:
+            await _bm25_index.build(session)
 
 
 async def hybrid_search(
@@ -62,8 +74,7 @@ async def hybrid_search(
 
     # BM25 keyword search
     if mode in ("keyword", "hybrid"):
-        if not _bm25_index.is_built:
-            await _bm25_index.build(session)
+        await _ensure_bm25_built(session)
 
         bm25_results = _bm25_index.search(query, top_k=top_k * 2)
 
@@ -109,4 +120,10 @@ async def hybrid_search(
 
 async def rebuild_bm25_index(session: AsyncSession) -> None:
     """Force rebuild of the BM25 index."""
-    await _bm25_index.build(session)
+    async with _bm25_lock:
+        await _bm25_index.build(session)
+
+
+def invalidate_bm25_index() -> None:
+    """Mark the BM25 index as stale so it rebuilds on next search."""
+    _bm25_index.invalidate()
