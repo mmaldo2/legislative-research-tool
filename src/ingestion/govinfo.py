@@ -5,9 +5,10 @@ Primary source for federal legislation.
 """
 
 import logging
-from datetime import datetime
-from xml.etree import ElementTree as ET
+import re
+from datetime import UTC, date, datetime
 
+import defusedxml.ElementTree as SafeET
 import httpx
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -174,14 +175,14 @@ class GovInfoIngester(BaseIngester):
             status=status,
             congress_bill_id=congress_bill_id,
             source_urls=[bill_data.get("url", "")],
-            last_ingested_at=datetime.now(),
+            last_ingested_at=datetime.now(tz=UTC),
         )
         stmt = stmt.on_conflict_do_update(
             index_elements=["id"],
             set_={
                 "title": title,
                 "status": status,
-                "last_ingested_at": datetime.now(),
+                "last_ingested_at": datetime.now(tz=UTC),
             },
         )
         result = await self.session.execute(stmt)
@@ -203,8 +204,8 @@ class GovInfoIngester(BaseIngester):
         # GovInfo returns an XML sitemap with links to individual bill status XMLs
         # Parse the sitemap to get individual bill URLs
         try:
-            root = ET.fromstring(resp.text)
-        except ET.ParseError as e:
+            root = SafeET.fromstring(resp.text)
+        except SafeET.ParseError as e:
             logger.error(f"Failed to parse GovInfo bulk XML: {e}")
             return
 
@@ -237,8 +238,8 @@ class GovInfoIngester(BaseIngester):
     ) -> None:
         """Parse a BILLSTATUS XML document and upsert the bill."""
         try:
-            root = ET.fromstring(xml_text)
-        except ET.ParseError:
+            root = SafeET.fromstring(xml_text)
+        except SafeET.ParseError:
             return
 
         bill_el = root.find(".//bill")
@@ -288,7 +289,7 @@ class GovInfoIngester(BaseIngester):
             congress_bill_id=f"{bill_type}{bill_number}-{self.congress}",
             govinfo_package_id=source_url.split("/")[-1].replace(".xml", ""),
             source_urls=[source_url],
-            last_ingested_at=datetime.now(),
+            last_ingested_at=datetime.now(tz=UTC),
         )
         stmt = stmt.on_conflict_do_update(
             index_elements=["id"],
@@ -296,7 +297,7 @@ class GovInfoIngester(BaseIngester):
                 "title": title,
                 "status": status,
                 "subject": subjects or None,
-                "last_ingested_at": datetime.now(),
+                "last_ingested_at": datetime.now(tz=UTC),
             },
         )
         await self.session.execute(stmt)
@@ -304,8 +305,6 @@ class GovInfoIngester(BaseIngester):
         # Upsert actions
         for i, action in enumerate(actions_data):
             try:
-                from datetime import date
-
                 action_date = date.fromisoformat(action["date"])
             except ValueError:
                 continue
@@ -360,10 +359,12 @@ class GovInfoIngester(BaseIngester):
         await self.client.aclose()
 
 
+_RE_HTML_TAG = re.compile(r"<[^>]+>")
+_RE_WHITESPACE = re.compile(r"\s+")
+
+
 def _strip_html(html: str) -> str:
     """Basic HTML tag stripping."""
-    import re
-
-    clean = re.sub(r"<[^>]+>", " ", html)
-    clean = re.sub(r"\s+", " ", clean).strip()
+    clean = _RE_HTML_TAG.sub(" ", html)
+    clean = _RE_WHITESPACE.sub(" ", clean).strip()
     return clean

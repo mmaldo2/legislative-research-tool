@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -28,7 +28,7 @@ class BaseIngester(ABC):
     async def finish_run(self, status: str = "completed") -> None:
         if self.run:
             self.run.status = status
-            self.run.finished_at = datetime.now()
+            self.run.finished_at = datetime.now(tz=UTC)
             await self.session.commit()
 
     @abstractmethod
