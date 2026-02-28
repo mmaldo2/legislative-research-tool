@@ -623,23 +623,23 @@ With prompt caching on system prompts (90% savings on cached reads), actual cost
 
 #### Tasks
 
-- [ ] `src/api/app.py` — FastAPI app with CORS, error handling, OpenAPI metadata
-- [ ] `src/api/bills.py` — Bill CRUD endpoints with filtering
-- [ ] `src/api/people.py` — Legislator endpoints
-- [ ] `src/api/search.py` — Hybrid search endpoint
-- [ ] `src/api/analysis.py` — AI analysis endpoints (summarize, compare)
-- [ ] `src/api/status.py` — Health check + ingestion status
-- [ ] `src/search/embedder.py` — Voyage-law-2 embedding pipeline (batch embed all bill texts)
-- [ ] `src/search/bm25.py` — BM25 index built from bill texts + titles
-- [ ] `src/search/vector.py` — pgvector similarity search
-- [ ] `src/search/engine.py` — Hybrid search with RRF fusion
-- [ ] `src/ingestion/congress_legislators.py` — Import unitedstates/congress-legislators YAML
-- [ ] `src/ingestion/scheduler.py` — APScheduler: daily federal check, weekly state refresh
+- [x] `src/api/app.py` — FastAPI app with CORS, error handling, OpenAPI metadata
+- [x] `src/api/bills.py` — Bill CRUD endpoints with filtering
+- [x] `src/api/people.py` — Legislator endpoints
+- [x] `src/api/search.py` — Hybrid search endpoint
+- [x] `src/api/analysis.py` — AI analysis endpoints (summarize, compare)
+- [x] `src/api/status.py` — Health check + ingestion status
+- [x] `src/search/embedder.py` — Voyage-law-2 embedding pipeline (batch embed all bill texts)
+- [x] `src/search/bm25.py` — BM25 index built from bill texts + titles
+- [x] `src/search/vector.py` — pgvector similarity search
+- [x] `src/search/engine.py` — Hybrid search with RRF fusion
+- [x] `src/ingestion/congress_legislators.py` — Import unitedstates/congress-legislators YAML
+- [x] `src/ingestion/scheduler.py` — APScheduler: daily federal check, weekly state refresh
 - [x] `src/llm/prompts/classify_v1.py` — Topic classification prompt (Haiku)
 - [x] `src/llm/cost_tracker.py` — Track tokens/costs per operation
-- [ ] Expand state coverage: ingest all 50 states from Open States bulk
-- [ ] `tests/test_api/` — API endpoint tests
-- [ ] `tests/test_search/` — Search relevance tests
+- [x] Expand state coverage: ingest all 50 states from Open States bulk
+- [x] `tests/test_api/` — API endpoint tests
+- [x] `tests/test_search/` — Search relevance tests
 
 #### Acceptance Criteria
 
