@@ -11,6 +11,7 @@ from src.api.deps import get_llm_harness, get_session, limiter
 from src.llm.harness import LLMHarness
 from src.models.ai_analysis import AiAnalysis
 from src.models.bill import Bill
+from src.models.bill_text import texts_without_markup
 from src.schemas.analysis import (
     AnalysisListResponse,
     AnalysisResponse,
@@ -43,7 +44,7 @@ async def summarize_bill(
     harness: LLMHarness = Depends(get_llm_harness),
 ) -> BillSummaryOutput:
     """Generate an AI summary for a bill. Cached by content hash."""
-    stmt = select(Bill).where(Bill.id == req.bill_id).options(selectinload(Bill.texts))
+    stmt = select(Bill).where(Bill.id == req.bill_id).options(texts_without_markup(Bill.texts))
     result = await db.execute(stmt)
     bill = result.scalar_one_or_none()
     if not bill:
@@ -103,7 +104,7 @@ async def version_diff(
     harness: LLMHarness = Depends(get_llm_harness),
 ) -> VersionDiffOutput:
     """Analyze differences between two versions of the same bill."""
-    stmt = select(Bill).where(Bill.id == req.bill_id).options(selectinload(Bill.texts))
+    stmt = select(Bill).where(Bill.id == req.bill_id).options(texts_without_markup(Bill.texts))
     result = await db.execute(stmt)
     bill = result.scalar_one_or_none()
     if not bill:
@@ -171,7 +172,7 @@ async def constitutional_analysis(
     harness: LLMHarness = Depends(get_llm_harness),
 ) -> ConstitutionalAnalysisOutput:
     """Analyze a bill for potential constitutional concerns."""
-    stmt = select(Bill).where(Bill.id == req.bill_id).options(selectinload(Bill.texts))
+    stmt = select(Bill).where(Bill.id == req.bill_id).options(texts_without_markup(Bill.texts))
     result = await db.execute(stmt)
     bill = result.scalar_one_or_none()
     if not bill:
@@ -199,7 +200,7 @@ async def pattern_detect(
     harness: LLMHarness = Depends(get_llm_harness),
 ) -> PatternDetectionOutput:
     """Detect cross-jurisdictional patterns and model legislation for a bill."""
-    stmt = select(Bill).where(Bill.id == req.bill_id).options(selectinload(Bill.texts))
+    stmt = select(Bill).where(Bill.id == req.bill_id).options(texts_without_markup(Bill.texts))
     result = await db.execute(stmt)
     bill = result.scalar_one_or_none()
     if not bill:
@@ -223,7 +224,7 @@ async def pattern_detect(
     # Load similar bills with texts
     matched_ids = [m.bill_id for m in matches]
     bills_result = await db.execute(
-        select(Bill).where(Bill.id.in_(matched_ids)).options(selectinload(Bill.texts))
+        select(Bill).where(Bill.id.in_(matched_ids)).options(texts_without_markup(Bill.texts))
     )
     similar_bills = bills_result.scalars().all()
 

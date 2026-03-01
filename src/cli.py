@@ -114,16 +114,16 @@ def analyze_bill(bill_id: str):
 
 async def _analyze_bill(bill_id: str):
     from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
 
     from src.database import async_session_factory
     from src.llm.harness import LLMHarness
     from src.models.bill import Bill
+    from src.models.bill_text import texts_without_markup
 
     async with async_session_factory() as session:
         result = await session.execute(
             select(Bill)
-            .options(selectinload(Bill.texts))
+            .options(texts_without_markup(Bill.texts))
             .where(Bill.id == bill_id)
         )
         bill = result.scalar_one_or_none()

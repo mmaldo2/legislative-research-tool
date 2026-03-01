@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from src.api.deps import escape_like, get_session, limiter
 from src.models.bill import Bill
+from src.models.bill_text import texts_without_markup
 from src.models.sponsorship import Sponsorship
 
 router = APIRouter()
@@ -130,7 +131,7 @@ async def export_bill_brief(
         select(Bill)
         .where(Bill.id == bill_id)
         .options(
-            selectinload(Bill.texts),
+            texts_without_markup(Bill.texts),
             selectinload(Bill.actions),
             selectinload(Bill.sponsorships).selectinload(Sponsorship.person),
             selectinload(Bill.analyses),

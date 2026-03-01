@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useAnalysis } from "@/hooks/use-analysis";
 import { analyzeVersionDiff } from "@/lib/api";
 import type { VersionDiffOutput, BillTextResponse } from "@/types/api";
 
@@ -19,9 +20,11 @@ const significanceVariant = (s: string) => {
 };
 
 export function VersionDiffTab({ billId, texts }: VersionDiffTabProps) {
-  const [result, setResult] = useState<VersionDiffOutput | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const fetcher = useCallback(
+    (signal: AbortSignal) => analyzeVersionDiff(billId, undefined, undefined, signal),
+    [billId],
+  );
+  const { result, loading, error, analyze } = useAnalysis<VersionDiffOutput>(fetcher);
 
   const textsWithContent = texts.filter((t) => t.content_text);
 
@@ -34,35 +37,22 @@ export function VersionDiffTab({ billId, texts }: VersionDiffTabProps) {
     );
   }
 
-  const handleAnalyze = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const output = await analyzeVersionDiff(billId);
-      setResult(output);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Analysis failed");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   if (!result) {
     return (
-      <div className="flex flex-col items-center gap-4 py-8">
+      <div className="flex flex-col items-center gap-4 py-8" aria-busy={loading}>
         <p className="text-muted-foreground">
           Compare {textsWithContent.length} versions of this bill to identify substantive changes.
         </p>
-        <Button onClick={handleAnalyze} disabled={loading}>
+        <Button onClick={analyze} disabled={loading}>
           {loading ? "Analyzing..." : "Analyze Version Differences"}
         </Button>
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" aria-live="polite">
       {/* Header */}
       <Card>
         <CardHeader>

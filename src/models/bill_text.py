@@ -1,7 +1,7 @@
 from datetime import date, datetime
 
 from sqlalchemy import Date, DateTime, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship, selectinload
 
 from src.database import Base
 
@@ -25,3 +25,11 @@ class BillText(Base):
     )
 
     bill: Mapped["Bill"] = relationship(back_populates="texts")
+
+
+def texts_without_markup(parent_rel):
+    """Eagerly load bill texts but defer heavy HTML/XML markup columns.
+
+    Usage: .options(texts_without_markup(Bill.texts))
+    """
+    return selectinload(parent_rel).defer(BillText.content_html).defer(BillText.content_xml)

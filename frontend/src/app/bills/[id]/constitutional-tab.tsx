@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useAnalysis } from "@/hooks/use-analysis";
 import { analyzeConstitutional } from "@/lib/api";
 import type { ConstitutionalAnalysisOutput } from "@/types/api";
 
@@ -25,40 +26,29 @@ const riskVariant = (r: string) => {
 };
 
 export function ConstitutionalTab({ billId }: ConstitutionalTabProps) {
-  const [result, setResult] = useState<ConstitutionalAnalysisOutput | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleAnalyze = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const output = await analyzeConstitutional(billId);
-      setResult(output);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Analysis failed");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const fetcher = useCallback(
+    (signal: AbortSignal) => analyzeConstitutional(billId, signal),
+    [billId],
+  );
+  const { result, loading, error, analyze } = useAnalysis<ConstitutionalAnalysisOutput>(fetcher);
 
   if (!result) {
     return (
-      <div className="flex flex-col items-center gap-4 py-8">
+      <div className="flex flex-col items-center gap-4 py-8" aria-busy={loading}>
         <p className="text-muted-foreground">
           Analyze this bill for potential constitutional concerns, preemption issues, and
           relevant legal precedents.
         </p>
-        <Button onClick={handleAnalyze} disabled={loading}>
+        <Button onClick={analyze} disabled={loading}>
           {loading ? "Analyzing..." : "Run Constitutional Analysis"}
         </Button>
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" aria-live="polite">
       {/* Overview */}
       <Card>
         <CardHeader>

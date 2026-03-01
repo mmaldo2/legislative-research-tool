@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback } from "react";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useAnalysis } from "@/hooks/use-analysis";
 import { analyzePatterns } from "@/lib/api";
 import { formatJurisdiction } from "@/lib/format";
 import type { PatternDetectionOutput } from "@/types/api";
@@ -21,40 +22,29 @@ const patternVariant = (t: string) => {
 };
 
 export function PatternsTab({ billId }: PatternsTabProps) {
-  const [result, setResult] = useState<PatternDetectionOutput | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleAnalyze = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const output = await analyzePatterns(billId);
-      setResult(output);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Analysis failed");
-    } finally {
-      setLoading(false);
-    }
-  };
+  const fetcher = useCallback(
+    (signal: AbortSignal) => analyzePatterns(billId, 5, signal),
+    [billId],
+  );
+  const { result, loading, error, analyze } = useAnalysis<PatternDetectionOutput>(fetcher);
 
   if (!result) {
     return (
-      <div className="flex flex-col items-center gap-4 py-8">
+      <div className="flex flex-col items-center gap-4 py-8" aria-busy={loading}>
         <p className="text-muted-foreground">
           Detect cross-jurisdictional patterns and model legislation by comparing this bill
           against similar bills from other states.
         </p>
-        <Button onClick={handleAnalyze} disabled={loading}>
+        <Button onClick={analyze} disabled={loading}>
           {loading ? "Analyzing..." : "Detect Patterns"}
         </Button>
-        {error && <p className="text-sm text-destructive">{error}</p>}
+        {error && <p className="text-sm text-destructive" role="alert">{error}</p>}
       </div>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4" aria-live="polite">
       {/* Overview */}
       <Card>
         <CardHeader>
