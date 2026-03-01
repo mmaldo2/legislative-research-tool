@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
-import { Menu, X, Scale, Search, Building2, Users } from "lucide-react";
+import { Menu, X, Scale, Search, Building2, Users, FolderOpen, Bot } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
@@ -12,6 +12,8 @@ const navItems = [
   { href: "/search", label: "Search", icon: Search },
   { href: "/jurisdictions", label: "Jurisdictions", icon: Building2 },
   { href: "/legislators", label: "Legislators", icon: Users },
+  { href: "/collections", label: "Collections", icon: FolderOpen },
+  { href: "/assistant", label: "Assistant", icon: Bot },
 ];
 
 export function SiteHeader() {

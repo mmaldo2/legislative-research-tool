@@ -661,12 +661,12 @@ With prompt caching on system prompts (90% savings on cached reads), actual cost
 - [x] Next.js app with TailwindCSS + shadcn/ui
 - [x] Search page: keyword + semantic search with jurisdiction/session/topic facets
 - [x] Bill detail page: summary, full text viewer, version history, sponsors, vote record
-- [ ] Cross-jurisdiction comparison view: side-by-side similar bills
+- [x] Cross-jurisdiction comparison view: side-by-side similar bills
 - [x] Legislator profile page: voting record, sponsored bills
 - [x] Jurisdiction dashboard: session overview, bill counts, trending topics
-- [ ] Research assistant (chat): Claude-powered Q&A over the database via tool_use
-- [ ] Research collections: save + annotate sets of bills
-- [ ] Export: CSV download of search results, PDF bill briefs
+- [x] Research assistant (chat): Claude-powered Q&A over the database via tool_use
+- [x] Research collections: save + annotate sets of bills
+- [x] Export: CSV download of search results, PDF bill briefs
 
 #### Acceptance Criteria
 

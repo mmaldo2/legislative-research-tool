@@ -4,6 +4,8 @@ from src.models.bill_action import BillAction
 from src.models.bill_embedding import BillEmbedding
 from src.models.bill_similarity import BillSimilarity
 from src.models.bill_text import BillText
+from src.models.collection import Collection, CollectionItem
+from src.models.conversation import Conversation, ConversationMessage
 from src.models.ingestion_run import IngestionRun
 from src.models.jurisdiction import Jurisdiction
 from src.models.person import Person
@@ -25,4 +27,8 @@ __all__ = [
     "BillEmbedding",
     "BillSimilarity",
     "IngestionRun",
+    "Collection",
+    "CollectionItem",
+    "Conversation",
+    "ConversationMessage",
 ]
