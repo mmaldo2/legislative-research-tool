@@ -59,7 +59,7 @@ class LLMHarness:
         )
         existing = result.scalar_one_or_none()
         if existing:
-            logger.info(f"Cache hit for {analysis_type} on bill {bill_id}")
+            logger.info("Cache hit for %s on bill %s", analysis_type, bill_id)
             return existing.result
         return None
 

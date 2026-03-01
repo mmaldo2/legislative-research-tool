@@ -56,7 +56,7 @@ class GovInfoIngester(BaseIngester):
             await self._fetch_bills_from_congress_api()
             await self.finish_run("completed")
         except Exception as e:
-            logger.error(f"GovInfo ingestion failed: {e}")
+            logger.error("GovInfo ingestion failed: %s", e)
             await self.finish_run("failed")
             raise
 
@@ -120,7 +120,7 @@ class GovInfoIngester(BaseIngester):
                 resp = await self.client.get(url, params=params)
                 resp.raise_for_status()
             except httpx.HTTPError as e:
-                logger.error(f"Congress API request failed at offset {offset}: {e}")
+                logger.error("Congress API request failed at offset %d: %s", offset, e)
                 break
 
             data = resp.json()
@@ -136,7 +136,7 @@ class GovInfoIngester(BaseIngester):
                     bills_updated += 1
 
             await self.session.commit()
-            logger.info(f"Processed {offset + len(bills)} federal bills")
+            logger.info("Processed %d federal bills", offset + len(bills))
 
             # Check for more pages
             pagination = data.get("pagination", {})
@@ -145,8 +145,8 @@ class GovInfoIngester(BaseIngester):
             offset += limit
 
         if self.run:
-            self.run.bills_created = bills_created
-            self.run.bills_updated = bills_updated
+            self.run.records_created = bills_created
+            self.run.records_updated = bills_updated
 
     async def _upsert_bill_from_congress_api(
         self, bill_data: dict, session_id: str
@@ -192,13 +192,13 @@ class GovInfoIngester(BaseIngester):
         """Fallback: fetch bill status from GovInfo bulk XML."""
         # GovInfo BILLSTATUS bulk data endpoint
         url = f"{GOVINFO_BULK_BASE}/BILLSTATUS/{self.congress}/hr"
-        logger.info(f"Fetching GovInfo bulk bill status from {url}")
+        logger.info("Fetching GovInfo bulk bill status from %s", url)
 
         try:
             resp = await self.client.get(url, follow_redirects=True)
             resp.raise_for_status()
         except httpx.HTTPError as e:
-            logger.error(f"GovInfo bulk fetch failed: {e}")
+            logger.error("GovInfo bulk fetch failed: %s", e)
             return
 
         # GovInfo returns an XML sitemap with links to individual bill status XMLs
@@ -206,7 +206,7 @@ class GovInfoIngester(BaseIngester):
         try:
             root = SafeET.fromstring(resp.text)
         except SafeET.ParseError as e:
-            logger.error(f"Failed to parse GovInfo bulk XML: {e}")
+            logger.error("Failed to parse GovInfo bulk XML: %s", e)
             return
 
         # Process each bill status XML link from the sitemap
@@ -226,12 +226,12 @@ class GovInfoIngester(BaseIngester):
                 count += 1
                 if count % 50 == 0:
                     await self.session.commit()
-                    logger.info(f"Processed {count} bill status XMLs")
+                    logger.info("Processed %d bill status XMLs", count)
             except Exception as e:
-                logger.warning(f"Failed to process {bill_url}: {e}")
+                logger.warning("Failed to process %s: %s", bill_url, e)
 
         await self.session.commit()
-        logger.info(f"Completed GovInfo bulk ingestion: {count} bills")
+        logger.info("Completed GovInfo bulk ingestion: %d bills", count)
 
     async def _parse_bill_status_xml(
         self, xml_text: str, session_id: str, source_url: str

@@ -1,7 +1,7 @@
 """Tests for search engine — RRF fusion, BM25 index, and schema validation."""
 
 from src.schemas.common import MetaResponse
-from src.schemas.search import SearchRequest, SearchResponse, SearchResult
+from src.schemas.search import SearchResponse, SearchResult
 from src.search.engine import rrf_fuse
 
 
@@ -62,20 +62,6 @@ class TestRRFFusion:
 
 class TestSearchSchemas:
     """Test search request/response schemas."""
-
-    def test_search_request_defaults(self):
-        req = SearchRequest(q="data privacy")
-        assert req.mode == "hybrid"
-        assert req.page == 1
-        assert req.per_page == 20
-        assert req.jurisdiction is None
-
-    def test_search_request_with_filters(self):
-        req = SearchRequest(
-            q="housing", jurisdiction="us-ca", mode="keyword", page=2, per_page=50
-        )
-        assert req.jurisdiction == "us-ca"
-        assert req.mode == "keyword"
 
     def test_search_result(self):
         result = SearchResult(

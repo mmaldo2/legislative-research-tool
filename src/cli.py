@@ -43,7 +43,7 @@ async def _ingest_federal(congress: int):
     from src.database import async_session_factory
     from src.ingestion.govinfo import GovInfoIngester
 
-    logger.info(f"Starting federal ingestion for {congress}th Congress")
+    logger.info("Starting federal ingestion for %dth Congress", congress)
     async with async_session_factory() as session:
         ingester = GovInfoIngester(session, congress=congress)
         try:
@@ -75,7 +75,7 @@ async def _ingest_states(state_list: list[str]):
     from src.database import async_session_factory
     from src.ingestion.openstates import OpenStatesIngester
 
-    logger.info(f"Starting state ingestion for: {', '.join(s.upper() for s in state_list)}")
+    logger.info("Starting state ingestion for: %s", ", ".join(s.upper() for s in state_list))
     async with async_session_factory() as session:
         ingester = OpenStatesIngester(session, states=state_list)
         try:
@@ -204,7 +204,7 @@ async def _show_status():
         for run in runs.scalars():
             click.echo(
                 f"  [{run.status}] {run.source} ({run.run_type}) "
-                f"— {run.bills_created} created, {run.bills_updated} updated "
+                f"— {run.records_created} created, {run.records_updated} updated "
                 f"— {run.started_at}"
             )
 

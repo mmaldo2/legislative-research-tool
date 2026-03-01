@@ -8,6 +8,7 @@ bioguide IDs, party, chamber, and district info.
 import logging
 
 import httpx
+from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -50,8 +51,8 @@ class CongressLegislatorsIngester(BaseIngester):
             await self.session.commit()
 
             if self.run:
-                self.run.bills_created = created  # reusing field for people count
-                self.run.bills_updated = updated
+                self.run.records_created = created
+                self.run.records_updated = updated
             await self.finish_run("completed")
             logger.info(
                 "Congress legislators: %d created, %d updated", created, updated
@@ -87,29 +88,34 @@ class CongressLegislatorsIngester(BaseIngester):
 
         jurisdiction_id = f"us-{state.lower()}" if state else None
 
-        stmt = pg_insert(Person).values(
-            id=bio_id,
-            name=full_name,
-            sort_name=sort_name,
-            party=party,
-            current_jurisdiction_id=jurisdiction_id,
-            current_chamber=chamber,
-            current_district=str(district) if district else None,
-            bioguide_id=bio_id,
-        )
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["id"],
-            set_={
-                "name": full_name,
-                "sort_name": sort_name,
-                "party": party,
-                "current_jurisdiction_id": jurisdiction_id,
-                "current_chamber": chamber,
-                "current_district": str(district) if district else None,
-            },
+        stmt = (
+            pg_insert(Person)
+            .values(
+                id=bio_id,
+                name=full_name,
+                sort_name=sort_name,
+                party=party,
+                current_jurisdiction_id=jurisdiction_id,
+                current_chamber=chamber,
+                current_district=str(district) if district else None,
+                bioguide_id=bio_id,
+            )
+            .on_conflict_do_update(
+                index_elements=["id"],
+                set_={
+                    "name": full_name,
+                    "sort_name": sort_name,
+                    "party": party,
+                    "current_jurisdiction_id": jurisdiction_id,
+                    "current_chamber": chamber,
+                    "current_district": str(district) if district else None,
+                },
+            )
+            .returning(Person.id, text("xmax"))
         )
         result = await self.session.execute(stmt)
-        return result.rowcount > 0
+        row = result.one()
+        return row.xmax == 0  # xmax=0 means INSERT, xmax!=0 means UPDATE
 
     async def close(self) -> None:
         await self.client.aclose()
