@@ -37,6 +37,10 @@ from src.schemas.compare import BillComparisonOutput
 
 logger = logging.getLogger(__name__)
 
+# Text truncation limits — balances LLM context budget vs. analysis quality.
+MAX_SINGLE_TEXT_CHARS = 50_000   # Full bill text (summarize, constitutional)
+MAX_PAIRED_TEXT_CHARS = 25_000   # Each side of a comparison/diff
+
 T = TypeVar("T", bound=BaseModel)
 
 
@@ -215,7 +219,7 @@ class LLMHarness:
                 identifier=identifier,
                 jurisdiction=jurisdiction,
                 title=title,
-                bill_text=bill_text[:50000],
+                bill_text=bill_text[:MAX_SINGLE_TEXT_CHARS],
             ),
             max_tokens=2048,
             output_type=BillSummaryOutput,
@@ -274,8 +278,8 @@ class LLMHarness:
         bill_b_title: str,
     ) -> BillComparisonOutput:
         """Compare two bills side-by-side."""
-        text_a = bill_a_text[:25000]
-        text_b = bill_b_text[:25000]
+        text_a = bill_a_text[:MAX_PAIRED_TEXT_CHARS]
+        text_b = bill_b_text[:MAX_PAIRED_TEXT_CHARS]
 
         # Canonicalize order so compare(A,B) and compare(B,A) share cache
         canonical_ids = sorted([bill_id_a, bill_id_b])
@@ -331,7 +335,7 @@ class LLMHarness:
             prompt_version=version_diff_v1.PROMPT_VERSION,
             model=settings.summary_model,
             c_hash=self.content_hash(
-                f"{version_a_text[:25000]}:{version_b_text[:25000]}",
+                f"{version_a_text[:MAX_PAIRED_TEXT_CHARS]}:{version_b_text[:MAX_PAIRED_TEXT_CHARS]}",
                 version_diff_v1.PROMPT_VERSION,
             ),
             system_prompt=version_diff_v1.SYSTEM_PROMPT,
@@ -339,9 +343,9 @@ class LLMHarness:
                 identifier=identifier,
                 jurisdiction=jurisdiction,
                 version_a_name=version_a_name,
-                version_a_text=version_a_text[:25000],
+                version_a_text=version_a_text[:MAX_PAIRED_TEXT_CHARS],
                 version_b_name=version_b_name,
-                version_b_text=version_b_text[:25000],
+                version_b_text=version_b_text[:MAX_PAIRED_TEXT_CHARS],
             ),
             max_tokens=4096,
             output_type=VersionDiffOutput,
@@ -379,7 +383,7 @@ class LLMHarness:
                 identifier=identifier,
                 jurisdiction=jurisdiction,
                 title=title,
-                bill_text=bill_text[:50000],
+                bill_text=bill_text[:MAX_SINGLE_TEXT_CHARS],
             ),
             max_tokens=4096,
             output_type=ConstitutionalAnalysisOutput,
@@ -410,7 +414,7 @@ class LLMHarness:
             prompt_version=pattern_detect_v1.PROMPT_VERSION,
             model=settings.summary_model,
             c_hash=self.content_hash(
-                f"{source_text[:25000]}:{similar_bills_text[:25000]}",
+                f"{source_text[:MAX_PAIRED_TEXT_CHARS]}:{similar_bills_text[:MAX_PAIRED_TEXT_CHARS]}",
                 pattern_detect_v1.PROMPT_VERSION,
             ),
             system_prompt=pattern_detect_v1.SYSTEM_PROMPT,
@@ -418,8 +422,8 @@ class LLMHarness:
                 source_identifier=source_identifier,
                 source_jurisdiction=source_jurisdiction,
                 source_title=source_title,
-                source_text=source_text[:25000],
-                similar_bills_text=similar_bills_text[:25000],
+                source_text=source_text[:MAX_PAIRED_TEXT_CHARS],
+                similar_bills_text=similar_bills_text[:MAX_PAIRED_TEXT_CHARS],
             ),
             max_tokens=4096,
             output_type=PatternDetectionOutput,

@@ -255,7 +255,11 @@ async def pattern_detect(
 @router.get("/analyses", response_model=AnalysisListResponse)
 async def list_analyses(
     bill_id: str | None = Query(None, description="Filter by bill ID"),
-    analysis_type: str | None = Query(None, description="Filter by type (summary, classification)"),
+    analysis_type: str | None = Query(
+        None,
+        description="Filter by type: summary, topics, comparison, "
+        "version_diff, constitutional, pattern_detect",
+    ),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_session),

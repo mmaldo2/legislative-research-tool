@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -54,8 +55,8 @@ class VersionDiffChange(BaseModel):
     """A single change between two bill versions."""
 
     section: str
-    change_type: str  # "added", "removed", "modified"
-    significance: str  # "major", "moderate", "minor"
+    change_type: Literal["added", "removed", "modified"]
+    significance: Literal["major", "moderate", "minor"]
     before: str | None = None
     after: str | None = None
     description: str
@@ -77,7 +78,7 @@ class ConstitutionalConcern(BaseModel):
     """A single constitutional concern flagged in a bill."""
 
     provision: str  # Which amendment/clause
-    severity: str  # "high", "moderate", "low"
+    severity: Literal["high", "moderate", "low"]
     bill_section: str  # Which part of the bill
     description: str
     relevant_precedents: list[str]  # Case names
@@ -89,7 +90,7 @@ class ConstitutionalAnalysisOutput(BaseModel):
     concerns: list[ConstitutionalConcern]
     preemption_issues: list[str]
     has_severability_clause: bool
-    overall_risk_level: str  # "high", "moderate", "low", "minimal"
+    overall_risk_level: Literal["high", "moderate", "low", "minimal", "unknown"]
     summary: str
     confidence: float = Field(ge=0.0, le=1.0)
 
@@ -107,7 +108,7 @@ class PatternBillInfo(BaseModel):
 class PatternDetectionOutput(BaseModel):
     """Structured output for cross-jurisdictional pattern detection."""
 
-    pattern_type: str  # "identical", "adapted", "inspired", "coincidental"
+    pattern_type: Literal["identical", "adapted", "inspired", "coincidental", "unknown"]
     common_framework: str
     source_organization: str | None = None  # ALEC, NCSL, etc. if identifiable
     bills_analyzed: list[PatternBillInfo]

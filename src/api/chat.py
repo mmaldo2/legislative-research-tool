@@ -279,7 +279,7 @@ async def _tool_analyze_version_diff(
         version_b_name=version_b.version_name or "Later Version",
         version_b_text=version_b.content_text,
     )
-    await db.flush()
+    await db.commit()
     return json.dumps(output.model_dump())
 
 
@@ -306,7 +306,7 @@ async def _tool_analyze_constitutional(
         jurisdiction=bill.jurisdiction_id,
         title=bill.title,
     )
-    await db.flush()
+    await db.commit()
     return json.dumps(output.model_dump())
 
 
@@ -363,7 +363,7 @@ async def _tool_analyze_patterns(
         source_title=bill.title,
         similar_bills_text="\n---\n".join(similar_parts),
     )
-    await db.flush()
+    await db.commit()
     return json.dumps(output.model_dump())
 
 
