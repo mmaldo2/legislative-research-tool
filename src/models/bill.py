@@ -14,8 +14,10 @@ class Bill(Base):
     )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    jurisdiction_id: Mapped[str] = mapped_column(ForeignKey("jurisdictions.id"), nullable=False)
-    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), nullable=False)
+    jurisdiction_id: Mapped[str] = mapped_column(
+        ForeignKey("jurisdictions.id"), nullable=False, index=True
+    )
+    session_id: Mapped[str] = mapped_column(ForeignKey("sessions.id"), nullable=False, index=True)
     identifier: Mapped[str] = mapped_column(String, nullable=False, index=True)
     title: Mapped[str] = mapped_column(String, nullable=False)
     classification: Mapped[list[str] | None] = mapped_column(ARRAY(String))

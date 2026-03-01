@@ -1,13 +1,9 @@
 """Bill CRUD endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from src.api.deps import escape_like, get_session
-from src.models.bill import Bill
-from src.models.sponsorship import Sponsorship
+from src.api.deps import get_session
 from src.schemas.bill import (
     BillActionResponse,
     BillDetailResponse,
@@ -17,12 +13,13 @@ from src.schemas.bill import (
     SponsorResponse,
 )
 from src.schemas.common import MetaResponse
+from src.services.bill_service import get_bill_detail, list_bills
 
 router = APIRouter()
 
 
 @router.get("/bills", response_model=BillListResponse)
-async def list_bills(
+async def list_bills_endpoint(
     jurisdiction: str | None = Query(
         None, description="Filter by jurisdiction ID (e.g. us, us-ca)"
     ),
@@ -35,28 +32,16 @@ async def list_bills(
     db: AsyncSession = Depends(get_session),
 ) -> BillListResponse:
     """List bills with optional filters and pagination."""
-    stmt = select(Bill)
-
-    if jurisdiction:
-        stmt = stmt.where(Bill.jurisdiction_id == jurisdiction)
-    if session_id:
-        stmt = stmt.where(Bill.session_id == session_id)
-    if status:
-        stmt = stmt.where(Bill.status == status)
-    if q:
-        stmt = stmt.where(Bill.title.ilike(f"%{escape_like(q)}%", escape="\\"))
-    if subject:
-        stmt = stmt.where(Bill.subject.any(subject))
-
-    # Count total before pagination
-    count_stmt = select(func.count()).select_from(stmt.subquery())
-    total = (await db.execute(count_stmt)).scalar_one()
-
-    # Apply pagination
-    stmt = stmt.order_by(Bill.updated_at.desc())
-    stmt = stmt.offset((page - 1) * per_page).limit(per_page)
-    result = await db.execute(stmt)
-    bills = result.scalars().all()
+    bills, total = await list_bills(
+        db,
+        jurisdiction=jurisdiction,
+        session_id=session_id,
+        status=status,
+        q=q,
+        subject=subject,
+        page=page,
+        per_page=per_page,
+    )
 
     data = [
         BillSummary(
@@ -73,34 +58,27 @@ async def list_bills(
         for b in bills
     ]
 
+    latest = max((b.updated_at for b in bills), default=None)
+
     return BillListResponse(
         data=data,
         meta=MetaResponse(
             total_count=total,
             page=page,
             per_page=per_page,
+            sources=["govinfo", "openstates"],
+            last_updated=latest.isoformat() if latest else None,
         ),
     )
 
 
 @router.get("/bills/{bill_id}", response_model=BillDetailResponse)
-async def get_bill(
+async def get_bill_endpoint(
     bill_id: str,
     db: AsyncSession = Depends(get_session),
 ) -> BillDetailResponse:
     """Get full bill detail including texts, actions, sponsors, and AI summary."""
-    stmt = (
-        select(Bill)
-        .where(Bill.id == bill_id)
-        .options(
-            selectinload(Bill.texts),
-            selectinload(Bill.actions),
-            selectinload(Bill.sponsorships).selectinload(Sponsorship.person),
-            selectinload(Bill.analyses),
-        )
-    )
-    result = await db.execute(stmt)
-    bill = result.scalar_one_or_none()
+    bill = await get_bill_detail(db, bill_id)
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
 

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from src.api.status import HealthResponse, IngestionRunResponse, StatusResponse
+from src.schemas.status import HealthResponse, IngestionRunResponse, StatusResponse
 
 
 class TestHealthResponse:

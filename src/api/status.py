@@ -1,9 +1,6 @@
 """Health check and ingestion status endpoints."""
 
-from datetime import datetime
-
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,31 +8,9 @@ from src.api.deps import get_session
 from src.models.bill import Bill
 from src.models.ingestion_run import IngestionRun
 from src.models.jurisdiction import Jurisdiction
+from src.schemas.status import HealthResponse, IngestionRunResponse, StatusResponse
 
 router = APIRouter()
-
-
-class HealthResponse(BaseModel):
-    status: str
-    version: str
-    database: str
-
-
-class IngestionRunResponse(BaseModel):
-    id: int
-    source: str
-    run_type: str
-    status: str
-    started_at: datetime | None = None
-    finished_at: datetime | None = None
-    bills_created: int
-    bills_updated: int
-
-
-class StatusResponse(BaseModel):
-    total_bills: int
-    total_jurisdictions: int
-    recent_runs: list[IngestionRunResponse]
 
 
 @router.get("/health", response_model=HealthResponse)

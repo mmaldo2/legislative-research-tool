@@ -1,7 +1,7 @@
 """Tests for people API schemas."""
 
-from src.api.people import PersonListResponse, PersonResponse
 from src.schemas.common import MetaResponse
+from src.schemas.person import PersonListResponse, PersonResponse
 
 
 class TestPersonResponse:
