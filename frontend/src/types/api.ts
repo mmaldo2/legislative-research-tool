@@ -289,6 +289,72 @@ export interface PatternDetectionOutput {
   confidence: number;
 }
 
+// --- Diffusion ---
+
+export interface DiffusionEvent {
+  bill_id: string;
+  identifier: string;
+  jurisdiction_id: string;
+  title: string;
+  status: string | null;
+  status_date: string | null;
+  similarity_score: number;
+}
+
+export interface DiffusionOutput {
+  source_bill_id: string;
+  source_identifier: string;
+  source_jurisdiction: string;
+  source_date: string | null;
+  timeline: DiffusionEvent[];
+  total_jurisdictions: number;
+  earliest_date: string | null;
+  latest_date: string | null;
+  summary: string;
+  confidence: number;
+}
+
+// --- Prediction ---
+
+export type PredictionDirection = "positive" | "negative" | "neutral";
+export type PredictionWeight = "high" | "moderate" | "low";
+export type PredictedOutcome = "pass" | "fail" | "stall" | "uncertain";
+
+export interface PredictionFactor {
+  factor: string;
+  direction: PredictionDirection;
+  weight: PredictionWeight;
+  explanation: string;
+}
+
+export interface PredictionOutput {
+  predicted_outcome: PredictedOutcome;
+  confidence: number;
+  passage_probability: number;
+  key_factors: PredictionFactor[];
+  historical_comparison: string;
+  summary: string;
+}
+
+// --- Reports ---
+
+export interface ReportSection {
+  heading: string;
+  content: string;
+}
+
+export interface ReportOutput {
+  title: string;
+  executive_summary: string;
+  sections: ReportSection[];
+  bills_analyzed: number;
+  jurisdictions_covered: string[];
+  key_findings: string[];
+  trends: string[];
+  generated_at: string;
+  confidence: number;
+}
+
 // --- Status ---
 
 export interface HealthResponse {

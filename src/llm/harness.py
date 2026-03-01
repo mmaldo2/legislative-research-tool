@@ -22,6 +22,8 @@ from src.llm.prompts import (
     compare_v1,
     constitutional_v1,
     pattern_detect_v1,
+    predict_v1,
+    report_v1,
     summarize_v1,
     version_diff_v1,
 )
@@ -30,6 +32,8 @@ from src.schemas.analysis import (
     BillSummaryOutput,
     ConstitutionalAnalysisOutput,
     PatternDetectionOutput,
+    PredictionOutput,
+    ReportOutput,
     TopicClassificationOutput,
     VersionDiffOutput,
 )
@@ -138,18 +142,20 @@ class LLMHarness:
         output_type: type[T],
         fallback_fn: Callable[[str], T],
         cost_label: str,
+        skip_store: bool = False,
     ) -> T:
         """Run a single analysis: cache check, API call, parse, track, store.
 
         This is the common backbone for all analysis methods. Each public method
         prepares the hash/prompt and provides a typed fallback, then delegates here.
         """
-        # 1. Check cache
-        cached = await self._check_cache(
-            bill_id, analysis_type, prompt_version, c_hash
-        )
-        if cached:
-            return output_type(**cached)
+        # 1. Check cache (skip for non-bill entities like reports)
+        if not skip_store:
+            cached = await self._check_cache(
+                bill_id, analysis_type, prompt_version, c_hash
+            )
+            if cached:
+                return output_type(**cached)
 
         # 2. Call Anthropic API
         response = await self.client.messages.create(
@@ -178,20 +184,21 @@ class LLMHarness:
             model, tokens_in, tokens_out, cost_label
         )
 
-        # 5. Store in DB
-        result_dict = output.model_dump()
-        await self._store_result(
-            bill_id=bill_id,
-            analysis_type=analysis_type,
-            result=result_dict,
-            model=model,
-            prompt_version=prompt_version,
-            c_hash=c_hash,
-            tokens_input=tokens_in,
-            tokens_output=tokens_out,
-            cost_usd=usage.cost_usd,
-            confidence=getattr(output, "confidence", None),
-        )
+        # 5. Store in DB (skip for non-bill entities like reports)
+        if not skip_store:
+            result_dict = output.model_dump()
+            await self._store_result(
+                bill_id=bill_id,
+                analysis_type=analysis_type,
+                result=result_dict,
+                model=model,
+                prompt_version=prompt_version,
+                c_hash=c_hash,
+                tokens_input=tokens_in,
+                tokens_output=tokens_out,
+                cost_usd=usage.cost_usd,
+                confidence=getattr(output, "confidence", None),
+            )
 
         return output
 
@@ -438,4 +445,97 @@ class LLMHarness:
                 confidence=0.3,
             ),
             cost_label="pattern_detect",
+        )
+
+    async def predict_outcome(
+        self,
+        bill_id: str,
+        identifier: str,
+        jurisdiction: str,
+        title: str,
+        status: str,
+        classification: str,
+        sponsors_text: str,
+        sponsor_count: int,
+        actions_text: str,
+        action_count: int,
+        subjects: str,
+        session_info: str,
+    ) -> PredictionOutput:
+        """Predict the likely outcome of a bill."""
+        hash_input = f"{identifier}:{status}:{sponsors_text}:{actions_text}"
+        return await self._run_analysis(
+            bill_id=bill_id,
+            analysis_type="prediction",
+            prompt_version=predict_v1.PROMPT_VERSION,
+            model=settings.summary_model,
+            c_hash=self.content_hash(hash_input, predict_v1.PROMPT_VERSION),
+            system_prompt=predict_v1.SYSTEM_PROMPT,
+            user_prompt=predict_v1.USER_PROMPT_TEMPLATE.format(
+                identifier=identifier,
+                jurisdiction=jurisdiction,
+                title=title,
+                status=status,
+                classification=classification,
+                sponsors_text=sponsors_text[:5000],
+                sponsor_count=sponsor_count,
+                actions_text=actions_text[:5000],
+                action_count=action_count,
+                subjects=subjects,
+                session_info=session_info,
+            ),
+            max_tokens=2048,
+            output_type=PredictionOutput,
+            fallback_fn=lambda text: PredictionOutput(
+                predicted_outcome="uncertain",
+                confidence=0.3,
+                passage_probability=0.5,
+                key_factors=[],
+                historical_comparison=text,
+                summary=text,
+            ),
+            cost_label="predict_outcome",
+        )
+
+    async def generate_report(
+        self,
+        report_id: str,
+        query: str,
+        bills_text: str,
+        bill_count: int,
+        jurisdiction_count: int,
+        jurisdiction_filter: str | None = None,
+    ) -> ReportOutput:
+        """Generate a multi-bill research report."""
+        jf = f"Jurisdiction Filter: {jurisdiction_filter}" if jurisdiction_filter else ""
+        return await self._run_analysis(
+            bill_id=report_id,
+            analysis_type="report",
+            prompt_version=report_v1.PROMPT_VERSION,
+            model=settings.summary_model,
+            c_hash=self.content_hash(
+                f"{query}:{bills_text[:10000]}", report_v1.PROMPT_VERSION
+            ),
+            system_prompt=report_v1.SYSTEM_PROMPT,
+            user_prompt=report_v1.USER_PROMPT_TEMPLATE.format(
+                query=query,
+                jurisdiction_filter=jf,
+                bill_count=bill_count,
+                jurisdiction_count=jurisdiction_count,
+                bills_text=bills_text[:MAX_SINGLE_TEXT_CHARS],
+            ),
+            max_tokens=8192,
+            output_type=ReportOutput,
+            fallback_fn=lambda text: ReportOutput(
+                title=f"Report: {query}",
+                executive_summary=text,
+                sections=[],
+                bills_analyzed=bill_count,
+                jurisdictions_covered=[],
+                key_findings=[],
+                trends=[],
+                confidence=0.3,
+            ),
+            cost_label="generate_report",
+            skip_store=True,
         )

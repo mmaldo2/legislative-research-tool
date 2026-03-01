@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -116,6 +116,84 @@ class PatternDetectionOutput(BaseModel):
     key_variations: list[str]
     model_legislation_confidence: float = Field(ge=0.0, le=1.0)
     summary: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class DiffusionEvent(BaseModel):
+    """A single instance of a bill appearing in a jurisdiction."""
+
+    bill_id: str
+    identifier: str
+    jurisdiction_id: str
+    title: str
+    status: str | None = None
+    status_date: str | None = None
+    similarity_score: float = Field(ge=0.0, le=1.0)
+
+
+class DiffusionOutput(BaseModel):
+    """Tracks how a legislative idea spread across jurisdictions over time."""
+
+    source_bill_id: str
+    source_identifier: str
+    source_jurisdiction: str
+    source_date: str | None = None
+    timeline: list[DiffusionEvent]
+    total_jurisdictions: int
+    earliest_date: str | None = None
+    latest_date: str | None = None
+    summary: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
+class PredictRequest(BaseModel):
+    bill_id: str
+
+
+class PredictionFactor(BaseModel):
+    """A factor influencing the prediction."""
+
+    factor: str
+    direction: Literal["positive", "negative", "neutral"]
+    weight: Literal["high", "moderate", "low"]
+    explanation: str
+
+
+class PredictionOutput(BaseModel):
+    """Structured output for bill outcome prediction."""
+
+    predicted_outcome: Literal["pass", "fail", "stall", "uncertain"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    passage_probability: float = Field(ge=0.0, le=1.0)
+    key_factors: list[PredictionFactor]
+    historical_comparison: str
+    summary: str
+
+
+class ReportRequest(BaseModel):
+    query: str = Field(min_length=3, max_length=500)
+    jurisdiction: str | None = None
+    max_bills: int = Field(default=20, ge=1, le=50)
+
+
+class ReportSection(BaseModel):
+    """A section of a generated research report."""
+
+    heading: str
+    content: str
+
+
+class ReportOutput(BaseModel):
+    """Structured output for an automated research report."""
+
+    title: str
+    executive_summary: str
+    sections: list[ReportSection]
+    bills_analyzed: int
+    jurisdictions_covered: list[str]
+    key_findings: list[str]
+    trends: list[str]
+    generated_at: str = Field(default_factory=lambda: datetime.now(UTC).isoformat())
     confidence: float = Field(ge=0.0, le=1.0)
 
 
