@@ -1,12 +1,15 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { listSessions, listBills } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Skeleton } from "@/components/ui/skeleton";
 import { BillCard } from "@/components/bill-card";
 import { ApiErrorBanner } from "@/components/api-error";
 import { formatJurisdiction } from "@/lib/format";
-import { Calendar, FileText } from "lucide-react";
+import { BarChart3, Calendar, FileText } from "lucide-react";
+import { StatsTab } from "./stats-tab";
 
 interface JurisdictionDetailProps {
   id: string;
@@ -45,8 +48,12 @@ export async function JurisdictionDetail({ id }: JurisdictionDetailProps) {
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="sessions">
+      <Tabs defaultValue="overview">
         <TabsList>
+          <TabsTrigger value="overview">
+            <BarChart3 className="mr-1.5 h-4 w-4" />
+            Overview
+          </TabsTrigger>
           <TabsTrigger value="sessions">
             <Calendar className="mr-1.5 h-4 w-4" />
             Sessions
@@ -56,6 +63,24 @@ export async function JurisdictionDetail({ id }: JurisdictionDetailProps) {
             Recent Bills
           </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="overview" className="mt-4">
+          <Suspense
+            fallback={
+              <div className="space-y-6">
+                <div className="grid gap-4 sm:grid-cols-3">
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <Skeleton key={i} className="h-24 rounded-lg" />
+                  ))}
+                </div>
+                <Skeleton className="h-48 rounded-lg" />
+                <Skeleton className="h-48 rounded-lg" />
+              </div>
+            }
+          >
+            <StatsTab jurisdictionId={id} />
+          </Suspense>
+        </TabsContent>
 
         <TabsContent value="sessions" className="mt-4">
           {sessions.data.length === 0 ? (

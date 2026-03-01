@@ -17,9 +17,12 @@ import type {
   ConversationResponse,
   HealthResponse,
   JurisdictionListResponse,
+  JurisdictionStatsResponse,
   PatternDetectionOutput,
   PersonListResponse,
   PersonResponse,
+  PersonStatsResponse,
+  PersonVoteListResponse,
   SearchResponse,
   SessionListResponse,
   SimilarBillsResponse,
@@ -130,6 +133,7 @@ export async function listBills(params: {
   status?: string;
   q?: string;
   subject?: string;
+  sponsor?: string;
   page?: number;
   per_page?: number;
 } = {}): Promise<BillListResponse> {
@@ -175,6 +179,24 @@ export async function getPerson(personId: string): Promise<PersonResponse> {
   );
 }
 
+export async function getPersonVotes(
+  personId: string,
+  params: { page?: number; per_page?: number } = {},
+): Promise<PersonVoteListResponse> {
+  const query = qs(params);
+  return fetchApi<PersonVoteListResponse>(
+    `/people/${encodeURIComponent(personId)}/votes${query}`,
+    { revalidate: 300 },
+  );
+}
+
+export async function getPersonStats(personId: string): Promise<PersonStatsResponse> {
+  return fetchApi<PersonStatsResponse>(
+    `/people/${encodeURIComponent(personId)}/stats`,
+    { revalidate: 300 },
+  );
+}
+
 // --- Jurisdictions ---
 
 export async function listJurisdictions(params: {
@@ -183,6 +205,15 @@ export async function listJurisdictions(params: {
   per_page?: number;
 } = {}): Promise<JurisdictionListResponse> {
   return fetchApi<JurisdictionListResponse>(`/jurisdictions${qs(params)}`, { revalidate: 3600 });
+}
+
+export async function getJurisdictionStats(
+  jurisdictionId: string,
+): Promise<JurisdictionStatsResponse> {
+  return fetchApi<JurisdictionStatsResponse>(
+    `/jurisdictions/${encodeURIComponent(jurisdictionId)}/stats`,
+    { revalidate: 300 },
+  );
 }
 
 // --- Sessions ---
