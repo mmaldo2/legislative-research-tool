@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p2
 issue_id: "074"
 tags: [code-review, refactor, typescript, duplication]
