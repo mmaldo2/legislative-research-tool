@@ -19,7 +19,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { id } = await params;
   try {
-    const bill = await getBillCached(decodeURIComponent(id));
+    const bill = await getBillCached(id);
     return { title: `${bill.identifier} | Legislative Research Tool` };
   } catch {
     return { title: "Bill Not Found" };
@@ -34,7 +34,7 @@ export default async function BillDetailPage({
   const { id } = await params;
   let bill;
   try {
-    bill = await getBillCached(decodeURIComponent(id));
+    bill = await getBillCached(id);
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) {
       notFound();

@@ -7,7 +7,7 @@ interface BillCardProps {
   id: string;
   identifier: string;
   title: string;
-  jurisdiction_id: string;
+  jurisdictionId: string;
   status: string | null;
   score?: number;
   snippet?: string | null;
@@ -17,7 +17,7 @@ export function BillCard({
   id,
   identifier,
   title,
-  jurisdiction_id,
+  jurisdictionId,
   status,
   score,
   snippet,
@@ -31,7 +31,7 @@ export function BillCard({
               {identifier}
             </Badge>
             <Badge variant="secondary" className="text-xs">
-              {formatJurisdiction(jurisdiction_id)}
+              {formatJurisdiction(jurisdictionId)}
             </Badge>
             {status && (
               <Badge variant={statusVariant(status)} className="text-xs">

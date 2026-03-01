@@ -4,6 +4,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { BillCard } from "@/components/bill-card";
+import { ApiErrorBanner } from "@/components/api-error";
 import { formatJurisdiction } from "@/lib/format";
 import { Calendar, FileText } from "lucide-react";
 
@@ -22,10 +23,7 @@ export async function JurisdictionDetail({ id }: JurisdictionDetailProps) {
     ]);
   } catch {
     return (
-      <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
-        Failed to fetch jurisdiction details. Make sure the API server is
-        running.
-      </div>
+      <ApiErrorBanner message="Failed to fetch jurisdiction details. Make sure the API server is running." />
     );
   }
 
@@ -110,7 +108,7 @@ export async function JurisdictionDetail({ id }: JurisdictionDetailProps) {
                   id={bill.id}
                   identifier={bill.identifier}
                   title={bill.title}
-                  jurisdiction_id={bill.jurisdiction_id}
+                  jurisdictionId={bill.jurisdiction_id}
                   status={bill.status}
                 />
               ))}

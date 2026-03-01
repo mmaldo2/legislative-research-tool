@@ -1,4 +1,5 @@
 import { searchBills } from "@/lib/api";
+import { ApiErrorBanner } from "@/components/api-error";
 import { BillCard } from "@/components/bill-card";
 import { Pagination } from "@/components/pagination";
 
@@ -20,9 +21,10 @@ export async function SearchResults({
     data = await searchBills({ q, jurisdiction, mode, page, per_page: 20 });
   } catch {
     return (
-      <div className="mt-6 rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
-        Failed to fetch search results. Make sure the API server is running.
-      </div>
+      <ApiErrorBanner
+        message="Failed to fetch search results. Make sure the API server is running."
+        className="mt-6"
+      />
     );
   }
 
@@ -43,7 +45,7 @@ export async function SearchResults({
             id={result.bill_id}
             identifier={result.identifier}
             title={result.title}
-            jurisdiction_id={result.jurisdiction_id}
+            jurisdictionId={result.jurisdiction_id}
             status={result.status}
             score={result.score}
             snippet={result.snippet}

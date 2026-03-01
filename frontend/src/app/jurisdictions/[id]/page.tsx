@@ -9,7 +9,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { id } = await params;
   return {
-    title: `${decodeURIComponent(id).toUpperCase()} | Legislative Research Tool`,
+    title: `${id.toUpperCase()} | Legislative Research Tool`,
   };
 }
 
@@ -23,7 +23,7 @@ export default async function JurisdictionDetailPage({
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
       <Suspense fallback={<DetailSkeleton />}>
-        <JurisdictionDetail id={decodeURIComponent(id)} />
+        <JurisdictionDetail id={id} />
       </Suspense>
     </div>
   );
