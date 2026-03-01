@@ -18,6 +18,7 @@ from src.api.deps import limiter, require_api_key
 from src.api.export import router as export_router
 from src.api.jurisdictions import router as jurisdictions_router
 from src.api.people import router as people_router
+from src.api.reports import router as reports_router
 from src.api.search import router as search_router
 from src.api.status import router as status_router
 from src.api.votes import router as votes_router
@@ -67,6 +68,7 @@ app.include_router(
 )
 app.include_router(chat_router, prefix="/api/v1", tags=["Chat"], dependencies=auth_deps)
 app.include_router(export_router, prefix="/api/v1", tags=["Export"], dependencies=auth_deps)
+app.include_router(reports_router, prefix="/api/v1", tags=["Reports"], dependencies=auth_deps)
 app.include_router(status_router, prefix="/api/v1", tags=["Status"])
 
 

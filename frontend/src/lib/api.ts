@@ -15,6 +15,7 @@ import type {
   ConstitutionalAnalysisOutput,
   ConversationListResponse,
   ConversationResponse,
+  DiffusionOutput,
   HealthResponse,
   JurisdictionListResponse,
   JurisdictionStatsResponse,
@@ -23,6 +24,8 @@ import type {
   PersonResponse,
   PersonStatsResponse,
   PersonVoteListResponse,
+  PredictionOutput,
+  ReportOutput,
   SearchResponse,
   SessionListResponse,
   SimilarBillsResponse,
@@ -313,6 +316,52 @@ export async function analyzePatterns(
   return fetchApi<PatternDetectionOutput>("/analyze/patterns", {
     method: "POST",
     body: JSON.stringify({ bill_id: billId, top_k: topK }),
+    signal,
+  });
+}
+
+// --- Diffusion ---
+
+export async function getDiffusion(
+  billId: string,
+  topK: number = 10,
+  signal?: AbortSignal,
+): Promise<DiffusionOutput> {
+  const query = qs({ top_k: topK });
+  return fetchApi<DiffusionOutput>(
+    `/analyze/diffusion/${encodeURIComponent(billId)}${query}`,
+    { signal },
+  );
+}
+
+// --- Prediction ---
+
+export async function predictOutcome(
+  billId: string,
+  signal?: AbortSignal,
+): Promise<PredictionOutput> {
+  return fetchApi<PredictionOutput>("/analyze/predict", {
+    method: "POST",
+    body: JSON.stringify({ bill_id: billId }),
+    signal,
+  });
+}
+
+// --- Reports ---
+
+export async function generateReport(
+  query: string,
+  jurisdiction?: string,
+  maxBills: number = 20,
+  signal?: AbortSignal,
+): Promise<ReportOutput> {
+  return fetchApi<ReportOutput>("/reports/generate", {
+    method: "POST",
+    body: JSON.stringify({
+      query,
+      jurisdiction: jurisdiction ?? null,
+      max_bills: maxBills,
+    }),
     signal,
   });
 }

@@ -15,6 +15,8 @@ import { SimilarTab } from "./similar-tab";
 import { VersionDiffTab } from "./version-diff-tab";
 import { ConstitutionalTab } from "./constitutional-tab";
 import { PatternsTab } from "./patterns-tab";
+import { DiffusionTab } from "./diffusion-tab";
+import { PredictionTab } from "./prediction-tab";
 import { SaveToCollection } from "@/components/save-to-collection";
 
 export async function generateMetadata({
@@ -111,6 +113,8 @@ export default async function BillDetailPage({
           <TabsTrigger value="version-diff">Version Diff</TabsTrigger>
           <TabsTrigger value="constitutional">Constitutional</TabsTrigger>
           <TabsTrigger value="patterns">Patterns</TabsTrigger>
+          <TabsTrigger value="diffusion">Diffusion</TabsTrigger>
+          <TabsTrigger value="prediction">Prediction</TabsTrigger>
         </TabsList>
 
         <TabsContent value="summary" className="mt-4">
@@ -153,6 +157,14 @@ export default async function BillDetailPage({
 
         <TabsContent value="patterns" className="mt-4">
           <PatternsTab billId={id} />
+        </TabsContent>
+
+        <TabsContent value="diffusion" className="mt-4">
+          <DiffusionTab billId={id} />
+        </TabsContent>
+
+        <TabsContent value="prediction" className="mt-4">
+          <PredictionTab billId={id} />
         </TabsContent>
       </Tabs>
     </div>

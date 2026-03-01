@@ -12,6 +12,7 @@ from src.llm.harness import LLMHarness
 from src.models.ai_analysis import AiAnalysis
 from src.models.bill import Bill
 from src.models.bill_text import texts_without_markup
+from src.models.sponsorship import Sponsorship
 from src.schemas.analysis import (
     AnalysisListResponse,
     AnalysisResponse,
@@ -19,8 +20,12 @@ from src.schemas.analysis import (
     ClassifyRequest,
     ConstitutionalAnalysisOutput,
     ConstitutionalRequest,
+    DiffusionEvent,
+    DiffusionOutput,
     PatternDetectionOutput,
     PatternDetectRequest,
+    PredictionOutput,
+    PredictRequest,
     SummarizeRequest,
     TopicClassificationOutput,
     VersionDiffOutput,
@@ -248,6 +253,146 @@ async def pattern_detect(
         source_jurisdiction=bill.jurisdiction_id,
         source_title=bill.title,
         similar_bills_text=similar_bills_text,
+    )
+    await db.commit()
+    return output
+
+
+@router.get("/analyze/diffusion/{bill_id}", response_model=DiffusionOutput)
+@limiter.limit("10/minute")
+async def policy_diffusion(
+    request: Request,
+    bill_id: str,
+    top_k: int = Query(default=10, ge=1, le=50),
+    db: AsyncSession = Depends(get_session),
+) -> DiffusionOutput:
+    """Track how a legislative idea spread across jurisdictions over time."""
+    # Load the source bill
+    result = await db.execute(select(Bill).where(Bill.id == bill_id))
+    source = result.scalar_one_or_none()
+    if not source:
+        raise HTTPException(status_code=404, detail="Bill not found")
+
+    # Find similar bills from other jurisdictions
+    matches = await find_similar_bill_ids(
+        db, bill_id, exclude_jurisdiction=source.jurisdiction_id, top_k=top_k
+    )
+    if not matches:
+        return DiffusionOutput(
+            source_bill_id=source.id,
+            source_identifier=source.identifier,
+            source_jurisdiction=source.jurisdiction_id,
+            source_date=str(source.status_date) if source.status_date else None,
+            timeline=[],
+            total_jurisdictions=0,
+            summary="No similar bills found in other jurisdictions.",
+            confidence=1.0,
+        )
+
+    # Load matched bills with status dates
+    matched_ids = [m.bill_id for m in matches]
+    score_map = {m.bill_id: m.score for m in matches}
+    bills_result = await db.execute(
+        select(Bill).where(Bill.id.in_(matched_ids))
+    )
+    similar_bills = bills_result.scalars().all()
+
+    # Build timeline sorted by status_date
+    events = []
+    for b in similar_bills:
+        events.append(
+            DiffusionEvent(
+                bill_id=b.id,
+                identifier=b.identifier,
+                jurisdiction_id=b.jurisdiction_id,
+                title=b.title,
+                status=b.status,
+                status_date=str(b.status_date) if b.status_date else None,
+                similarity_score=score_map.get(b.id, 0.0),
+            )
+        )
+
+    # Sort by date (None dates go last)
+    events.sort(key=lambda e: e.status_date or "9999-99-99")
+
+    jurisdictions = list({e.jurisdiction_id for e in events})
+    dates = [e.status_date for e in events if e.status_date]
+
+    return DiffusionOutput(
+        source_bill_id=source.id,
+        source_identifier=source.identifier,
+        source_jurisdiction=source.jurisdiction_id,
+        source_date=str(source.status_date) if source.status_date else None,
+        timeline=events,
+        total_jurisdictions=len(jurisdictions),
+        earliest_date=min(dates) if dates else None,
+        latest_date=max(dates) if dates else None,
+        summary=(
+            f"Found {len(events)} similar bills across {len(jurisdictions)} jurisdictions."
+        ),
+        confidence=0.8,
+    )
+
+
+@router.post("/analyze/predict", response_model=PredictionOutput)
+@limiter.limit("5/minute")
+async def predict_outcome(
+    request: Request,
+    req: PredictRequest,
+    db: AsyncSession = Depends(get_session),
+    harness: LLMHarness = Depends(get_llm_harness),
+) -> PredictionOutput:
+    """Predict the likely outcome of a bill based on its features."""
+    stmt = (
+        select(Bill)
+        .where(Bill.id == req.bill_id)
+        .options(
+            selectinload(Bill.sponsorships).selectinload(Sponsorship.person),
+            selectinload(Bill.actions),
+        )
+    )
+    result = await db.execute(stmt)
+    bill = result.scalar_one_or_none()
+    if not bill:
+        raise HTTPException(status_code=404, detail="Bill not found")
+
+    # Format sponsors
+    sponsor_lines = []
+    for s in bill.sponsorships:
+        if not s.person:
+            continue
+        party = s.person.party or "Unknown"
+        sponsor_lines.append(f"- {s.person.name} ({party}) [{s.classification}]")
+    sponsors_text = "\n".join(sponsor_lines) if sponsor_lines else "None listed"
+
+    # Format actions (most recent first)
+    sorted_actions = sorted(
+        [a for a in bill.actions if a.action_date],
+        key=lambda a: a.action_date,
+        reverse=True,
+    )
+    action_lines = []
+    for a in sorted_actions[:20]:
+        action_lines.append(f"- {a.action_date}: {a.description}")
+    actions_text = "\n".join(action_lines) if action_lines else "No actions recorded"
+
+    subjects = ", ".join(bill.subject) if bill.subject else "None"
+    classification = ", ".join(bill.classification) if bill.classification else "bill"
+    session_info = bill.session_id or "Unknown session"
+
+    output = await harness.predict_outcome(
+        bill_id=bill.id,
+        identifier=bill.identifier,
+        jurisdiction=bill.jurisdiction_id,
+        title=bill.title,
+        status=bill.status or "unknown",
+        classification=classification,
+        sponsors_text=sponsors_text,
+        sponsor_count=len(bill.sponsorships),
+        actions_text=actions_text,
+        action_count=len(bill.actions),
+        subjects=subjects,
+        session_info=session_info,
     )
     await db.commit()
     return output
