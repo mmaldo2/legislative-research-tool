@@ -60,11 +60,26 @@ interface FetchApiOptions extends Omit<RequestInit, "next"> {
   revalidate?: number | false;
 }
 
+function normalizeHeaders(headers?: HeadersInit): Record<string, string> {
+  if (!headers) return {};
+  if (headers instanceof Headers) {
+    const result: Record<string, string> = {};
+    headers.forEach((value, key) => {
+      result[key] = value;
+    });
+    return result;
+  }
+  if (Array.isArray(headers)) {
+    return Object.fromEntries(headers);
+  }
+  return headers as Record<string, string>;
+}
+
 async function fetchApi<T>(path: string, init?: FetchApiOptions): Promise<T> {
   const url = `${API_BASE}${path}`;
   const { revalidate, ...rest } = init ?? {};
   const headers: Record<string, string> = {
-    ...(rest.headers as Record<string, string>),
+    ...normalizeHeaders(rest.headers),
   };
   if (rest.body) {
     headers["Content-Type"] = "application/json";
@@ -85,6 +100,10 @@ async function fetchApi<T>(path: string, init?: FetchApiOptions): Promise<T> {
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new ApiError(res.status, body || res.statusText);
+  }
+
+  if (res.status === 204) {
+    return undefined as T;
   }
 
   return res.json() as Promise<T>;

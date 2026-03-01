@@ -5,7 +5,7 @@ import logging
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -36,6 +36,11 @@ router = APIRouter()
 
 # Maximum tool-use rounds before forcing a text response
 _MAX_TOOL_ROUNDS = 10
+
+
+def get_client_id(x_client_id: str | None = Header(None)) -> str:
+    """Get client ID from header or return 'anonymous'."""
+    return x_client_id or "anonymous"
 
 
 async def execute_tool(tool_name: str, arguments: dict, db: AsyncSession) -> str:
@@ -241,6 +246,7 @@ def _generate_title(message: str) -> str:
 async def chat(
     request: Request,
     req: ChatRequest,
+    client_id: str = Depends(get_client_id),
     db: AsyncSession = Depends(get_session),
 ) -> ChatResponse:
     """Send a message to the research assistant and get a response.
@@ -260,10 +266,14 @@ async def chat(
         conversation = result.scalar_one_or_none()
         if not conversation:
             raise HTTPException(status_code=404, detail="Conversation not found")
+        if conversation.client_id != client_id:
+            raise HTTPException(
+                status_code=403, detail="Not authorized to access this conversation"
+            )
     else:
         conversation = Conversation(
             id=uuid.uuid4().hex,
-            client_id=request.client.host if request.client else "unknown",
+            client_id=client_id,
             title=_generate_title(req.message),
         )
         db.add(conversation)
@@ -419,15 +429,13 @@ async def chat(
 
 @router.get("/conversations", response_model=ConversationListResponse)
 async def list_conversations(
-    client_id: str | None = Query(None, description="Filter by client ID"),
+    client_id: str = Depends(get_client_id),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_session),
 ) -> ConversationListResponse:
-    """List conversations, optionally filtered by client ID."""
-    stmt = select(Conversation)
-    if client_id:
-        stmt = stmt.where(Conversation.client_id == client_id)
+    """List conversations owned by the current client."""
+    stmt = select(Conversation).where(Conversation.client_id == client_id)
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = (await db.execute(count_stmt)).scalar_one()
@@ -455,6 +463,7 @@ async def list_conversations(
 @router.get("/conversations/{conversation_id}", response_model=ConversationResponse)
 async def get_conversation(
     conversation_id: str,
+    client_id: str = Depends(get_client_id),
     db: AsyncSession = Depends(get_session),
 ) -> ConversationResponse:
     """Get a conversation with its full message history."""
@@ -466,6 +475,10 @@ async def get_conversation(
     conversation = result.scalar_one_or_none()
     if not conversation:
         raise HTTPException(status_code=404, detail="Conversation not found")
+    if conversation.client_id != client_id:
+        raise HTTPException(
+            status_code=403, detail="Not authorized to access this conversation"
+        )
 
     messages = [
         ChatMessageResponse(

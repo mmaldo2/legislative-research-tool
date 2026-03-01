@@ -1,11 +1,11 @@
 """Research collections CRUD endpoints — curate and organize bills."""
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.api.deps import get_session
+from src.api.deps import get_session, limiter
 from src.models.bill import Bill
 from src.models.collection import Collection, CollectionItem
 from src.schemas.collection import (
@@ -49,7 +49,9 @@ async def _get_collection_or_404(
 
 
 @router.post("/collections", response_model=CollectionResponse, status_code=201)
+@limiter.limit("30/minute")
 async def create_collection(
+    request: Request,
     body: CollectionCreate,
     client_id: str = Depends(get_client_id),
     db: AsyncSession = Depends(get_session),
@@ -161,7 +163,9 @@ async def get_collection(
 
 
 @router.put("/collections/{collection_id}", response_model=CollectionResponse)
+@limiter.limit("30/minute")
 async def update_collection(
+    request: Request,
     collection_id: int,
     body: CollectionUpdate,
     client_id: str = Depends(get_client_id),
@@ -191,7 +195,9 @@ async def update_collection(
 
 
 @router.delete("/collections/{collection_id}", status_code=204)
+@limiter.limit("30/minute")
 async def delete_collection(
+    request: Request,
     collection_id: int,
     client_id: str = Depends(get_client_id),
     db: AsyncSession = Depends(get_session),
@@ -207,7 +213,9 @@ async def delete_collection(
     response_model=CollectionItemResponse,
     status_code=201,
 )
+@limiter.limit("30/minute")
 async def add_item(
+    request: Request,
     collection_id: int,
     body: CollectionItemAdd,
     client_id: str = Depends(get_client_id),
@@ -248,7 +256,9 @@ async def add_item(
 
 
 @router.delete("/collections/{collection_id}/items/{bill_id}", status_code=204)
+@limiter.limit("30/minute")
 async def remove_item(
+    request: Request,
     collection_id: int,
     bill_id: str,
     client_id: str = Depends(get_client_id),
@@ -273,7 +283,9 @@ async def remove_item(
     "/collections/{collection_id}/items/{bill_id}",
     response_model=CollectionItemResponse,
 )
+@limiter.limit("30/minute")
 async def update_item_notes(
+    request: Request,
     collection_id: int,
     bill_id: str,
     body: CollectionItemUpdate,
