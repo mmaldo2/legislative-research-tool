@@ -27,6 +27,7 @@ async def list_bills_endpoint(
     status: str | None = Query(None, description="Filter by bill status"),
     q: str | None = Query(None, description="Search title (case-insensitive contains)"),
     subject: str | None = Query(None, description="Filter by subject keyword"),
+    sponsor: str | None = Query(None, description="Filter by sponsor person ID"),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_session),
@@ -39,6 +40,7 @@ async def list_bills_endpoint(
         status=status,
         q=q,
         subject=subject,
+        sponsor=sponsor,
         page=page,
         per_page=per_page,
     )

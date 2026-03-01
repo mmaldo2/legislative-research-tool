@@ -18,6 +18,7 @@ async def list_bills(
     status: str | None = None,
     q: str | None = None,
     subject: str | None = None,
+    sponsor: str | None = None,
     page: int = 1,
     per_page: int = 20,
 ) -> tuple[list[Bill], int]:
@@ -34,6 +35,8 @@ async def list_bills(
         stmt = stmt.where(Bill.title.ilike(f"%{escape_like(q)}%", escape="\\"))
     if subject:
         stmt = stmt.where(Bill.subject.any(subject))
+    if sponsor:
+        stmt = stmt.join(Sponsorship).where(Sponsorship.person_id == sponsor)
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = (await session.execute(count_stmt)).scalar_one()
