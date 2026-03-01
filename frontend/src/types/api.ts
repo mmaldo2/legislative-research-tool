@@ -270,7 +270,7 @@ export interface ToolCallInfo {
 }
 
 export interface ChatMessageResponse {
-  role: string;
+  role: "user" | "assistant";
   content: string;
   tool_calls: ToolCallInfo[] | null;
   created_at: string | null;

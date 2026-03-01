@@ -62,7 +62,7 @@ export default function AssistantPage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-8 flex flex-col" style={{ height: "calc(100vh - 8rem)" }}>
+    <div className="mx-auto max-w-3xl px-4 py-8 flex flex-col h-[calc(100vh-8rem)]">
       <h1 className="text-2xl font-bold mb-4">Research Assistant</h1>
       <p className="text-sm text-muted-foreground mb-4">
         Ask questions about legislation across all 50 states and Congress.
@@ -138,7 +138,7 @@ export default function AssistantPage() {
           disabled={loading}
           className="flex-1"
         />
-        <Button onClick={handleSend} disabled={loading || !input.trim()}>
+        <Button onClick={handleSend} disabled={loading || !input.trim()} aria-label="Send message">
           {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
         </Button>
       </div>

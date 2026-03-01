@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -12,12 +13,12 @@ class ChatRequest(BaseModel):
 
 class ToolCallInfo(BaseModel):
     tool_name: str
-    arguments: dict
+    arguments: dict[str, Any]
     result_summary: str | None = None
 
 
 class ChatMessageResponse(BaseModel):
-    role: str
+    role: Literal["user", "assistant"]
     content: str
     tool_calls: list[ToolCallInfo] | None = None
     created_at: datetime | None = None

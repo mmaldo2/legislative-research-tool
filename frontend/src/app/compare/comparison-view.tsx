@@ -30,7 +30,7 @@ export async function ComparisonView({ billIdA, billIdB }: ComparisonViewProps) 
     <div className="space-y-6">
       {/* Bill headers side by side */}
       <div className="grid gap-4 md:grid-cols-2">
-        {[billA, billB].map((bill, i) => (
+        {[billA, billB].map((bill) => (
           <Card key={bill.id}>
             <CardHeader>
               <div className="flex items-center gap-2 flex-wrap mb-1">

@@ -3,7 +3,9 @@
 import json
 import logging
 import uuid
+from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import func, select
@@ -51,7 +53,7 @@ def get_client_id(x_client_id: str | None = Header(None)) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def _tool_search_bills(arguments: dict, db: AsyncSession) -> str:
+async def _tool_search_bills(arguments: dict[str, Any], db: AsyncSession) -> str:
     query = arguments.get("query", "")
     jurisdiction = arguments.get("jurisdiction")
     mode = arguments.get("mode", "hybrid")
@@ -90,7 +92,7 @@ async def _tool_search_bills(arguments: dict, db: AsyncSession) -> str:
     return json.dumps({"bills": bills_out, "total": len(bills_out)})
 
 
-async def _tool_get_bill_detail(arguments: dict, db: AsyncSession) -> str:
+async def _tool_get_bill_detail(arguments: dict[str, Any], db: AsyncSession) -> str:
     bill_id = arguments.get("bill_id", "")
     stmt = (
         select(Bill)
@@ -159,7 +161,7 @@ async def _tool_get_bill_detail(arguments: dict, db: AsyncSession) -> str:
 
 
 async def _tool_list_jurisdictions(
-    arguments: dict, db: AsyncSession
+    arguments: dict[str, Any], db: AsyncSession
 ) -> str:
     stmt = select(Jurisdiction).order_by(Jurisdiction.name)
     result = await db.execute(stmt)
@@ -178,7 +180,7 @@ async def _tool_list_jurisdictions(
 
 
 async def _tool_find_similar_bills(
-    arguments: dict, db: AsyncSession
+    arguments: dict[str, Any], db: AsyncSession
 ) -> str:
     bill_id = arguments.get("bill_id", "")
     top_k = arguments.get("top_k", 5)
@@ -242,7 +244,10 @@ async def _tool_find_similar_bills(
 
 
 # Registry mapping tool names to handler functions
-_TOOL_HANDLERS: dict = {
+_ToolHandler = Callable[
+    [dict[str, Any], AsyncSession], Coroutine[Any, Any, str]
+]
+_TOOL_HANDLERS: dict[str, _ToolHandler] = {
     "search_bills": _tool_search_bills,
     "get_bill_detail": _tool_get_bill_detail,
     "list_jurisdictions": _tool_list_jurisdictions,
@@ -251,7 +256,7 @@ _TOOL_HANDLERS: dict = {
 
 
 async def execute_tool(
-    tool_name: str, arguments: dict, db: AsyncSession
+    tool_name: str, arguments: dict[str, Any], db: AsyncSession
 ) -> str:
     """Dispatch tool calls to the appropriate handler."""
     handler = _TOOL_HANDLERS.get(tool_name)
@@ -265,9 +270,21 @@ async def execute_tool(
 # ---------------------------------------------------------------------------
 
 
+def _extract_text(response: Any) -> str:
+    """Extract concatenated text from an Anthropic response's content blocks."""
+    parts = [
+        block.text
+        for block in response.content
+        if block.type == "text"
+    ]
+    return "\n".join(parts)
+
+
 def _generate_title(message: str) -> str:
     """Generate a short conversation title from the first user message."""
     text = message.strip()
+    if not text:
+        return "Untitled conversation"
     for sep in (".", "?", "!"):
         idx = text.find(sep)
         if 0 < idx < 80:
@@ -394,11 +411,7 @@ async def chat(
 
         # Check stop reason
         if response.stop_reason == "end_turn":
-            text_parts = []
-            for block in response.content:
-                if block.type == "text":
-                    text_parts.append(block.text)
-            final_text = "\n".join(text_parts)
+            final_text = _extract_text(response)
             break
 
         elif response.stop_reason == "tool_use":
@@ -475,24 +488,16 @@ async def chat(
             )
 
         else:
-            text_parts = []
-            for block in response.content:
-                if block.type == "text":
-                    text_parts.append(block.text)
-            fallback = "I was unable to complete the request."
-            final_text = (
-                "\n".join(text_parts) if text_parts else fallback
-            )
+            final_text = _extract_text(response)
+            if not final_text:
+                final_text = "I was unable to complete the request."
             break
     else:
-        final_text = (
+        extracted = _extract_text(response)
+        final_text = extracted or (
             "I reached the maximum number of research steps."
             " Here is what I found so far."
         )
-        for block in response.content:
-            if block.type == "text":
-                final_text = block.text
-                break
 
     # 6. Store assistant message with tool_calls metadata
     tool_calls_meta = all_tool_calls if all_tool_calls else None

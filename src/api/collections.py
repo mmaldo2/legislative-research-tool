@@ -1,5 +1,7 @@
 """Research collections CRUD endpoints — curate and organize bills."""
 
+from datetime import UTC, datetime
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -178,6 +180,7 @@ async def update_collection(
         collection.name = body.name
     if body.description is not None:
         collection.description = body.description
+    collection.updated_at = datetime.now(UTC)
 
     await db.commit()
     await db.refresh(collection)
@@ -222,7 +225,7 @@ async def add_item(
     db: AsyncSession = Depends(get_session),
 ) -> CollectionItemResponse:
     """Add a bill to a collection."""
-    await _get_collection_or_404(db, collection_id, client_id)
+    collection = await _get_collection_or_404(db, collection_id, client_id)
 
     # Verify the bill exists
     bill_result = await db.execute(select(Bill).where(Bill.id == body.bill_id))
@@ -244,6 +247,7 @@ async def add_item(
         notes=body.notes,
     )
     db.add(item)
+    collection.updated_at = datetime.now(UTC)
     await db.commit()
     await db.refresh(item)
 
@@ -265,7 +269,7 @@ async def remove_item(
     db: AsyncSession = Depends(get_session),
 ) -> None:
     """Remove a bill from a collection."""
-    await _get_collection_or_404(db, collection_id, client_id)
+    collection = await _get_collection_or_404(db, collection_id, client_id)
 
     stmt = select(CollectionItem).where(
         CollectionItem.collection_id == collection_id,
@@ -276,6 +280,7 @@ async def remove_item(
         raise HTTPException(status_code=404, detail="Item not found in collection")
 
     await db.delete(item)
+    collection.updated_at = datetime.now(UTC)
     await db.commit()
 
 
@@ -293,7 +298,7 @@ async def update_item_notes(
     db: AsyncSession = Depends(get_session),
 ) -> CollectionItemResponse:
     """Update notes on a collection item."""
-    await _get_collection_or_404(db, collection_id, client_id)
+    collection = await _get_collection_or_404(db, collection_id, client_id)
 
     stmt = select(CollectionItem).where(
         CollectionItem.collection_id == collection_id,
@@ -305,6 +310,7 @@ async def update_item_notes(
 
     if body.notes is not None:
         item.notes = body.notes
+    collection.updated_at = datetime.now(UTC)
 
     await db.commit()
     await db.refresh(item)

@@ -248,19 +248,33 @@ class LLMHarness:
         """Compare two bills side-by-side."""
         prompt_version = compare_v1.PROMPT_VERSION
         model = settings.summary_model
-        c_hash = self.content_hash(f"{bill_a_text}:{bill_b_text}", prompt_version)
 
-        cached = await self._check_cache(bill_id_a, "comparison", prompt_version, c_hash)
+        # Truncate texts to match what the prompt actually sends
+        text_a = bill_a_text[:25000]
+        text_b = bill_b_text[:25000]
+
+        # Canonicalize order so compare(A,B) and compare(B,A) share cache
+        canonical_ids = sorted([bill_id_a, bill_id_b])
+        if canonical_ids[0] == bill_id_a:
+            hash_input = f"{text_a}:{text_b}"
+        else:
+            hash_input = f"{text_b}:{text_a}"
+        c_hash = self.content_hash(hash_input, prompt_version)
+        cache_bill_id = canonical_ids[0]
+
+        cached = await self._check_cache(
+            cache_bill_id, "comparison", prompt_version, c_hash
+        )
         if cached:
             return BillComparisonOutput(**cached)
 
         user_prompt = compare_v1.USER_PROMPT_TEMPLATE.format(
             bill_a_identifier=bill_a_identifier,
             bill_a_title=bill_a_title,
-            bill_a_text=bill_a_text[:25000],
+            bill_a_text=text_a,
             bill_b_identifier=bill_b_identifier,
             bill_b_title=bill_b_title,
-            bill_b_text=bill_b_text[:25000],
+            bill_b_text=text_b,
         )
 
         response = await self.client.messages.create(
@@ -292,7 +306,7 @@ class LLMHarness:
 
         result_dict = output.model_dump()
         await self._store_result(
-            bill_id=bill_id_a,
+            bill_id=cache_bill_id,
             analysis_type="comparison",
             result=result_dict,
             model=model,
