@@ -1,6 +1,6 @@
 """Jurisdiction and legislative session endpoints."""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,8 +8,15 @@ from src.api.deps import get_session
 from src.models.jurisdiction import Jurisdiction
 from src.models.session import LegislativeSession
 from src.schemas.common import MetaResponse
-from src.schemas.jurisdiction import JurisdictionListResponse, JurisdictionResponse
+from src.schemas.jurisdiction import (
+    JurisdictionListResponse,
+    JurisdictionResponse,
+    JurisdictionStatsResponse,
+    SessionBillCount,
+    SubjectCount,
+)
 from src.schemas.session import SessionListResponse, SessionResponse
+from src.services.jurisdiction_service import get_jurisdiction_stats
 
 router = APIRouter()
 
@@ -89,4 +96,31 @@ async def list_sessions(
     return SessionListResponse(
         data=data,
         meta=MetaResponse(total_count=total, page=page, per_page=per_page),
+    )
+
+
+@router.get(
+    "/jurisdictions/{jurisdiction_id}/stats",
+    response_model=JurisdictionStatsResponse,
+)
+async def get_jurisdiction_stats_endpoint(
+    jurisdiction_id: str,
+    db: AsyncSession = Depends(get_session),
+) -> JurisdictionStatsResponse:
+    """Get aggregate statistics for a jurisdiction."""
+    # Verify jurisdiction exists
+    result = await db.execute(
+        select(Jurisdiction).where(Jurisdiction.id == jurisdiction_id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Jurisdiction not found")
+
+    stats = await get_jurisdiction_stats(db, jurisdiction_id)
+
+    return JurisdictionStatsResponse(
+        total_bills=stats["total_bills"],
+        total_legislators=stats["total_legislators"],
+        bills_by_status=stats["bills_by_status"],
+        bills_by_session=[SessionBillCount(**s) for s in stats["bills_by_session"]],
+        top_subjects=[SubjectCount(**s) for s in stats["top_subjects"]],
     )
