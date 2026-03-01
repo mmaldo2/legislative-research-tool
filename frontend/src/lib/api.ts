@@ -4,14 +4,23 @@
  */
 
 import type {
+  BillComparisonOutput,
   BillDetailResponse,
   BillListResponse,
+  ChatResponse,
+  CollectionDetailResponse,
+  CollectionItemResponse,
+  CollectionListResponse,
+  CollectionResponse,
+  ConversationListResponse,
+  ConversationResponse,
   HealthResponse,
   JurisdictionListResponse,
   PersonListResponse,
   PersonResponse,
   SearchResponse,
   SessionListResponse,
+  SimilarBillsResponse,
   StatusResponse,
   VoteEventListResponse,
 } from "@/types/api";
@@ -188,6 +197,165 @@ export async function getHealth(): Promise<HealthResponse> {
 
 export async function getStatus(): Promise<StatusResponse> {
   return fetchApi<StatusResponse>("/status");
+}
+
+// --- Compare ---
+
+export async function getSimilarBills(
+  billId: string,
+  params: { top_k?: number; min_score?: number; exclude_same_jurisdiction?: boolean } = {},
+): Promise<SimilarBillsResponse> {
+  const query = qs(params);
+  return fetchApi<SimilarBillsResponse>(
+    `/bills/${encodeURIComponent(billId)}/similar${query}`,
+    { revalidate: 300 },
+  );
+}
+
+export async function compareBills(
+  billIdA: string,
+  billIdB: string,
+): Promise<BillComparisonOutput> {
+  return fetchApi<BillComparisonOutput>("/analyze/compare", {
+    method: "POST",
+    body: JSON.stringify({ bill_id_a: billIdA, bill_id_b: billIdB }),
+  });
+}
+
+// --- Collections ---
+
+const CLIENT_ID_KEY = "legis-client-id";
+
+function getClientId(): string {
+  if (typeof window === "undefined") return "server";
+  let id = localStorage.getItem(CLIENT_ID_KEY);
+  if (!id) {
+    id = crypto.randomUUID();
+    localStorage.setItem(CLIENT_ID_KEY, id);
+  }
+  return id;
+}
+
+function clientHeaders(): Record<string, string> {
+  return { "X-Client-Id": getClientId() };
+}
+
+export async function listCollections(params: {
+  page?: number;
+  per_page?: number;
+} = {}): Promise<CollectionListResponse> {
+  return fetchApi<CollectionListResponse>(`/collections${qs(params)}`, {
+    headers: clientHeaders(),
+    revalidate: false,
+  });
+}
+
+export async function getCollection(id: number): Promise<CollectionDetailResponse> {
+  return fetchApi<CollectionDetailResponse>(`/collections/${id}`, {
+    headers: clientHeaders(),
+    revalidate: false,
+  });
+}
+
+export async function createCollection(
+  name: string,
+  description?: string,
+): Promise<CollectionResponse> {
+  return fetchApi<CollectionResponse>("/collections", {
+    method: "POST",
+    body: JSON.stringify({ name, description }),
+    headers: clientHeaders(),
+  });
+}
+
+export async function deleteCollection(id: number): Promise<void> {
+  await fetchApi<void>(`/collections/${id}`, {
+    method: "DELETE",
+    headers: clientHeaders(),
+  });
+}
+
+export async function addToCollection(
+  collectionId: number,
+  billId: string,
+  notes?: string,
+): Promise<CollectionItemResponse> {
+  return fetchApi<CollectionItemResponse>(`/collections/${collectionId}/items`, {
+    method: "POST",
+    body: JSON.stringify({ bill_id: billId, notes }),
+    headers: clientHeaders(),
+  });
+}
+
+export async function removeFromCollection(
+  collectionId: number,
+  billId: string,
+): Promise<void> {
+  await fetchApi<void>(`/collections/${collectionId}/items/${encodeURIComponent(billId)}`, {
+    method: "DELETE",
+    headers: clientHeaders(),
+  });
+}
+
+export async function updateCollectionItemNotes(
+  collectionId: number,
+  billId: string,
+  notes: string | null,
+): Promise<CollectionItemResponse> {
+  return fetchApi<CollectionItemResponse>(
+    `/collections/${collectionId}/items/${encodeURIComponent(billId)}`,
+    {
+      method: "PUT",
+      body: JSON.stringify({ notes }),
+      headers: clientHeaders(),
+    },
+  );
+}
+
+// --- Chat ---
+
+export async function sendChatMessage(
+  message: string,
+  conversationId?: string,
+): Promise<ChatResponse> {
+  return fetchApi<ChatResponse>("/chat", {
+    method: "POST",
+    body: JSON.stringify({ message, conversation_id: conversationId }),
+    headers: clientHeaders(),
+  });
+}
+
+export async function listConversations(params: {
+  page?: number;
+  per_page?: number;
+} = {}): Promise<ConversationListResponse> {
+  return fetchApi<ConversationListResponse>(`/conversations${qs(params)}`, {
+    headers: clientHeaders(),
+    revalidate: false,
+  });
+}
+
+export async function getConversation(id: string): Promise<ConversationResponse> {
+  return fetchApi<ConversationResponse>(`/conversations/${encodeURIComponent(id)}`, {
+    headers: clientHeaders(),
+    revalidate: false,
+  });
+}
+
+// --- Export ---
+
+export function getExportCsvUrl(params: {
+  bill_ids?: string;
+  jurisdiction?: string;
+  status?: string;
+  q?: string;
+  include_summary?: boolean;
+}): string {
+  return `${API_BASE}/export/bills/csv${qs(params)}`;
+}
+
+export function getBillBriefUrl(billId: string): string {
+  return `${API_BASE}/export/bills/${encodeURIComponent(billId)}/brief`;
 }
 
 export { ApiError, RateLimitError };

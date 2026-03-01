@@ -201,3 +201,94 @@ export interface StatusResponse {
   total_jurisdictions: number;
   recent_runs: IngestionRunResponse[];
 }
+
+// --- Compare ---
+
+export interface SimilarBillResult {
+  bill_id: string;
+  identifier: string;
+  title: string;
+  jurisdiction_id: string;
+  status: string | null;
+  similarity_score: number;
+}
+
+export interface SimilarBillsResponse {
+  data: SimilarBillResult[];
+  meta: MetaResponse;
+}
+
+export interface BillComparisonOutput {
+  shared_provisions: string[];
+  unique_to_a: string[];
+  unique_to_b: string[];
+  key_differences: string[];
+  overall_assessment: string;
+  similarity_score: number;
+  is_model_legislation: boolean;
+  confidence: number;
+}
+
+// --- Collections ---
+
+export interface CollectionResponse {
+  id: number;
+  name: string;
+  description: string | null;
+  item_count: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface CollectionItemResponse {
+  id: number;
+  bill_id: string;
+  notes: string | null;
+  added_at: string | null;
+}
+
+export interface CollectionDetailResponse {
+  id: number;
+  name: string;
+  description: string | null;
+  items: CollectionItemResponse[];
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface CollectionListResponse {
+  data: CollectionResponse[];
+  meta: MetaResponse;
+}
+
+// --- Chat ---
+
+export interface ToolCallInfo {
+  tool_name: string;
+  arguments: Record<string, unknown>;
+  result_summary: string | null;
+}
+
+export interface ChatMessageResponse {
+  role: string;
+  content: string;
+  tool_calls: ToolCallInfo[] | null;
+  created_at: string | null;
+}
+
+export interface ChatResponse {
+  conversation_id: string;
+  message: ChatMessageResponse;
+}
+
+export interface ConversationResponse {
+  id: string;
+  title: string | null;
+  messages: ChatMessageResponse[];
+  created_at: string | null;
+}
+
+export interface ConversationListResponse {
+  data: ConversationResponse[];
+  meta: MetaResponse;
+}

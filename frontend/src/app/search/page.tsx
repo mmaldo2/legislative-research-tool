@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
 import { parsePageParam, parseSearchMode } from "@/lib/format";
+import { getExportCsvUrl } from "@/lib/api";
 import { SearchForm } from "./search-form";
 import { SearchResults } from "./search-results";
 
@@ -28,6 +29,19 @@ export default async function SearchPage({
         defaultJurisdiction={jurisdiction}
         defaultMode={mode}
       />
+
+      {q && (
+        <div className="mt-4 flex justify-end">
+          <a
+            href={getExportCsvUrl({ q, jurisdiction: jurisdiction || undefined, include_summary: true })}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent"
+          >
+            Export CSV
+          </a>
+        </div>
+      )}
 
       {q && (
         <Suspense

@@ -1,7 +1,7 @@
-import { cache } from "react";
+import { Suspense, cache } from "react";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { ApiError, getBill } from "@/lib/api";
+import { ApiError, getBill, getBillBriefUrl } from "@/lib/api";
 
 const getBillCached = cache((id: string) => getBill(id));
 import { Badge } from "@/components/ui/badge";
@@ -11,6 +11,8 @@ import { BillSummaryTab } from "./summary-tab";
 import { BillTextTab } from "./text-tab";
 import { BillActionsTab } from "./actions-tab";
 import { BillSponsorsTab } from "./sponsors-tab";
+import { SimilarTab } from "./similar-tab";
+import { SaveToCollection } from "@/components/save-to-collection";
 
 export async function generateMetadata({
   params,
@@ -64,7 +66,20 @@ export default async function BillDetailPage({
             </span>
           )}
         </div>
-        <h1 className="text-2xl font-bold leading-tight">{bill.title}</h1>
+        <div className="flex items-start gap-3">
+          <h1 className="flex-1 text-2xl font-bold leading-tight">{bill.title}</h1>
+          <div className="flex shrink-0 items-center gap-2">
+            <SaveToCollection billId={id} />
+            <a
+              href={getBillBriefUrl(id)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent"
+            >
+              Download Brief
+            </a>
+          </div>
+        </div>
         {bill.subject && bill.subject.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-1">
             {bill.subject.map((s) => (
@@ -89,6 +104,7 @@ export default async function BillDetailPage({
           <TabsTrigger value="sponsors">
             Sponsors ({bill.sponsors.length})
           </TabsTrigger>
+          <TabsTrigger value="similar">Similar</TabsTrigger>
         </TabsList>
 
         <TabsContent value="summary" className="mt-4">
@@ -105,6 +121,20 @@ export default async function BillDetailPage({
 
         <TabsContent value="sponsors" className="mt-4">
           <BillSponsorsTab sponsors={bill.sponsors} />
+        </TabsContent>
+
+        <TabsContent value="similar" className="mt-4">
+          <Suspense
+            fallback={
+              <div className="space-y-3">
+                {Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="h-20 animate-pulse rounded-lg border bg-muted/30" />
+                ))}
+              </div>
+            }
+          >
+            <SimilarTab billId={id} />
+          </Suspense>
         </TabsContent>
       </Tabs>
     </div>
