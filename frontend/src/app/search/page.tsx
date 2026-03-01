@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
+import { parsePageParam, parseSearchMode } from "@/lib/format";
 import { SearchForm } from "./search-form";
 import { SearchResults } from "./search-results";
 
@@ -13,11 +14,11 @@ export default async function SearchPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const params = await searchParams;
-  const q = typeof params.q === "string" ? params.q : "";
+  const q = typeof params.q === "string" ? params.q.slice(0, 500) : "";
   const jurisdiction =
     typeof params.jurisdiction === "string" ? params.jurisdiction : "";
-  const mode = typeof params.mode === "string" ? params.mode : "hybrid";
-  const page = typeof params.page === "string" ? parseInt(params.page, 10) : 1;
+  const mode = parseSearchMode(params.mode);
+  const page = parsePageParam(params.page);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
@@ -36,7 +37,7 @@ export default async function SearchPage({
           <SearchResults
             q={q}
             jurisdiction={jurisdiction || undefined}
-            mode={mode as "keyword" | "semantic" | "hybrid"}
+            mode={mode}
             page={page}
           />
         </Suspense>

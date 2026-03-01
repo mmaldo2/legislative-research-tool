@@ -17,23 +17,61 @@ import type {
 } from "@/types/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
+const API_KEY = process.env.API_KEY ?? "";
 
 class ApiError extends Error {
   constructor(
-    public status: number,
+    public readonly status: number,
     message: string,
   ) {
     super(message);
     this.name = "ApiError";
+    Object.setPrototypeOf(this, ApiError.prototype);
   }
 }
 
-async function fetchApi<T>(path: string, init?: RequestInit): Promise<T> {
+class RateLimitError extends Error {
+  public readonly retryAfterSeconds: number | null;
+
+  constructor(retryAfter: string | null) {
+    const seconds = retryAfter ? parseInt(retryAfter, 10) : null;
+    const validSeconds = seconds !== null && !Number.isNaN(seconds) ? seconds : null;
+    super(
+      validSeconds
+        ? `Rate limited. Please retry after ${validSeconds} seconds.`
+        : "Rate limited. Please wait a moment and try again.",
+    );
+    this.name = "RateLimitError";
+    this.retryAfterSeconds = validSeconds;
+    Object.setPrototypeOf(this, RateLimitError.prototype);
+  }
+}
+
+interface FetchApiOptions extends Omit<RequestInit, "next"> {
+  revalidate?: number | false;
+}
+
+async function fetchApi<T>(path: string, init?: FetchApiOptions): Promise<T> {
   const url = `${API_BASE}${path}`;
+  const { revalidate, ...rest } = init ?? {};
+  const headers: Record<string, string> = {
+    ...(rest.headers as Record<string, string>),
+  };
+  if (rest.body) {
+    headers["Content-Type"] = "application/json";
+  }
+  if (API_KEY) {
+    headers["X-API-Key"] = API_KEY;
+  }
   const res = await fetch(url, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    ...rest,
+    headers,
+    ...(revalidate !== undefined ? { next: { revalidate } } : {}),
   });
+
+  if (res.status === 429) {
+    throw new RateLimitError(res.headers.get("Retry-After"));
+  }
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
@@ -64,11 +102,14 @@ export async function listBills(params: {
   page?: number;
   per_page?: number;
 } = {}): Promise<BillListResponse> {
-  return fetchApi<BillListResponse>(`/bills${qs(params)}`);
+  return fetchApi<BillListResponse>(`/bills${qs(params)}`, { revalidate: 300 });
 }
 
 export async function getBill(billId: string): Promise<BillDetailResponse> {
-  return fetchApi<BillDetailResponse>(`/bills/${encodeURIComponent(billId)}`);
+  return fetchApi<BillDetailResponse>(
+    `/bills/${encodeURIComponent(billId)}`,
+    { revalidate: 300 },
+  );
 }
 
 // --- Search ---
@@ -80,7 +121,7 @@ export async function searchBills(params: {
   page?: number;
   per_page?: number;
 }): Promise<SearchResponse> {
-  return fetchApi<SearchResponse>(`/search/bills${qs(params)}`);
+  return fetchApi<SearchResponse>(`/search/bills${qs(params)}`, { revalidate: 60 });
 }
 
 // --- People ---
@@ -93,11 +134,14 @@ export async function listPeople(params: {
   page?: number;
   per_page?: number;
 } = {}): Promise<PersonListResponse> {
-  return fetchApi<PersonListResponse>(`/people${qs(params)}`);
+  return fetchApi<PersonListResponse>(`/people${qs(params)}`, { revalidate: 300 });
 }
 
 export async function getPerson(personId: string): Promise<PersonResponse> {
-  return fetchApi<PersonResponse>(`/people/${encodeURIComponent(personId)}`);
+  return fetchApi<PersonResponse>(
+    `/people/${encodeURIComponent(personId)}`,
+    { revalidate: 300 },
+  );
 }
 
 // --- Jurisdictions ---
@@ -107,7 +151,7 @@ export async function listJurisdictions(params: {
   page?: number;
   per_page?: number;
 } = {}): Promise<JurisdictionListResponse> {
-  return fetchApi<JurisdictionListResponse>(`/jurisdictions${qs(params)}`);
+  return fetchApi<JurisdictionListResponse>(`/jurisdictions${qs(params)}`, { revalidate: 3600 });
 }
 
 // --- Sessions ---
@@ -117,17 +161,23 @@ export async function listSessions(params: {
   page?: number;
   per_page?: number;
 } = {}): Promise<SessionListResponse> {
-  return fetchApi<SessionListResponse>(`/sessions${qs(params)}`);
+  return fetchApi<SessionListResponse>(`/sessions${qs(params)}`, { revalidate: 3600 });
 }
 
 // --- Votes ---
 
-export async function listVoteEvents(params: {
-  bill_id?: string;
-  page?: number;
-  per_page?: number;
-} = {}): Promise<VoteEventListResponse> {
-  return fetchApi<VoteEventListResponse>(`/votes${qs(params)}`);
+export async function listVoteEvents(
+  billId: string,
+  params: {
+    page?: number;
+    per_page?: number;
+  } = {},
+): Promise<VoteEventListResponse> {
+  const query = qs(params);
+  return fetchApi<VoteEventListResponse>(
+    `/bills/${encodeURIComponent(billId)}/votes${query}`,
+    { revalidate: 300 },
+  );
 }
 
 // --- Status ---
@@ -140,4 +190,4 @@ export async function getStatus(): Promise<StatusResponse> {
   return fetchApi<StatusResponse>("/status");
 }
 
-export { ApiError };
+export { ApiError, RateLimitError };

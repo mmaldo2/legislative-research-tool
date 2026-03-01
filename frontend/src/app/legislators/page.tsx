@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
+import { parsePageParam } from "@/lib/format";
 import { LegislatorsList } from "./legislators-list";
 
 export const metadata: Metadata = {
@@ -17,7 +18,7 @@ export default async function LegislatorsPage({
   const party = typeof params.party === "string" ? params.party : "";
   const chamber = typeof params.chamber === "string" ? params.chamber : "";
   const q = typeof params.q === "string" ? params.q : "";
-  const page = typeof params.page === "string" ? parseInt(params.page, 10) : 1;
+  const page = parsePageParam(params.page);
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">

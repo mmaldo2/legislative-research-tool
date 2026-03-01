@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { isSafeUrl } from "@/lib/format";
 import type { BillTextResponse } from "@/types/api";
 
 interface BillTextTabProps {
@@ -67,7 +68,7 @@ export function BillTextTab({ texts }: BillTextTabProps) {
           ) : (
             <p className="text-muted-foreground">
               Text content not available for this version.
-              {selected.source_url && (
+              {selected.source_url && isSafeUrl(selected.source_url) && (
                 <>
                   {" "}
                   <a
