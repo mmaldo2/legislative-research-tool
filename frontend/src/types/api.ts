@@ -177,6 +177,69 @@ export interface BillSummaryOutput {
   confidence: number;
 }
 
+// --- Version Diff ---
+
+export interface VersionDiffChange {
+  section: string;
+  change_type: string;
+  significance: string;
+  before: string | null;
+  after: string | null;
+  description: string;
+}
+
+export interface VersionDiffOutput {
+  version_a_name: string;
+  version_b_name: string;
+  changes: VersionDiffChange[];
+  summary_of_changes: string;
+  direction_of_change: string;
+  amendments_incorporated: string[];
+  has_severability_clause: boolean;
+  confidence: number;
+}
+
+// --- Constitutional Analysis ---
+
+export interface ConstitutionalConcern {
+  provision: string;
+  severity: string;
+  bill_section: string;
+  description: string;
+  relevant_precedents: string[];
+}
+
+export interface ConstitutionalAnalysisOutput {
+  concerns: ConstitutionalConcern[];
+  preemption_issues: string[];
+  has_severability_clause: boolean;
+  overall_risk_level: string;
+  summary: string;
+  confidence: number;
+}
+
+// --- Pattern Detection ---
+
+export interface PatternBillInfo {
+  bill_id: string;
+  identifier: string;
+  jurisdiction_id: string;
+  title: string;
+  variations: string[];
+}
+
+export interface PatternDetectionOutput {
+  pattern_type: string;
+  common_framework: string;
+  source_organization: string | null;
+  bills_analyzed: PatternBillInfo[];
+  shared_provisions: string[];
+  key_variations: string[];
+  model_legislation_confidence: number;
+  summary: string;
+  confidence: number;
+}
+
 // --- Status ---
 
 export interface HealthResponse {

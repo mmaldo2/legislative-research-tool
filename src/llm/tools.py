@@ -88,4 +88,45 @@ RESEARCH_TOOLS = [
             "required": ["bill_id"],
         },
     },
+    {
+        "name": "analyze_constitutional",
+        "description": (
+            "Analyze a bill for potential constitutional concerns including First Amendment, "
+            "Due Process, Equal Protection, Commerce Clause, and federal preemption issues. "
+            "Returns severity-rated concerns with relevant precedents."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "bill_id": {
+                    "type": "string",
+                    "description": "The bill ID to analyze for constitutional issues.",
+                },
+            },
+            "required": ["bill_id"],
+        },
+    },
+    {
+        "name": "analyze_patterns",
+        "description": (
+            "Detect cross-jurisdictional legislative patterns and model legislation. "
+            "Compares a bill against similar bills from other states to identify shared "
+            "frameworks, common provisions, and potential source organizations (ALEC, NCSL, etc.)."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "bill_id": {
+                    "type": "string",
+                    "description": "The source bill ID to analyze for patterns.",
+                },
+                "top_k": {
+                    "type": "integer",
+                    "default": 5,
+                    "description": "Number of similar bills to compare against (default 5).",
+                },
+            },
+            "required": ["bill_id"],
+        },
+    },
 ]

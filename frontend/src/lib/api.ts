@@ -12,16 +12,19 @@ import type {
   CollectionItemResponse,
   CollectionListResponse,
   CollectionResponse,
+  ConstitutionalAnalysisOutput,
   ConversationListResponse,
   ConversationResponse,
   HealthResponse,
   JurisdictionListResponse,
+  PatternDetectionOutput,
   PersonListResponse,
   PersonResponse,
   SearchResponse,
   SessionListResponse,
   SimilarBillsResponse,
   StatusResponse,
+  VersionDiffOutput,
   VoteEventListResponse,
 } from "@/types/api";
 
@@ -238,6 +241,42 @@ export async function compareBills(
   return fetchApi<BillComparisonOutput>("/analyze/compare", {
     method: "POST",
     body: JSON.stringify({ bill_id_a: billIdA, bill_id_b: billIdB }),
+  });
+}
+
+// --- Intelligence Layer ---
+
+export async function analyzeVersionDiff(
+  billId: string,
+  versionAId?: string,
+  versionBId?: string,
+): Promise<VersionDiffOutput> {
+  return fetchApi<VersionDiffOutput>("/analyze/version-diff", {
+    method: "POST",
+    body: JSON.stringify({
+      bill_id: billId,
+      version_a_id: versionAId ?? null,
+      version_b_id: versionBId ?? null,
+    }),
+  });
+}
+
+export async function analyzeConstitutional(
+  billId: string,
+): Promise<ConstitutionalAnalysisOutput> {
+  return fetchApi<ConstitutionalAnalysisOutput>("/analyze/constitutional", {
+    method: "POST",
+    body: JSON.stringify({ bill_id: billId }),
+  });
+}
+
+export async function analyzePatterns(
+  billId: string,
+  topK: number = 5,
+): Promise<PatternDetectionOutput> {
+  return fetchApi<PatternDetectionOutput>("/analyze/patterns", {
+    method: "POST",
+    body: JSON.stringify({ bill_id: billId, top_k: topK }),
   });
 }
 

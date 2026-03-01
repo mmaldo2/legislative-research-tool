@@ -35,6 +35,90 @@ class TopicClassificationOutput(BaseModel):
     confidence: float
 
 
+class VersionDiffRequest(BaseModel):
+    bill_id: str
+    version_a_id: str | None = None  # None = first version
+    version_b_id: str | None = None  # None = latest version
+
+
+class ConstitutionalRequest(BaseModel):
+    bill_id: str
+
+
+class PatternDetectRequest(BaseModel):
+    bill_id: str
+    top_k: int = 5  # Number of similar bills to analyze
+
+
+class VersionDiffChange(BaseModel):
+    """A single change between two bill versions."""
+
+    section: str
+    change_type: str  # "added", "removed", "modified"
+    significance: str  # "major", "moderate", "minor"
+    before: str | None = None
+    after: str | None = None
+    description: str
+
+
+class VersionDiffOutput(BaseModel):
+    """Structured output for bill version diff analysis."""
+
+    version_a_name: str
+    version_b_name: str
+    changes: list[VersionDiffChange]
+    summary_of_changes: str
+    direction_of_change: str  # e.g. "narrowed scope", "added enforcement"
+    amendments_incorporated: list[str]
+    has_severability_clause: bool = False
+    confidence: float
+
+
+class ConstitutionalConcern(BaseModel):
+    """A single constitutional concern flagged in a bill."""
+
+    provision: str  # Which amendment/clause
+    severity: str  # "high", "moderate", "low"
+    bill_section: str  # Which part of the bill
+    description: str
+    relevant_precedents: list[str]  # Case names
+
+
+class ConstitutionalAnalysisOutput(BaseModel):
+    """Structured output for constitutional flag analysis."""
+
+    concerns: list[ConstitutionalConcern]
+    preemption_issues: list[str]
+    has_severability_clause: bool
+    overall_risk_level: str  # "high", "moderate", "low", "minimal"
+    summary: str
+    confidence: float
+
+
+class PatternBillInfo(BaseModel):
+    """Info about one bill in a cross-jurisdictional pattern."""
+
+    bill_id: str
+    identifier: str
+    jurisdiction_id: str
+    title: str
+    variations: list[str]  # How this bill differs from the source
+
+
+class PatternDetectionOutput(BaseModel):
+    """Structured output for cross-jurisdictional pattern detection."""
+
+    pattern_type: str  # "identical", "adapted", "inspired", "coincidental"
+    common_framework: str
+    source_organization: str | None = None  # ALEC, NCSL, etc. if identifiable
+    bills_analyzed: list[PatternBillInfo]
+    shared_provisions: list[str]
+    key_variations: list[str]
+    model_legislation_confidence: float  # 0.0-1.0
+    summary: str
+    confidence: float
+
+
 class AnalysisResponse(BaseModel):
     """Read-only view of a stored AI analysis."""
 

@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from src.api.deps import get_anthropic_client, get_session, limiter
 from src.config import settings
+from src.llm.harness import LLMHarness
 from src.llm.prompts import research_assistant_v1
 from src.llm.tools import RESEARCH_TOOLS
 from src.models.bill import Bill
@@ -243,6 +244,119 @@ async def _tool_find_similar_bills(
     )
 
 
+async def _tool_analyze_constitutional(
+    arguments: dict[str, Any], db: AsyncSession
+) -> str:
+    bill_id = arguments.get("bill_id", "")
+    stmt = (
+        select(Bill)
+        .where(Bill.id == bill_id)
+        .options(selectinload(Bill.texts))
+    )
+    result = await db.execute(stmt)
+    bill = result.scalar_one_or_none()
+    if not bill:
+        return json.dumps({"error": f"Bill '{bill_id}' not found."})
+
+    bill_text = bill.title
+    if bill.texts:
+        for t in bill.texts:
+            if t.content_text:
+                bill_text = t.content_text
+                break
+
+    harness = LLMHarness(db_session=db, client=get_anthropic_client())
+    output = await harness.constitutional_analysis(
+        bill_id=bill.id,
+        bill_text=bill_text,
+        identifier=bill.identifier,
+        jurisdiction=bill.jurisdiction_id,
+        title=bill.title,
+    )
+    await db.flush()
+    return json.dumps(output.model_dump())
+
+
+async def _tool_analyze_patterns(
+    arguments: dict[str, Any], db: AsyncSession
+) -> str:
+    bill_id = arguments.get("bill_id", "")
+    top_k = arguments.get("top_k", 5)
+
+    stmt = (
+        select(Bill)
+        .where(Bill.id == bill_id)
+        .options(selectinload(Bill.texts))
+    )
+    result = await db.execute(stmt)
+    bill = result.scalar_one_or_none()
+    if not bill:
+        return json.dumps({"error": f"Bill '{bill_id}' not found."})
+
+    source_text = bill.title
+    if bill.texts:
+        for t in bill.texts:
+            if t.content_text:
+                source_text = t.content_text
+                break
+
+    # Find similar bills from other jurisdictions
+    sim_stmt = (
+        select(BillSimilarity)
+        .where(
+            (BillSimilarity.bill_id_a == bill_id)
+            | (BillSimilarity.bill_id_b == bill_id)
+        )
+        .order_by(BillSimilarity.similarity_score.desc())
+        .limit(top_k)
+    )
+    result = await db.execute(sim_stmt)
+    similarities = result.scalars().all()
+
+    if not similarities:
+        return json.dumps(
+            {"error": "No similar bills found for pattern analysis."}
+        )
+
+    other_ids = [
+        s.bill_id_b if s.bill_id_a == bill_id else s.bill_id_a
+        for s in similarities
+    ]
+    bills_result = await db.execute(
+        select(Bill)
+        .where(Bill.id.in_(other_ids))
+        .options(selectinload(Bill.texts))
+    )
+    similar_bills = bills_result.scalars().all()
+
+    similar_parts: list[str] = []
+    for sb in similar_bills:
+        sb_text = sb.title
+        if sb.texts:
+            for t in sb.texts:
+                if t.content_text:
+                    sb_text = t.content_text
+                    break
+        similar_parts.append(
+            f"Bill: {sb.identifier}\n"
+            f"Jurisdiction: {sb.jurisdiction_id}\n"
+            f"Title: {sb.title}\n"
+            f"Text:\n{sb_text[:10000]}\n"
+        )
+
+    harness = LLMHarness(db_session=db, client=get_anthropic_client())
+    output = await harness.pattern_detect(
+        source_bill_id=bill.id,
+        source_text=source_text,
+        source_identifier=bill.identifier,
+        source_jurisdiction=bill.jurisdiction_id,
+        source_title=bill.title,
+        similar_bills_text="\n---\n".join(similar_parts),
+    )
+    await db.flush()
+    return json.dumps(output.model_dump())
+
+
 # Registry mapping tool names to handler functions
 _ToolHandler = Callable[
     [dict[str, Any], AsyncSession], Coroutine[Any, Any, str]
@@ -252,6 +366,8 @@ _TOOL_HANDLERS: dict[str, _ToolHandler] = {
     "get_bill_detail": _tool_get_bill_detail,
     "list_jurisdictions": _tool_list_jurisdictions,
     "find_similar_bills": _tool_find_similar_bills,
+    "analyze_constitutional": _tool_analyze_constitutional,
+    "analyze_patterns": _tool_analyze_patterns,
 }
 
 

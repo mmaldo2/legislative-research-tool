@@ -14,9 +14,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.llm.cost_tracker import CostTracker
-from src.llm.prompts import classify_v1, compare_v1, summarize_v1
+from src.llm.prompts import (
+    classify_v1,
+    compare_v1,
+    constitutional_v1,
+    pattern_detect_v1,
+    summarize_v1,
+    version_diff_v1,
+)
 from src.models.ai_analysis import AiAnalysis
-from src.schemas.analysis import BillSummaryOutput, TopicClassificationOutput
+from src.schemas.analysis import (
+    BillSummaryOutput,
+    ConstitutionalAnalysisOutput,
+    PatternDetectionOutput,
+    TopicClassificationOutput,
+    VersionDiffOutput,
+)
 from src.schemas.compare import BillComparisonOutput
 
 logger = logging.getLogger(__name__)
@@ -308,6 +321,218 @@ class LLMHarness:
         await self._store_result(
             bill_id=cache_bill_id,
             analysis_type="comparison",
+            result=result_dict,
+            model=model,
+            prompt_version=prompt_version,
+            c_hash=c_hash,
+            tokens_input=tokens_in,
+            tokens_output=tokens_out,
+            cost_usd=usage.cost_usd,
+            confidence=output.confidence,
+        )
+
+        return output
+
+    async def version_diff(
+        self,
+        bill_id: str,
+        identifier: str,
+        jurisdiction: str,
+        version_a_name: str,
+        version_a_text: str,
+        version_b_name: str,
+        version_b_text: str,
+    ) -> VersionDiffOutput:
+        """Analyze differences between two versions of the same bill."""
+        prompt_version = version_diff_v1.PROMPT_VERSION
+        model = settings.summary_model
+        hash_input = f"{version_a_text[:25000]}:{version_b_text[:25000]}"
+        c_hash = self.content_hash(hash_input, prompt_version)
+
+        cached = await self._check_cache(bill_id, "version_diff", prompt_version, c_hash)
+        if cached:
+            return VersionDiffOutput(**cached)
+
+        user_prompt = version_diff_v1.USER_PROMPT_TEMPLATE.format(
+            identifier=identifier,
+            jurisdiction=jurisdiction,
+            version_a_name=version_a_name,
+            version_a_text=version_a_text[:25000],
+            version_b_name=version_b_name,
+            version_b_text=version_b_text[:25000],
+        )
+
+        response = await self.client.messages.create(
+            model=model,
+            max_tokens=4096,
+            system=version_diff_v1.SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+
+        response_text = response.content[0].text
+        try:
+            result_data = json.loads(response_text)
+            output = VersionDiffOutput(**result_data)
+        except (json.JSONDecodeError, ValueError):
+            output = VersionDiffOutput(
+                version_a_name=version_a_name,
+                version_b_name=version_b_name,
+                changes=[],
+                summary_of_changes=response_text,
+                direction_of_change="unknown",
+                amendments_incorporated=[],
+                confidence=0.3,
+            )
+
+        tokens_in = response.usage.input_tokens
+        tokens_out = response.usage.output_tokens
+        usage = self.cost_tracker.record(model, tokens_in, tokens_out, "version_diff")
+
+        result_dict = output.model_dump()
+        await self._store_result(
+            bill_id=bill_id,
+            analysis_type="version_diff",
+            result=result_dict,
+            model=model,
+            prompt_version=prompt_version,
+            c_hash=c_hash,
+            tokens_input=tokens_in,
+            tokens_output=tokens_out,
+            cost_usd=usage.cost_usd,
+            confidence=output.confidence,
+        )
+
+        return output
+
+    async def constitutional_analysis(
+        self,
+        bill_id: str,
+        bill_text: str,
+        identifier: str = "",
+        jurisdiction: str = "",
+        title: str = "",
+    ) -> ConstitutionalAnalysisOutput:
+        """Analyze a bill for potential constitutional concerns."""
+        prompt_version = constitutional_v1.PROMPT_VERSION
+        model = settings.summary_model
+        c_hash = self.content_hash(bill_text, prompt_version)
+
+        cached = await self._check_cache(
+            bill_id, "constitutional", prompt_version, c_hash
+        )
+        if cached:
+            return ConstitutionalAnalysisOutput(**cached)
+
+        user_prompt = constitutional_v1.USER_PROMPT_TEMPLATE.format(
+            identifier=identifier,
+            jurisdiction=jurisdiction,
+            title=title,
+            bill_text=bill_text[:50000],
+        )
+
+        response = await self.client.messages.create(
+            model=model,
+            max_tokens=4096,
+            system=constitutional_v1.SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+
+        response_text = response.content[0].text
+        try:
+            result_data = json.loads(response_text)
+            output = ConstitutionalAnalysisOutput(**result_data)
+        except (json.JSONDecodeError, ValueError):
+            output = ConstitutionalAnalysisOutput(
+                concerns=[],
+                preemption_issues=[],
+                has_severability_clause=False,
+                overall_risk_level="unknown",
+                summary=response_text,
+                confidence=0.3,
+            )
+
+        tokens_in = response.usage.input_tokens
+        tokens_out = response.usage.output_tokens
+        usage = self.cost_tracker.record(
+            model, tokens_in, tokens_out, "constitutional_analysis"
+        )
+
+        result_dict = output.model_dump()
+        await self._store_result(
+            bill_id=bill_id,
+            analysis_type="constitutional",
+            result=result_dict,
+            model=model,
+            prompt_version=prompt_version,
+            c_hash=c_hash,
+            tokens_input=tokens_in,
+            tokens_output=tokens_out,
+            cost_usd=usage.cost_usd,
+            confidence=output.confidence,
+        )
+
+        return output
+
+    async def pattern_detect(
+        self,
+        source_bill_id: str,
+        source_text: str,
+        source_identifier: str,
+        source_jurisdiction: str,
+        source_title: str,
+        similar_bills_text: str,
+    ) -> PatternDetectionOutput:
+        """Detect cross-jurisdictional patterns and model legislation."""
+        prompt_version = pattern_detect_v1.PROMPT_VERSION
+        model = settings.summary_model
+        hash_input = f"{source_text[:25000]}:{similar_bills_text[:25000]}"
+        c_hash = self.content_hash(hash_input, prompt_version)
+
+        cached = await self._check_cache(
+            source_bill_id, "pattern_detect", prompt_version, c_hash
+        )
+        if cached:
+            return PatternDetectionOutput(**cached)
+
+        user_prompt = pattern_detect_v1.USER_PROMPT_TEMPLATE.format(
+            source_identifier=source_identifier,
+            source_jurisdiction=source_jurisdiction,
+            source_title=source_title,
+            source_text=source_text[:25000],
+            similar_bills_text=similar_bills_text[:25000],
+        )
+
+        response = await self.client.messages.create(
+            model=model,
+            max_tokens=4096,
+            system=pattern_detect_v1.SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+
+        response_text = response.content[0].text
+        try:
+            result_data = json.loads(response_text)
+            output = PatternDetectionOutput(**result_data)
+        except (json.JSONDecodeError, ValueError):
+            output = PatternDetectionOutput(
+                pattern_type="unknown",
+                common_framework=response_text,
+                bills_analyzed=[],
+                shared_provisions=[],
+                key_variations=[],
+                model_legislation_confidence=0.0,
+                summary=response_text,
+                confidence=0.3,
+            )
+
+        tokens_in = response.usage.input_tokens
+        tokens_out = response.usage.output_tokens
+        usage = self.cost_tracker.record(model, tokens_in, tokens_out, "pattern_detect")
+
+        result_dict = output.model_dump()
+        await self._store_result(
+            bill_id=source_bill_id,
+            analysis_type="pattern_detect",
             result=result_dict,
             model=model,
             prompt_version=prompt_version,
