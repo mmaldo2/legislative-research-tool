@@ -15,7 +15,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { id } = await params;
   try {
-    const person = await getPersonCached(decodeURIComponent(id));
+    const person = await getPersonCached(id);
     return { title: `${person.name} | Legislative Research Tool` };
   } catch {
     return { title: "Legislator Not Found" };
@@ -30,7 +30,7 @@ export default async function LegislatorPage({
   const { id } = await params;
   let person;
   try {
-    person = await getPersonCached(decodeURIComponent(id));
+    person = await getPersonCached(id);
   } catch (err) {
     if (err instanceof ApiError && err.status === 404) {
       notFound();

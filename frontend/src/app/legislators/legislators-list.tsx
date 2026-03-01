@@ -3,6 +3,7 @@ import { listPeople } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Pagination } from "@/components/pagination";
+import { ApiErrorBanner } from "@/components/api-error";
 import { formatChamber, formatJurisdiction, formatParty } from "@/lib/format";
 
 interface LegislatorsListProps {
@@ -25,9 +26,7 @@ export async function LegislatorsList({
     data = await listPeople({ jurisdiction, party, chamber, q, page, per_page: 20 });
   } catch {
     return (
-      <div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
-        Failed to fetch legislators. Make sure the API server is running.
-      </div>
+      <ApiErrorBanner message="Failed to fetch legislators. Make sure the API server is running." />
     );
   }
 

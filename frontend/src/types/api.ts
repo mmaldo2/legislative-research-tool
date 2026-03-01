@@ -177,32 +177,6 @@ export interface BillSummaryOutput {
   confidence: number;
 }
 
-export interface TopicClassificationOutput {
-  primary_topic: string;
-  secondary_topics: string[];
-  policy_area: string;
-  confidence: number;
-}
-
-export interface AnalysisResponse {
-  id: number;
-  bill_id: string;
-  analysis_type: string;
-  result: Record<string, unknown>;
-  model_used: string;
-  prompt_version: string;
-  confidence: number | null;
-  tokens_input: number | null;
-  tokens_output: number | null;
-  cost_usd: number | null;
-  created_at: string | null;
-}
-
-export interface AnalysisListResponse {
-  data: AnalysisResponse[];
-  meta: MetaResponse;
-}
-
 // --- Status ---
 
 export interface HealthResponse {
