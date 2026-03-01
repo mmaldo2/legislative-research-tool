@@ -1,9 +1,12 @@
 import { Suspense } from "react";
+import Link from "next/link";
 import type { Metadata } from "next";
+import { Bookmark } from "lucide-react";
 import { parsePageParam, parseSearchMode } from "@/lib/format";
 import { getExportCsvUrl } from "@/lib/api";
 import { SearchForm } from "./search-form";
 import { SearchResults } from "./search-results";
+import { SaveSearchButton } from "./save-search-button";
 
 export const metadata: Metadata = {
   title: "Search Bills | Legislative Research Tool",
@@ -23,7 +26,16 @@ export default async function SearchPage({
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
-      <h1 className="mb-6 text-2xl font-bold">Search Bills</h1>
+      <div className="mb-6 flex items-center justify-between">
+        <h1 className="text-2xl font-bold">Search Bills</h1>
+        <Link
+          href="/search/saved"
+          className="inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        >
+          <Bookmark className="h-4 w-4" />
+          Saved Searches
+        </Link>
+      </div>
       <SearchForm
         defaultQuery={q}
         defaultJurisdiction={jurisdiction}
@@ -31,7 +43,12 @@ export default async function SearchPage({
       />
 
       {q && (
-        <div className="mt-4 flex justify-end">
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <SaveSearchButton
+            query={q}
+            jurisdiction={jurisdiction}
+            mode={mode}
+          />
           <a
             href={getExportCsvUrl({ q, jurisdiction: jurisdiction || undefined, include_summary: true })}
             target="_blank"

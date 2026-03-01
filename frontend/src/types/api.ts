@@ -100,11 +100,36 @@ export interface PersonResponse {
   current_jurisdiction_id: string | null;
   current_chamber: string | null;
   current_district: string | null;
+  image_url: string | null;
 }
 
 export interface PersonListResponse {
   data: PersonResponse[];
   meta: MetaResponse;
+}
+
+export interface PersonVoteResponse {
+  vote_event_id: string;
+  bill_id: string;
+  bill_identifier: string;
+  bill_title: string;
+  vote_date: string | null;
+  chamber: string | null;
+  motion_text: string | null;
+  result: string | null;
+  option: string;
+}
+
+export interface PersonVoteListResponse {
+  data: PersonVoteResponse[];
+  meta: MetaResponse;
+}
+
+export interface PersonStatsResponse {
+  bills_sponsored: number;
+  bills_cosponsored: number;
+  votes_cast: number;
+  vote_participation_rate: number | null;
 }
 
 // --- Jurisdictions ---
@@ -120,6 +145,25 @@ export interface JurisdictionResponse {
 export interface JurisdictionListResponse {
   data: JurisdictionResponse[];
   meta: MetaResponse;
+}
+
+export interface SessionBillCount {
+  session_id: string;
+  session_name: string;
+  bill_count: number;
+}
+
+export interface SubjectCount {
+  subject: string;
+  count: number;
+}
+
+export interface JurisdictionStatsResponse {
+  total_bills: number;
+  total_legislators: number;
+  bills_by_status: Record<string, number>;
+  bills_by_session: SessionBillCount[];
+  top_subjects: SubjectCount[];
 }
 
 // --- Sessions ---
