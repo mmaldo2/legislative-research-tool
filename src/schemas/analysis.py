@@ -1,4 +1,17 @@
+from datetime import datetime
+from decimal import Decimal
+
 from pydantic import BaseModel
+
+from src.schemas.common import MetaResponse
+
+
+class SummarizeRequest(BaseModel):
+    bill_id: str
+
+
+class ClassifyRequest(BaseModel):
+    bill_id: str
 
 
 class BillSummaryOutput(BaseModel):
@@ -30,3 +43,24 @@ class BillComparisonOutput(BaseModel):
     key_changes: list[str]
     overall_assessment: str
     similarity_score: float
+
+
+class AnalysisResponse(BaseModel):
+    """Read-only view of a stored AI analysis."""
+
+    id: int
+    bill_id: str
+    analysis_type: str
+    result: dict
+    model_used: str
+    prompt_version: str
+    confidence: Decimal | None = None
+    tokens_input: int | None = None
+    tokens_output: int | None = None
+    cost_usd: Decimal | None = None
+    created_at: datetime | None = None
+
+
+class AnalysisListResponse(BaseModel):
+    data: list[AnalysisResponse]
+    meta: MetaResponse

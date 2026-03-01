@@ -1,9 +1,10 @@
 """Tests for analysis API schemas and request validation."""
 
-from src.api.analysis import ClassifyRequest, SummarizeRequest
 from src.schemas.analysis import (
     BillComparisonOutput,
     BillSummaryOutput,
+    ClassifyRequest,
+    SummarizeRequest,
     TopicClassificationOutput,
 )
 

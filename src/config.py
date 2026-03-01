@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     summary_model: str = "claude-sonnet-4-6"
     classify_model: str = "claude-haiku-4-5"
 
+    # Search
+    bm25_max_corpus: int = 100_000  # Max bills to load into BM25 index
+    bm25_stream_batch: int = 5000  # Rows per streaming batch during BM25 build
+
     # Ingestion
     govinfo_base_url: str = "https://www.govinfo.gov"
     openstates_api_url: str = "https://v3.openstates.org"

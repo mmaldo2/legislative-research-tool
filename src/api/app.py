@@ -12,9 +12,11 @@ from slowapi.middleware import SlowAPIMiddleware
 from src.api.analysis import router as analysis_router
 from src.api.bills import router as bills_router
 from src.api.deps import limiter, require_api_key
+from src.api.jurisdictions import router as jurisdictions_router
 from src.api.people import router as people_router
 from src.api.search import router as search_router
 from src.api.status import router as status_router
+from src.api.votes import router as votes_router
 from src.config import settings
 
 logger = logging.getLogger(__name__)
@@ -51,6 +53,10 @@ app.include_router(bills_router, prefix="/api/v1", tags=["Bills"], dependencies=
 app.include_router(people_router, prefix="/api/v1", tags=["People"], dependencies=auth_deps)
 app.include_router(search_router, prefix="/api/v1", tags=["Search"], dependencies=auth_deps)
 app.include_router(analysis_router, prefix="/api/v1", tags=["Analysis"], dependencies=auth_deps)
+app.include_router(votes_router, prefix="/api/v1", tags=["Votes"], dependencies=auth_deps)
+app.include_router(
+    jurisdictions_router, prefix="/api/v1", tags=["Reference Data"], dependencies=auth_deps
+)
 app.include_router(status_router, prefix="/api/v1", tags=["Status"])
 
 

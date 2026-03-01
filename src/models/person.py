@@ -12,11 +12,11 @@ class Person(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     sort_name: Mapped[str | None] = mapped_column(String)
-    party: Mapped[str | None] = mapped_column(String)
+    party: Mapped[str | None] = mapped_column(String, index=True)
     current_jurisdiction_id: Mapped[str | None] = mapped_column(
-        ForeignKey("jurisdictions.id")
+        ForeignKey("jurisdictions.id"), index=True
     )
-    current_chamber: Mapped[str | None] = mapped_column(String)
+    current_chamber: Mapped[str | None] = mapped_column(String, index=True)
     current_district: Mapped[str | None] = mapped_column(String)
     image_url: Mapped[str | None] = mapped_column(String)
 

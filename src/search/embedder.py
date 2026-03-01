@@ -11,6 +11,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
+from src.ingestion.normalizer import content_hash
 from src.models.bill import Bill
 from src.models.bill_embedding import BillEmbedding
 from src.models.bill_text import BillText
@@ -22,21 +23,40 @@ VOYAGE_MODEL = "voyage-law-2"
 EMBEDDING_DIM = 1024
 BATCH_SIZE = 8  # Voyage recommends small batches for long documents
 
+# Module-level shared client — created lazily, closed explicitly
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    """Return a shared httpx client, creating it on first use."""
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=120.0)
+    return _http_client
+
+
+async def close_http_client() -> None:
+    """Close the shared httpx client. Call during app shutdown."""
+    global _http_client
+    if _http_client is not None and not _http_client.is_closed:
+        await _http_client.aclose()
+        _http_client = None
+
 
 async def embed_texts(texts: list[str]) -> list[list[float]]:
     """Call Voyage AI API to embed a batch of texts."""
     if not settings.voyage_api_key:
         raise RuntimeError("VOYAGE_API_KEY not set")
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        resp = await client.post(
-            VOYAGE_API_URL,
-            json={"model": VOYAGE_MODEL, "input": texts, "input_type": "document"},
-            headers={"Authorization": f"Bearer {settings.voyage_api_key}"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return [item["embedding"] for item in data["data"]]
+    client = _get_http_client()
+    resp = await client.post(
+        VOYAGE_API_URL,
+        json={"model": VOYAGE_MODEL, "input": texts, "input_type": "document"},
+        headers={"Authorization": f"Bearer {settings.voyage_api_key}"},
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return [item["embedding"] for item in data["data"]]
 
 
 async def embed_query(query: str) -> list[float]:
@@ -44,15 +64,15 @@ async def embed_query(query: str) -> list[float]:
     if not settings.voyage_api_key:
         raise RuntimeError("VOYAGE_API_KEY not set")
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        resp = await client.post(
-            VOYAGE_API_URL,
-            json={"model": VOYAGE_MODEL, "input": [query], "input_type": "query"},
-            headers={"Authorization": f"Bearer {settings.voyage_api_key}"},
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["data"][0]["embedding"]
+    client = _get_http_client()
+    resp = await client.post(
+        VOYAGE_API_URL,
+        json={"model": VOYAGE_MODEL, "input": [query], "input_type": "query"},
+        headers={"Authorization": f"Bearer {settings.voyage_api_key}"},
+    )
+    resp.raise_for_status()
+    data = resp.json()
+    return data["data"][0]["embedding"]
 
 
 async def embed_all_bills(session: AsyncSession) -> int:
@@ -96,21 +116,23 @@ async def embed_all_bills(session: AsyncSession) -> int:
             logger.error("Embedding batch %d failed: %s", i, e)
             continue
 
+        # Batch insert embedding rows
+        new_embeddings = []
         for bill_id, embedding in zip(batch_ids, embeddings):
-            from src.ingestion.normalizer import content_hash
-
             c_hash = content_hash(bills_to_embed[bill_id])
-
-            # Insert embedding row
             emb = BillEmbedding(
                 bill_id=bill_id,
                 model_version=VOYAGE_MODEL,
                 content_hash=c_hash,
             )
             session.add(emb)
-            await session.flush()
+            new_embeddings.append((emb, embedding))
 
-            # Store the vector via raw SQL (pgvector column)
+        # Flush once per batch to get IDs for all rows
+        await session.flush()
+
+        # Batch update vectors via raw SQL
+        for emb, embedding in new_embeddings:
             await session.execute(
                 text(
                     "UPDATE bill_embeddings SET embedding = :vec::vector "
@@ -121,7 +143,9 @@ async def embed_all_bills(session: AsyncSession) -> int:
             embedded_count += 1
 
         await session.commit()
-        logger.info("Embedded batch %d-%d (%d bills)", i, i + len(batch_texts), embedded_count)
+        logger.info(
+            "Embedded batch %d-%d (%d bills)", i, i + len(batch_texts), embedded_count
+        )
 
     logger.info("Embedding complete: %d bills embedded", embedded_count)
     return embedded_count

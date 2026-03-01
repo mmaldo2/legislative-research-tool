@@ -12,6 +12,9 @@ from src.search.engine import hybrid_search
 
 router = APIRouter()
 
+# Upper bound on search results — keeps memory bounded while allowing accurate totals
+_MAX_SEARCH_RESULTS = 1000
+
 
 @router.get("/search/bills", response_model=SearchResponse)
 async def search_bills(
@@ -23,18 +26,18 @@ async def search_bills(
     db: AsyncSession = Depends(get_session),
 ) -> SearchResponse:
     """Search bills using hybrid keyword + semantic search with RRF fusion."""
-    # Get all ranked results
+    # Fetch all ranked results up to ceiling for accurate total_count
     results = await hybrid_search(
         session=db,
         query=q,
         mode=mode,
         jurisdiction=jurisdiction,
-        top_k=page * per_page,  # Fetch enough for pagination
+        top_k=_MAX_SEARCH_RESULTS,
     )
 
     total = len(results)
 
-    # Paginate
+    # Paginate from full result set
     start = (page - 1) * per_page
     page_results = results[start : start + per_page]
 
@@ -56,7 +59,6 @@ async def search_bills(
         bill = bills_by_id.get(bill_id)
         if not bill:
             continue
-        # Generate a snippet from the title (full text snippet would need the index)
         snippet = bill.title[:200] if bill.title else None
         data.append(
             SearchResult(
@@ -72,5 +74,10 @@ async def search_bills(
 
     return SearchResponse(
         data=data,
-        meta=MetaResponse(total_count=total, page=page, per_page=per_page),
+        meta=MetaResponse(
+            total_count=total,
+            page=page,
+            per_page=per_page,
+            sources=["bm25", "voyage-law-2"] if mode == "hybrid" else [mode],
+        ),
     )
