@@ -5,7 +5,7 @@ import Link from "next/link";
 import { listCollections, createCollection, deleteCollection } from "@/lib/api";
 import type { CollectionResponse } from "@/types/api";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Plus, Trash2, FolderOpen } from "lucide-react";
@@ -15,13 +15,16 @@ export default function CollectionsPage() {
   const [loading, setLoading] = useState(true);
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function load() {
     try {
       const data = await listCollections();
       setCollections(data.data);
-    } catch {
-      // silently fail
+      setError(null);
+    } catch (e) {
+      console.error("Failed to load collections:", e);
+      setError("Failed to load collections.");
     } finally {
       setLoading(false);
     }
@@ -36,6 +39,9 @@ export default function CollectionsPage() {
       await createCollection(newName.trim());
       setNewName("");
       await load();
+    } catch (e) {
+      console.error("Failed to create collection:", e);
+      setError("Failed to create collection.");
     } finally {
       setCreating(false);
     }
@@ -45,8 +51,9 @@ export default function CollectionsPage() {
     try {
       await deleteCollection(id);
       await load();
-    } catch {
-      // silently fail
+    } catch (e) {
+      console.error("Failed to delete collection:", e);
+      setError("Failed to delete collection.");
     }
   }
 
@@ -66,6 +73,12 @@ export default function CollectionsPage() {
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
       <h1 className="text-2xl font-bold mb-6">Research Collections</h1>
+
+      {error && (
+        <div className="mb-4 rounded-md bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {error}
+        </div>
+      )}
 
       {/* Create new collection */}
       <div className="flex gap-2 mb-6">

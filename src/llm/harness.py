@@ -32,8 +32,14 @@ class LLMHarness:
     - Prompt versioning
     """
 
-    def __init__(self, db_session: AsyncSession | None = None):
-        self.client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+    def __init__(
+        self,
+        db_session: AsyncSession | None = None,
+        client: anthropic.AsyncAnthropic | None = None,
+    ):
+        self.client = client or anthropic.AsyncAnthropic(
+            api_key=settings.anthropic_api_key
+        )
         self.cost_tracker = CostTracker()
         self.db_session = db_session
 

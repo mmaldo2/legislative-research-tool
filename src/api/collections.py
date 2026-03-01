@@ -162,7 +162,7 @@ async def get_collection(
     )
 
 
-@router.put("/collections/{collection_id}", response_model=CollectionResponse)
+@router.patch("/collections/{collection_id}", response_model=CollectionResponse)
 @limiter.limit("30/minute")
 async def update_collection(
     request: Request,
@@ -279,7 +279,7 @@ async def remove_item(
     await db.commit()
 
 
-@router.put(
+@router.patch(
     "/collections/{collection_id}/items/{bill_id}",
     response_model=CollectionItemResponse,
 )

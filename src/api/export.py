@@ -2,6 +2,7 @@
 
 import csv
 import io
+import re
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -14,6 +15,16 @@ from src.models.bill import Bill
 from src.models.sponsorship import Sponsorship
 
 router = APIRouter()
+
+# Pattern for CSV formula injection: cells starting with =, +, -, @, tab, carriage return
+_CSV_FORMULA_RE = re.compile(r"^[=+\-@\t\r]")
+
+
+def _sanitize_csv(value: str) -> str:
+    """Prepend a single quote to values that could trigger spreadsheet formula injection."""
+    if _CSV_FORMULA_RE.match(value):
+        return "'" + value
+    return value
 
 
 @router.get("/export/bills/csv")
@@ -54,10 +65,7 @@ async def export_bills_csv(
     result = await db.execute(stmt)
     bills = result.scalars().all()
 
-    if not bills:
-        raise HTTPException(status_code=404, detail="No bills match the criteria")
-
-    # Build CSV in-memory
+    # Build CSV in-memory (return headers-only CSV for empty results)
     output = io.StringIO()
     writer = csv.writer(output)
 
@@ -80,13 +88,13 @@ async def export_bills_csv(
         row = [
             bill.id,
             bill.identifier,
-            bill.title,
+            _sanitize_csv(bill.title),
             bill.jurisdiction_id,
             bill.session_id,
             bill.status or "",
             str(bill.status_date or ""),
-            "; ".join(bill.classification or []),
-            "; ".join(bill.subject or []),
+            _sanitize_csv("; ".join(bill.classification or [])),
+            _sanitize_csv("; ".join(bill.subject or [])),
         ]
         if include_summary:
             summary = ""
@@ -94,7 +102,7 @@ async def export_bills_csv(
                 if a.analysis_type == "summary" and a.result:
                     summary = a.result.get("plain_english_summary", "")
                     break
-            row.append(summary)
+            row.append(_sanitize_csv(summary))
         writer.writerow(row)
 
     output.seek(0)

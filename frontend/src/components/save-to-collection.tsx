@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { listCollections, createCollection, addToCollection } from "@/lib/api";
 import type { CollectionResponse } from "@/types/api";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -20,9 +21,14 @@ interface SaveToCollectionProps {
 export function SaveToCollection({ billId }: SaveToCollectionProps) {
   const [collections, setCollections] = useState<CollectionResponse[]>([]);
   const [saved, setSaved] = useState(false);
+  const [showNewInput, setShowNewInput] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
-    listCollections().then((data) => setCollections(data.data)).catch(() => {});
+    listCollections()
+      .then((data) => setCollections(data.data))
+      .catch((e) => console.error("Failed to load collections:", e));
   }, []);
 
   async function handleAdd(collectionId: number) {
@@ -30,27 +36,32 @@ export function SaveToCollection({ billId }: SaveToCollectionProps) {
       await addToCollection(collectionId, billId);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
-    } catch {
+    } catch (e) {
       // 409 = already exists, that's fine
+      console.error("Failed to add to collection:", e);
     }
   }
 
   async function handleCreateAndAdd() {
-    const name = prompt("Collection name:");
-    if (!name) return;
+    if (!newName.trim()) return;
+    setCreating(true);
     try {
-      const c = await createCollection(name);
+      const c = await createCollection(newName.trim());
       await addToCollection(c.id, billId);
       setCollections((prev) => [...prev, c]);
       setSaved(true);
+      setNewName("");
+      setShowNewInput(false);
       setTimeout(() => setSaved(false), 2000);
-    } catch {
-      // silently fail
+    } catch (e) {
+      console.error("Failed to create collection:", e);
+    } finally {
+      setCreating(false);
     }
   }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={(open) => { if (!open) setShowNewInput(false); }}>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" size="sm">
           {saved ? (
@@ -68,10 +79,31 @@ export function SaveToCollection({ billId }: SaveToCollectionProps) {
           </DropdownMenuItem>
         ))}
         {collections.length > 0 && <DropdownMenuSeparator />}
-        <DropdownMenuItem onClick={handleCreateAndAdd}>
-          <Plus className="mr-1.5 h-4 w-4" />
-          New collection...
-        </DropdownMenuItem>
+        {showNewInput ? (
+          <div className="flex gap-1 p-1" onClick={(e) => e.stopPropagation()}>
+            <Input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleCreateAndAdd()}
+              placeholder="Name..."
+              className="h-8 text-sm"
+              autoFocus
+            />
+            <Button
+              size="sm"
+              className="h-8"
+              onClick={handleCreateAndAdd}
+              disabled={creating || !newName.trim()}
+            >
+              Add
+            </Button>
+          </div>
+        ) : (
+          <DropdownMenuItem onClick={() => setShowNewInput(true)}>
+            <Plus className="mr-1.5 h-4 w-4" />
+            New collection...
+          </DropdownMenuItem>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

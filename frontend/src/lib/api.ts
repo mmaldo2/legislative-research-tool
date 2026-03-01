@@ -324,7 +324,7 @@ export async function updateCollectionItemNotes(
   return fetchApi<CollectionItemResponse>(
     `/collections/${collectionId}/items/${encodeURIComponent(billId)}`,
     {
-      method: "PUT",
+      method: "PATCH",
       body: JSON.stringify({ notes }),
       headers: clientHeaders(),
     },

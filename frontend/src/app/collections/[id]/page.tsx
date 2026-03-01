@@ -5,9 +5,8 @@ import Link from "next/link";
 import { getCollection, removeFromCollection, updateCollectionItemNotes } from "@/lib/api";
 import type { CollectionDetailResponse } from "@/types/api";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, Trash2, Save } from "lucide-react";
 
 export default function CollectionDetailPage({
@@ -20,13 +19,16 @@ export default function CollectionDetailPage({
   const [collection, setCollection] = useState<CollectionDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [editingNotes, setEditingNotes] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string | null>(null);
 
   async function load() {
     try {
       const data = await getCollection(collectionId);
       setCollection(data);
-    } catch {
-      // handle error
+      setError(null);
+    } catch (e) {
+      console.error("Failed to load collection:", e);
+      setError("Failed to load collection.");
     } finally {
       setLoading(false);
     }
@@ -35,20 +37,30 @@ export default function CollectionDetailPage({
   useEffect(() => { load(); }, [collectionId]);
 
   async function handleRemove(billId: string) {
-    await removeFromCollection(collectionId, billId);
-    await load();
+    try {
+      await removeFromCollection(collectionId, billId);
+      await load();
+    } catch (e) {
+      console.error("Failed to remove item:", e);
+      setError("Failed to remove item from collection.");
+    }
   }
 
   async function handleSaveNotes(billId: string) {
     const notes = editingNotes[billId];
     if (notes === undefined) return;
-    await updateCollectionItemNotes(collectionId, billId, notes || null);
-    setEditingNotes((prev) => {
-      const next = { ...prev };
-      delete next[billId];
-      return next;
-    });
-    await load();
+    try {
+      await updateCollectionItemNotes(collectionId, billId, notes || null);
+      setEditingNotes((prev) => {
+        const next = { ...prev };
+        delete next[billId];
+        return next;
+      });
+      await load();
+    } catch (e) {
+      console.error("Failed to save notes:", e);
+      setError("Failed to save notes.");
+    }
   }
 
   if (loading) {
@@ -81,6 +93,12 @@ export default function CollectionDetailPage({
       <h1 className="text-2xl font-bold mb-2">{collection.name}</h1>
       {collection.description && (
         <p className="text-muted-foreground mb-6">{collection.description}</p>
+      )}
+
+      {error && (
+        <div className="mb-4 rounded-md bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {error}
+        </div>
       )}
 
       {collection.items.length === 0 ? (
