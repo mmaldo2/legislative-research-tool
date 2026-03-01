@@ -11,7 +11,11 @@ from slowapi.middleware import SlowAPIMiddleware
 
 from src.api.analysis import router as analysis_router
 from src.api.bills import router as bills_router
+from src.api.chat import router as chat_router
+from src.api.collections import router as collections_router
+from src.api.compare import router as compare_router
 from src.api.deps import limiter, require_api_key
+from src.api.export import router as export_router
 from src.api.jurisdictions import router as jurisdictions_router
 from src.api.people import router as people_router
 from src.api.search import router as search_router
@@ -43,7 +47,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["*"],
 )
 
@@ -57,6 +61,12 @@ app.include_router(votes_router, prefix="/api/v1", tags=["Votes"], dependencies=
 app.include_router(
     jurisdictions_router, prefix="/api/v1", tags=["Reference Data"], dependencies=auth_deps
 )
+app.include_router(compare_router, prefix="/api/v1", tags=["Compare"], dependencies=auth_deps)
+app.include_router(
+    collections_router, prefix="/api/v1", tags=["Collections"], dependencies=auth_deps
+)
+app.include_router(chat_router, prefix="/api/v1", tags=["Chat"], dependencies=auth_deps)
+app.include_router(export_router, prefix="/api/v1", tags=["Export"], dependencies=auth_deps)
 app.include_router(status_router, prefix="/api/v1", tags=["Status"])
 
 

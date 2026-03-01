@@ -14,9 +14,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import settings
 from src.llm.cost_tracker import CostTracker
-from src.llm.prompts import classify_v1, summarize_v1
+from src.llm.prompts import classify_v1, compare_v1, summarize_v1
 from src.models.ai_analysis import AiAnalysis
 from src.schemas.analysis import BillSummaryOutput, TopicClassificationOutput
+from src.schemas.compare import BillComparisonOutput
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +216,78 @@ class LLMHarness:
         await self._store_result(
             bill_id=bill_id,
             analysis_type="topics",
+            result=result_dict,
+            model=model,
+            prompt_version=prompt_version,
+            c_hash=c_hash,
+            tokens_input=tokens_in,
+            tokens_output=tokens_out,
+            cost_usd=usage.cost_usd,
+            confidence=output.confidence,
+        )
+
+        return output
+
+    async def compare(
+        self,
+        bill_id_a: str,
+        bill_id_b: str,
+        bill_a_text: str,
+        bill_a_identifier: str,
+        bill_a_title: str,
+        bill_b_text: str,
+        bill_b_identifier: str,
+        bill_b_title: str,
+    ) -> BillComparisonOutput:
+        """Compare two bills side-by-side."""
+        prompt_version = compare_v1.PROMPT_VERSION
+        model = settings.summary_model
+        c_hash = self.content_hash(f"{bill_a_text}:{bill_b_text}", prompt_version)
+
+        cached = await self._check_cache(bill_id_a, "comparison", prompt_version, c_hash)
+        if cached:
+            return BillComparisonOutput(**cached)
+
+        user_prompt = compare_v1.USER_PROMPT_TEMPLATE.format(
+            bill_a_identifier=bill_a_identifier,
+            bill_a_title=bill_a_title,
+            bill_a_text=bill_a_text[:25000],
+            bill_b_identifier=bill_b_identifier,
+            bill_b_title=bill_b_title,
+            bill_b_text=bill_b_text[:25000],
+        )
+
+        response = await self.client.messages.create(
+            model=model,
+            max_tokens=2048,
+            system=compare_v1.SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+        )
+
+        response_text = response.content[0].text
+        try:
+            result_data = json.loads(response_text)
+            output = BillComparisonOutput(**result_data)
+        except (json.JSONDecodeError, ValueError):
+            output = BillComparisonOutput(
+                shared_provisions=[],
+                unique_to_a=[],
+                unique_to_b=[],
+                key_differences=[response_text],
+                overall_assessment=response_text,
+                similarity_score=0.5,
+                is_model_legislation=False,
+                confidence=0.3,
+            )
+
+        tokens_in = response.usage.input_tokens
+        tokens_out = response.usage.output_tokens
+        usage = self.cost_tracker.record(model, tokens_in, tokens_out, "compare")
+
+        result_dict = output.model_dump()
+        await self._store_result(
+            bill_id=bill_id_a,
+            analysis_type="comparison",
             result=result_dict,
             model=model,
             prompt_version=prompt_version,
