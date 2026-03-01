@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, use } from "react";
+import { useCallback, useEffect, useState, use } from "react";
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { getCollection, removeFromCollection, updateCollectionItemNotes } from "@/lib/api";
 import type { CollectionDetailResponse } from "@/types/api";
 import { Button } from "@/components/ui/button";
@@ -16,12 +17,16 @@ export default function CollectionDetailPage({
 }) {
   const { id } = use(params);
   const collectionId = parseInt(id, 10);
+  if (Number.isNaN(collectionId)) {
+    notFound();
+  }
+
   const [collection, setCollection] = useState<CollectionDetailResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [editingNotes, setEditingNotes] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     try {
       const data = await getCollection(collectionId);
       setCollection(data);
@@ -32,9 +37,9 @@ export default function CollectionDetailPage({
     } finally {
       setLoading(false);
     }
-  }
+  }, [collectionId]);
 
-  useEffect(() => { load(); }, [collectionId]);
+  useEffect(() => { load(); }, [load]);
 
   async function handleRemove(billId: string) {
     try {
@@ -130,7 +135,11 @@ export default function CollectionDetailPage({
                         placeholder="Add research notes..."
                         className="text-sm"
                       />
-                      <Button size="sm" onClick={() => handleSaveNotes(item.bill_id)}>
+                      <Button
+                        size="sm"
+                        onClick={() => handleSaveNotes(item.bill_id)}
+                        aria-label="Save notes"
+                      >
                         <Save className="h-3 w-3" />
                       </Button>
                     </div>
@@ -152,6 +161,7 @@ export default function CollectionDetailPage({
                   variant="ghost"
                   size="sm"
                   onClick={() => handleRemove(item.bill_id)}
+                  aria-label={`Remove ${item.bill_id} from collection`}
                 >
                   <Trash2 className="h-4 w-4 text-destructive" />
                 </Button>

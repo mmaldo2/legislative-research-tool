@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { getSimilarBills } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { formatJurisdiction } from "@/lib/format";
+import { Card, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatJurisdiction, truncate } from "@/lib/format";
 
 interface SimilarTabProps {
   billId: string;
@@ -42,7 +42,7 @@ export async function SimilarTab({ billId }: SimilarTabProps) {
                 </span>
               </div>
               <CardTitle className="text-base leading-snug">
-                {bill.title.length > 200 ? bill.title.slice(0, 200) + "..." : bill.title}
+                {truncate(bill.title, 200)}
               </CardTitle>
             </CardHeader>
           </Card>

@@ -203,7 +203,7 @@ async def export_bill_brief(
         lines.append("")
 
     content = "\n".join(lines)
-    safe_filename = bill.identifier.replace(" ", "_").replace("/", "-")
+    safe_filename = re.sub(r"[^a-zA-Z0-9_-]", "_", bill.identifier)
 
     return StreamingResponse(
         iter([content]),

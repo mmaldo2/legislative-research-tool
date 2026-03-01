@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database import Base
@@ -16,8 +16,8 @@ class Collection(Base):
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     items: Mapped[list["CollectionItem"]] = relationship(
         back_populates="collection", cascade="all, delete-orphan"
@@ -35,6 +35,6 @@ class CollectionItem(Base):
     bill_id: Mapped[str] = mapped_column(ForeignKey("bills.id"), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text)
 
-    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
+    added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     collection: Mapped["Collection"] = relationship(back_populates="items")

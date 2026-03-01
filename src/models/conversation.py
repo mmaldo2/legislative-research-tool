@@ -1,6 +1,7 @@
 from datetime import datetime
+from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -14,8 +15,8 @@ class Conversation(Base):
     client_id: Mapped[str] = mapped_column(String, nullable=False, index=True)
     title: Mapped[str | None] = mapped_column(String)  # auto-generated from first message
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     messages: Mapped[list["ConversationMessage"]] = relationship(
         back_populates="conversation",
@@ -31,10 +32,10 @@ class ConversationMessage(Base):
     conversation_id: Mapped[str] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False, index=True
     )
-    role: Mapped[str] = mapped_column(String, nullable=False)  # 'user', 'assistant'
+    role: Mapped[str] = mapped_column(String, nullable=False)  # "user" | "assistant"
     content: Mapped[str] = mapped_column(Text, nullable=False)
-    tool_calls: Mapped[dict | None] = mapped_column(JSONB)  # store tool use for display
+    tool_calls: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
