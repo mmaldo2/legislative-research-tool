@@ -1,6 +1,9 @@
+import { cache } from "react";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
-import { getBill } from "@/lib/api";
+import { ApiError, getBill } from "@/lib/api";
+
+const getBillCached = cache((id: string) => getBill(id));
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { formatJurisdiction, formatStatus, statusVariant } from "@/lib/format";
@@ -16,7 +19,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { id } = await params;
   try {
-    const bill = await getBill(decodeURIComponent(id));
+    const bill = await getBillCached(decodeURIComponent(id));
     return { title: `${bill.identifier} | Legislative Research Tool` };
   } catch {
     return { title: "Bill Not Found" };
@@ -31,9 +34,12 @@ export default async function BillDetailPage({
   const { id } = await params;
   let bill;
   try {
-    bill = await getBill(decodeURIComponent(id));
-  } catch {
-    notFound();
+    bill = await getBillCached(decodeURIComponent(id));
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) {
+      notFound();
+    }
+    throw err;
   }
 
   return (

@@ -3,7 +3,7 @@ import { listPeople } from "@/lib/api";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Pagination } from "@/components/pagination";
-import { formatJurisdiction, formatParty } from "@/lib/format";
+import { formatChamber, formatJurisdiction, formatParty } from "@/lib/format";
 
 interface LegislatorsListProps {
   jurisdiction?: string;
@@ -52,7 +52,7 @@ export async function LegislatorsList({
                 <div className="flex-1">
                   <p className="font-medium">{person.name}</p>
                   <p className="text-sm text-muted-foreground">
-                    {person.current_chamber === "upper" ? "Senate" : "House"}
+                    {formatChamber(person.current_chamber)}
                     {person.current_district
                       ? `, District ${person.current_district}`
                       : ""}

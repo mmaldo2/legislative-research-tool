@@ -21,8 +21,7 @@ export async function SearchResults({
   } catch {
     return (
       <div className="mt-6 rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">
-        Failed to fetch search results. Make sure the API server is running at{" "}
-        <code className="font-mono">{process.env.NEXT_PUBLIC_API_URL}</code>.
+        Failed to fetch search results. Make sure the API server is running.
       </div>
     );
   }

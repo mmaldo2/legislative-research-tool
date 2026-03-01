@@ -1,4 +1,5 @@
 import { Badge } from "@/components/ui/badge";
+import { formatChamber } from "@/lib/format";
 import type { BillActionResponse } from "@/types/api";
 
 interface BillActionsTabProps {
@@ -30,7 +31,7 @@ export function BillActionsTab({ actions }: BillActionsTabProps) {
                 </time>
                 {action.chamber && (
                   <Badge variant="outline" className="text-xs">
-                    {action.chamber === "upper" ? "Senate" : "House"}
+                    {formatChamber(action.chamber)}
                   </Badge>
                 )}
                 {action.classification?.map((c) => (
