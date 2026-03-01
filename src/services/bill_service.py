@@ -6,6 +6,7 @@ from sqlalchemy.orm import selectinload
 
 from src.api.deps import escape_like
 from src.models.bill import Bill
+from src.models.bill_text import texts_without_markup
 from src.models.sponsorship import Sponsorship
 
 
@@ -51,7 +52,7 @@ async def get_bill_detail(session: AsyncSession, bill_id: str) -> Bill | None:
         select(Bill)
         .where(Bill.id == bill_id)
         .options(
-            selectinload(Bill.texts),
+            texts_without_markup(Bill.texts),
             selectinload(Bill.actions),
             selectinload(Bill.sponsorships).selectinload(Sponsorship.person),
             selectinload(Bill.analyses),

@@ -18,6 +18,7 @@ from src.llm.harness import LLMHarness
 from src.llm.prompts import research_assistant_v1
 from src.llm.tools import RESEARCH_TOOLS
 from src.models.bill import Bill
+from src.models.bill_text import texts_without_markup
 from src.models.conversation import Conversation, ConversationMessage
 from src.models.jurisdiction import Jurisdiction
 from src.models.sponsorship import Sponsorship
@@ -104,7 +105,7 @@ async def _tool_get_bill_detail(
         select(Bill)
         .where(Bill.id == bill_id)
         .options(
-            selectinload(Bill.texts),
+            texts_without_markup(Bill.texts),
             selectinload(Bill.actions),
             selectinload(Bill.sponsorships).selectinload(Sponsorship.person),
             selectinload(Bill.analyses),
@@ -231,7 +232,7 @@ async def _tool_analyze_version_diff(
     stmt = (
         select(Bill)
         .where(Bill.id == bill_id)
-        .options(selectinload(Bill.texts))
+        .options(texts_without_markup(Bill.texts))
     )
     result = await db.execute(stmt)
     bill = result.scalar_one_or_none()
@@ -290,7 +291,7 @@ async def _tool_analyze_constitutional(
     stmt = (
         select(Bill)
         .where(Bill.id == bill_id)
-        .options(selectinload(Bill.texts))
+        .options(texts_without_markup(Bill.texts))
     )
     result = await db.execute(stmt)
     bill = result.scalar_one_or_none()
@@ -319,7 +320,7 @@ async def _tool_analyze_patterns(
     stmt = (
         select(Bill)
         .where(Bill.id == bill_id)
-        .options(selectinload(Bill.texts))
+        .options(texts_without_markup(Bill.texts))
     )
     result = await db.execute(stmt)
     bill = result.scalar_one_or_none()
@@ -341,7 +342,7 @@ async def _tool_analyze_patterns(
     bills_result = await db.execute(
         select(Bill)
         .where(Bill.id.in_(matched_ids))
-        .options(selectinload(Bill.texts))
+        .options(texts_without_markup(Bill.texts))
     )
     similar_bills = bills_result.scalars().all()
 

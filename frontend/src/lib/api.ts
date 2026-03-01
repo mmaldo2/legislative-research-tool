@@ -250,6 +250,7 @@ export async function analyzeVersionDiff(
   billId: string,
   versionAId?: string,
   versionBId?: string,
+  signal?: AbortSignal,
 ): Promise<VersionDiffOutput> {
   return fetchApi<VersionDiffOutput>("/analyze/version-diff", {
     method: "POST",
@@ -258,25 +259,30 @@ export async function analyzeVersionDiff(
       version_a_id: versionAId ?? null,
       version_b_id: versionBId ?? null,
     }),
+    signal,
   });
 }
 
 export async function analyzeConstitutional(
   billId: string,
+  signal?: AbortSignal,
 ): Promise<ConstitutionalAnalysisOutput> {
   return fetchApi<ConstitutionalAnalysisOutput>("/analyze/constitutional", {
     method: "POST",
     body: JSON.stringify({ bill_id: billId }),
+    signal,
   });
 }
 
 export async function analyzePatterns(
   billId: string,
   topK: number = 5,
+  signal?: AbortSignal,
 ): Promise<PatternDetectionOutput> {
   return fetchApi<PatternDetectionOutput>("/analyze/patterns", {
     method: "POST",
     body: JSON.stringify({ bill_id: billId, top_k: topK }),
+    signal,
   });
 }
 

@@ -5,11 +5,11 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from src.api.deps import get_llm_harness, get_session, limiter
 from src.llm.harness import LLMHarness
 from src.models.bill import Bill
+from src.models.bill_text import texts_without_markup
 from src.schemas.common import MetaResponse
 from src.schemas.compare import (
     BillComparisonOutput,
@@ -102,14 +102,14 @@ async def compare_bills(
 ) -> BillComparisonOutput:
     """Generate an LLM comparison of two bills. Cached by content hash."""
     # Load bill A
-    stmt_a = select(Bill).where(Bill.id == req.bill_id_a).options(selectinload(Bill.texts))
+    stmt_a = select(Bill).where(Bill.id == req.bill_id_a).options(texts_without_markup(Bill.texts))
     result_a = await db.execute(stmt_a)
     bill_a = result_a.scalar_one_or_none()
     if not bill_a:
         raise HTTPException(status_code=404, detail=f"Bill not found: {req.bill_id_a}")
 
     # Load bill B
-    stmt_b = select(Bill).where(Bill.id == req.bill_id_b).options(selectinload(Bill.texts))
+    stmt_b = select(Bill).where(Bill.id == req.bill_id_b).options(texts_without_markup(Bill.texts))
     result_b = await db.execute(stmt_b)
     bill_b = result_b.scalar_one_or_none()
     if not bill_b:
