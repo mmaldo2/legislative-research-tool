@@ -683,11 +683,11 @@ With prompt caching on system prompts (90% savings on cached reads), actual cost
 
 #### Tasks
 
-- [ ] Cross-jurisdictional pattern detection (model legislation finder)
+- [x] Cross-jurisdictional pattern detection (model legislation finder)
 - [ ] Policy diffusion mapping (how ideas spread state to state over time)
-- [ ] Version diff analysis (what changed between introduced and engrossed)
+- [x] Version diff analysis (what changed between introduced and engrossed)
 - [ ] Bill outcome prediction (using historical passage data)
-- [ ] Constitutional flag analysis (First Amendment, preemption, commerce clause)
+- [x] Constitutional flag analysis (First Amendment, preemption, commerce clause)
 - [ ] Automated research reports (e.g., "2025 State of Free Speech Legislation")
 - [ ] LegiScan weekly datasets as validation layer
 - [ ] CRS report integration (federal policy context)

@@ -14,10 +14,10 @@ from sqlalchemy.orm import selectinload
 
 from src.api.deps import get_anthropic_client, get_session, limiter
 from src.config import settings
+from src.llm.harness import LLMHarness
 from src.llm.prompts import research_assistant_v1
 from src.llm.tools import RESEARCH_TOOLS
 from src.models.bill import Bill
-from src.models.bill_similarity import BillSimilarity
 from src.models.conversation import Conversation, ConversationMessage
 from src.models.jurisdiction import Jurisdiction
 from src.models.sponsorship import Sponsorship
@@ -31,6 +31,8 @@ from src.schemas.chat import (
 )
 from src.schemas.common import MetaResponse
 from src.search.engine import hybrid_search
+from src.search.vector import find_similar_bill_ids
+from src.services.bill_service import extract_bill_text
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +55,9 @@ def get_client_id(x_client_id: str | None = Header(None)) -> str:
 # ---------------------------------------------------------------------------
 
 
-async def _tool_search_bills(arguments: dict[str, Any], db: AsyncSession) -> str:
+async def _tool_search_bills(
+    arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
+) -> str:
     query = arguments.get("query", "")
     jurisdiction = arguments.get("jurisdiction")
     mode = arguments.get("mode", "hybrid")
@@ -92,7 +96,9 @@ async def _tool_search_bills(arguments: dict[str, Any], db: AsyncSession) -> str
     return json.dumps({"bills": bills_out, "total": len(bills_out)})
 
 
-async def _tool_get_bill_detail(arguments: dict[str, Any], db: AsyncSession) -> str:
+async def _tool_get_bill_detail(
+    arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
+) -> str:
     bill_id = arguments.get("bill_id", "")
     stmt = (
         select(Bill)
@@ -161,7 +167,7 @@ async def _tool_get_bill_detail(arguments: dict[str, Any], db: AsyncSession) -> 
 
 
 async def _tool_list_jurisdictions(
-    arguments: dict[str, Any], db: AsyncSession
+    arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
 ) -> str:
     stmt = select(Jurisdiction).order_by(Jurisdiction.name)
     result = await db.execute(stmt)
@@ -180,49 +186,26 @@ async def _tool_list_jurisdictions(
 
 
 async def _tool_find_similar_bills(
-    arguments: dict[str, Any], db: AsyncSession
+    arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
 ) -> str:
     bill_id = arguments.get("bill_id", "")
     top_k = arguments.get("top_k", 5)
 
-    result = await db.execute(select(Bill).where(Bill.id == bill_id))
-    source_bill = result.scalar_one_or_none()
-    if not source_bill:
-        return json.dumps({"error": f"Bill '{bill_id}' not found."})
-
-    stmt = (
-        select(BillSimilarity)
-        .where(
-            (BillSimilarity.bill_id_a == bill_id)
-            | (BillSimilarity.bill_id_b == bill_id)
-        )
-        .order_by(BillSimilarity.similarity_score.desc())
-        .limit(top_k)
-    )
-    result = await db.execute(stmt)
-    similarities = result.scalars().all()
-
-    if not similarities:
+    matches = await find_similar_bill_ids(db, bill_id, top_k=top_k)
+    if not matches:
         return json.dumps(
             {"similar_bills": [], "source_bill_id": bill_id}
         )
 
-    other_ids = []
-    sim_map: dict[str, float] = {}
-    for s in similarities:
-        other_id = (
-            s.bill_id_b if s.bill_id_a == bill_id else s.bill_id_a
-        )
-        other_ids.append(other_id)
-        sim_map[other_id] = float(s.similarity_score)
+    matched_ids = [m.bill_id for m in matches]
+    score_map = {m.bill_id: m.score for m in matches}
 
-    stmt = select(Bill).where(Bill.id.in_(other_ids))
-    result = await db.execute(stmt)
+    result = await db.execute(select(Bill).where(Bill.id.in_(matched_ids)))
     bills_by_id = {b.id: b for b in result.scalars().all()}
 
     similar = []
-    for other_id in other_ids:
-        bill = bills_by_id.get(other_id)
+    for m in matches:
+        bill = bills_by_id.get(m.bill_id)
         if not bill:
             continue
         similar.append(
@@ -232,9 +215,7 @@ async def _tool_find_similar_bills(
                 "title": bill.title,
                 "jurisdiction_id": bill.jurisdiction_id,
                 "status": bill.status,
-                "similarity_score": round(
-                    sim_map.get(other_id, 0.0), 4
-                ),
+                "similarity_score": round(score_map[m.bill_id], 4),
             }
         )
 
@@ -243,26 +224,177 @@ async def _tool_find_similar_bills(
     )
 
 
+async def _tool_analyze_version_diff(
+    arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
+) -> str:
+    bill_id = arguments.get("bill_id", "")
+    stmt = (
+        select(Bill)
+        .where(Bill.id == bill_id)
+        .options(selectinload(Bill.texts))
+    )
+    result = await db.execute(stmt)
+    bill = result.scalar_one_or_none()
+    if not bill:
+        return json.dumps({"error": f"Bill '{bill_id}' not found."})
+
+    sorted_texts = sorted(
+        [t for t in bill.texts if t.content_text],
+        key=lambda t: t.version_date or t.created_at,
+    )
+    if len(sorted_texts) < 2:
+        return json.dumps(
+            {"error": "Bill must have at least 2 text versions with content."}
+        )
+
+    # Resolve version A (default: oldest)
+    version_a_id = arguments.get("version_a_id")
+    if version_a_id:
+        version_a = next((t for t in sorted_texts if t.id == version_a_id), None)
+        if not version_a:
+            return json.dumps({"error": "Version A text not found."})
+    else:
+        version_a = sorted_texts[0]
+
+    # Resolve version B (default: latest)
+    version_b_id = arguments.get("version_b_id")
+    if version_b_id:
+        version_b = next((t for t in sorted_texts if t.id == version_b_id), None)
+        if not version_b:
+            return json.dumps({"error": "Version B text not found."})
+    else:
+        version_b = sorted_texts[-1]
+
+    if version_a.id == version_b.id:
+        return json.dumps(
+            {"error": "Version A and Version B must be different."}
+        )
+
+    output = await harness.version_diff(
+        bill_id=bill.id,
+        identifier=bill.identifier,
+        jurisdiction=bill.jurisdiction_id,
+        version_a_name=version_a.version_name or "Earlier Version",
+        version_a_text=version_a.content_text,
+        version_b_name=version_b.version_name or "Later Version",
+        version_b_text=version_b.content_text,
+    )
+    await db.commit()
+    return json.dumps(output.model_dump())
+
+
+async def _tool_analyze_constitutional(
+    arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
+) -> str:
+    bill_id = arguments.get("bill_id", "")
+    stmt = (
+        select(Bill)
+        .where(Bill.id == bill_id)
+        .options(selectinload(Bill.texts))
+    )
+    result = await db.execute(stmt)
+    bill = result.scalar_one_or_none()
+    if not bill:
+        return json.dumps({"error": f"Bill '{bill_id}' not found."})
+
+    bill_text = extract_bill_text(bill)
+
+    output = await harness.constitutional_analysis(
+        bill_id=bill.id,
+        bill_text=bill_text,
+        identifier=bill.identifier,
+        jurisdiction=bill.jurisdiction_id,
+        title=bill.title,
+    )
+    await db.commit()
+    return json.dumps(output.model_dump())
+
+
+async def _tool_analyze_patterns(
+    arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
+) -> str:
+    bill_id = arguments.get("bill_id", "")
+    top_k = arguments.get("top_k", 5)
+
+    stmt = (
+        select(Bill)
+        .where(Bill.id == bill_id)
+        .options(selectinload(Bill.texts))
+    )
+    result = await db.execute(stmt)
+    bill = result.scalar_one_or_none()
+    if not bill:
+        return json.dumps({"error": f"Bill '{bill_id}' not found."})
+
+    source_text = extract_bill_text(bill)
+
+    # Find similar bills from other jurisdictions
+    matches = await find_similar_bill_ids(
+        db, bill_id, exclude_jurisdiction=bill.jurisdiction_id, top_k=top_k,
+    )
+    if not matches:
+        return json.dumps(
+            {"error": "No similar bills found in other jurisdictions."}
+        )
+
+    matched_ids = [m.bill_id for m in matches]
+    bills_result = await db.execute(
+        select(Bill)
+        .where(Bill.id.in_(matched_ids))
+        .options(selectinload(Bill.texts))
+    )
+    similar_bills = bills_result.scalars().all()
+
+    similar_parts: list[str] = []
+    for sb in similar_bills:
+        sb_text = extract_bill_text(sb)
+        similar_parts.append(
+            f"Bill: {sb.identifier}\n"
+            f"Jurisdiction: {sb.jurisdiction_id}\n"
+            f"Title: {sb.title}\n"
+            f"Text:\n{sb_text[:10000]}\n"
+        )
+
+    output = await harness.pattern_detect(
+        source_bill_id=bill.id,
+        source_text=source_text,
+        source_identifier=bill.identifier,
+        source_jurisdiction=bill.jurisdiction_id,
+        source_title=bill.title,
+        similar_bills_text="\n---\n".join(similar_parts),
+    )
+    await db.commit()
+    return json.dumps(output.model_dump())
+
+
 # Registry mapping tool names to handler functions
 _ToolHandler = Callable[
-    [dict[str, Any], AsyncSession], Coroutine[Any, Any, str]
+    [dict[str, Any], AsyncSession, LLMHarness], Coroutine[Any, Any, str]
 ]
 _TOOL_HANDLERS: dict[str, _ToolHandler] = {
     "search_bills": _tool_search_bills,
     "get_bill_detail": _tool_get_bill_detail,
     "list_jurisdictions": _tool_list_jurisdictions,
     "find_similar_bills": _tool_find_similar_bills,
+    "analyze_version_diff": _tool_analyze_version_diff,
+    "analyze_constitutional": _tool_analyze_constitutional,
+    "analyze_patterns": _tool_analyze_patterns,
 }
 
 
 async def execute_tool(
-    tool_name: str, arguments: dict[str, Any], db: AsyncSession
+    tool_name: str,
+    arguments: dict[str, Any],
+    db: AsyncSession,
+    harness: LLMHarness | None = None,
 ) -> str:
     """Dispatch tool calls to the appropriate handler."""
     handler = _TOOL_HANDLERS.get(tool_name)
     if handler is None:
         return json.dumps({"error": f"Unknown tool: {tool_name}"})
-    return await handler(arguments, db)
+    if harness is None:
+        harness = LLMHarness(db_session=db, client=get_anthropic_client())
+    return await handler(arguments, db, harness)
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +526,7 @@ async def chat(
     # 4. Call Anthropic SDK with tool_use enabled (shared client)
     client = get_anthropic_client()
     model = settings.summary_model
+    harness = LLMHarness(db_session=db, client=client)
 
     # Track tool calls for metadata storage
     all_tool_calls: list[dict] = []
@@ -434,7 +567,7 @@ async def chat(
 
                     try:
                         result_str = await execute_tool(
-                            tool_name, tool_input, db
+                            tool_name, tool_input, db, harness
                         )
                     except (
                         ValueError,

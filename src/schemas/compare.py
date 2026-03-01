@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.schemas.common import MetaResponse
 
@@ -38,4 +38,4 @@ class BillComparisonOutput(BaseModel):
     overall_assessment: str
     similarity_score: float  # 0.0-1.0
     is_model_legislation: bool
-    confidence: float
+    confidence: float = Field(ge=0.0, le=1.0)

@@ -59,3 +59,16 @@ async def get_bill_detail(session: AsyncSession, bill_id: str) -> Bill | None:
     )
     result = await session.execute(stmt)
     return result.scalar_one_or_none()
+
+
+def extract_bill_text(bill: Bill) -> str:
+    """Get the best available text for a bill, falling back to its title.
+
+    Iterates through the bill's text versions and returns the first one
+    with content_text. If none have content, returns the bill title.
+    """
+    if bill.texts:
+        for t in bill.texts:
+            if t.content_text:
+                return t.content_text
+    return bill.title

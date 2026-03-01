@@ -12,6 +12,9 @@ import { BillTextTab } from "./text-tab";
 import { BillActionsTab } from "./actions-tab";
 import { BillSponsorsTab } from "./sponsors-tab";
 import { SimilarTab } from "./similar-tab";
+import { VersionDiffTab } from "./version-diff-tab";
+import { ConstitutionalTab } from "./constitutional-tab";
+import { PatternsTab } from "./patterns-tab";
 import { SaveToCollection } from "@/components/save-to-collection";
 
 export async function generateMetadata({
@@ -105,6 +108,9 @@ export default async function BillDetailPage({
             Sponsors ({bill.sponsors.length})
           </TabsTrigger>
           <TabsTrigger value="similar">Similar</TabsTrigger>
+          <TabsTrigger value="version-diff">Version Diff</TabsTrigger>
+          <TabsTrigger value="constitutional">Constitutional</TabsTrigger>
+          <TabsTrigger value="patterns">Patterns</TabsTrigger>
         </TabsList>
 
         <TabsContent value="summary" className="mt-4">
@@ -135,6 +141,18 @@ export default async function BillDetailPage({
           >
             <SimilarTab billId={id} />
           </Suspense>
+        </TabsContent>
+
+        <TabsContent value="version-diff" className="mt-4">
+          <VersionDiffTab billId={id} texts={bill.texts} />
+        </TabsContent>
+
+        <TabsContent value="constitutional" className="mt-4">
+          <ConstitutionalTab billId={id} />
+        </TabsContent>
+
+        <TabsContent value="patterns" className="mt-4">
+          <PatternsTab billId={id} />
         </TabsContent>
       </Tabs>
     </div>

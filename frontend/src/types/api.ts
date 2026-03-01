@@ -177,6 +177,74 @@ export interface BillSummaryOutput {
   confidence: number;
 }
 
+// --- Version Diff ---
+
+export type ChangeType = "added" | "removed" | "modified";
+export type Significance = "major" | "moderate" | "minor";
+export type Severity = "high" | "moderate" | "low";
+export type RiskLevel = "high" | "moderate" | "low" | "minimal" | "unknown";
+export type PatternType = "identical" | "adapted" | "inspired" | "coincidental" | "unknown";
+
+export interface VersionDiffChange {
+  section: string;
+  change_type: ChangeType;
+  significance: Significance;
+  before: string | null;
+  after: string | null;
+  description: string;
+}
+
+export interface VersionDiffOutput {
+  version_a_name: string;
+  version_b_name: string;
+  changes: VersionDiffChange[];
+  summary_of_changes: string;
+  direction_of_change: string;
+  amendments_incorporated: string[];
+  confidence: number;
+}
+
+// --- Constitutional Analysis ---
+
+export interface ConstitutionalConcern {
+  provision: string;
+  severity: Severity;
+  bill_section: string;
+  description: string;
+  relevant_precedents: string[];
+}
+
+export interface ConstitutionalAnalysisOutput {
+  concerns: ConstitutionalConcern[];
+  preemption_issues: string[];
+  has_severability_clause: boolean;
+  overall_risk_level: RiskLevel;
+  summary: string;
+  confidence: number;
+}
+
+// --- Pattern Detection ---
+
+export interface PatternBillInfo {
+  bill_id: string;
+  identifier: string;
+  jurisdiction_id: string;
+  title: string;
+  variations: string[];
+}
+
+export interface PatternDetectionOutput {
+  pattern_type: PatternType;
+  common_framework: string;
+  source_organization: string | null;
+  bills_analyzed: PatternBillInfo[];
+  shared_provisions: string[];
+  key_variations: string[];
+  model_legislation_confidence: number;
+  summary: string;
+  confidence: number;
+}
+
 // --- Status ---
 
 export interface HealthResponse {

@@ -3,7 +3,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -17,6 +17,8 @@ from src.schemas.compare import (
     SimilarBillResult,
     SimilarBillsResponse,
 )
+from src.search.vector import find_similar_bill_ids
+from src.services.bill_service import extract_bill_text
 
 logger = logging.getLogger(__name__)
 
@@ -45,62 +47,22 @@ async def find_similar_bills(
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
 
-    # Build optional jurisdiction exclusion clause
-    jurisdiction_clause = ""
-    params: dict = {"bill_id": bill_id, "min_score": min_score, "top_k": top_k}
-    if exclude_same_jurisdiction:
-        jurisdiction_clause = "AND b.jurisdiction_id != :source_jurisdiction"
-        params["source_jurisdiction"] = bill.jurisdiction_id
-
-    # Try pgvector cosine similarity first
-    embedding_query = text(f"""
-        SELECT be2.bill_id,
-               1 - (be1.embedding <=> be2.embedding) AS score
-        FROM bill_embeddings be1
-        JOIN bill_embeddings be2 ON be1.bill_id != be2.bill_id
-        JOIN bills b ON b.id = be2.bill_id
-        WHERE be1.bill_id = :bill_id
-          AND 1 - (be1.embedding <=> be2.embedding) > :min_score
-          {jurisdiction_clause}
-        ORDER BY be1.embedding <=> be2.embedding
-        LIMIT :top_k
-    """)
-
-    rows = (await db.execute(embedding_query, params)).fetchall()
-
-    # Fallback to pre-computed bill_similarities if no embedding rows returned
-    if not rows:
-        logger.info(
-            "No embedding found for bill %s, falling back to bill_similarities",
-            bill_id,
-        )
-        fallback_query = text(f"""
-            SELECT
-                CASE WHEN bill_id_a = :bill_id THEN bill_id_b
-                     ELSE bill_id_a END AS bill_id,
-                similarity_score AS score
-            FROM bill_similarities bs
-            JOIN bills b ON b.id = (
-                CASE WHEN bs.bill_id_a = :bill_id THEN bs.bill_id_b
-                     ELSE bs.bill_id_a END
-            )
-            WHERE (bs.bill_id_a = :bill_id OR bs.bill_id_b = :bill_id)
-              AND bs.similarity_score > :min_score
-              {jurisdiction_clause}
-            ORDER BY bs.similarity_score DESC
-            LIMIT :top_k
-        """)
-        rows = (await db.execute(fallback_query, params)).fetchall()
-
-    if not rows:
+    matches = await find_similar_bill_ids(
+        db,
+        bill_id,
+        exclude_jurisdiction=bill.jurisdiction_id if exclude_same_jurisdiction else None,
+        min_score=min_score,
+        top_k=top_k,
+    )
+    if not matches:
         return SimilarBillsResponse(
             data=[],
             meta=MetaResponse(total_count=0, ai_enriched=False),
         )
 
     # Load full bill metadata for each matched bill
-    matched_ids = [r.bill_id for r in rows]
-    score_map = {r.bill_id: float(r.score) for r in rows}
+    matched_ids = [m.bill_id for m in matches]
+    score_map = {m.bill_id: m.score for m in matches}
 
     bills_result = await db.execute(select(Bill).where(Bill.id.in_(matched_ids)))
     bills_by_id = {b.id: b for b in bills_result.scalars().all()}
@@ -154,8 +116,8 @@ async def compare_bills(
         raise HTTPException(status_code=404, detail=f"Bill not found: {req.bill_id_b}")
 
     # Extract text for each bill (latest version, fall back to title)
-    bill_a_text = _extract_bill_text(bill_a)
-    bill_b_text = _extract_bill_text(bill_b)
+    bill_a_text = extract_bill_text(bill_a)
+    bill_b_text = extract_bill_text(bill_b)
 
     output = await harness.compare(
         bill_id_a=bill_a.id,
@@ -169,12 +131,3 @@ async def compare_bills(
     )
     await db.commit()
     return output
-
-
-def _extract_bill_text(bill: Bill) -> str:
-    """Return the best available text for a bill, falling back to its title."""
-    if bill.texts:
-        for t in bill.texts:
-            if t.content_text:
-                return t.content_text
-    return bill.title
