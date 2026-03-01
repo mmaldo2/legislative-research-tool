@@ -88,7 +88,7 @@ class OpenStatesIngester(BaseIngester):
             for state_abbr in self.states:
                 state_abbr = state_abbr.lower()
                 if state_abbr not in STATE_JURISDICTIONS:
-                    logger.warning(f"Unknown state abbreviation: {state_abbr}")
+                    logger.warning("Unknown state abbreviation: %s", state_abbr)
                     continue
 
                 jur_id, jur_name = STATE_JURISDICTIONS[state_abbr]
@@ -98,15 +98,16 @@ class OpenStatesIngester(BaseIngester):
                 bills_created += created
                 bills_updated += updated
                 logger.info(
-                    f"Completed {state_abbr.upper()}: {created} created, {updated} updated"
+                    "Completed %s: %d created, %d updated",
+                    state_abbr.upper(), created, updated,
                 )
 
             if self.run:
-                self.run.bills_created = bills_created
-                self.run.bills_updated = bills_updated
+                self.run.records_created = bills_created
+                self.run.records_updated = bills_updated
             await self.finish_run("completed")
         except Exception as e:
-            logger.error(f"Open States ingestion failed: {e}")
+            logger.error("Open States ingestion failed: %s", e)
             await self.finish_run("failed")
             raise
 
@@ -151,7 +152,7 @@ class OpenStatesIngester(BaseIngester):
                 )
                 resp.raise_for_status()
             except httpx.HTTPError as e:
-                logger.error(f"Open States API error for {state_abbr} page {page}: {e}")
+                logger.error("Open States API error for %s page %d: %s", state_abbr, page, e)
                 break
 
             data = resp.json()
@@ -252,7 +253,7 @@ class OpenStatesIngester(BaseIngester):
             )
             resp.raise_for_status()
         except httpx.HTTPError as e:
-            logger.warning(f"Failed to fetch bill detail {openstates_id}: {e}")
+            logger.warning("Failed to fetch bill detail %s: %s", openstates_id, e)
             return
 
         detail = resp.json()

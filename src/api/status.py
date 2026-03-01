@@ -46,8 +46,8 @@ async def ingestion_status(db: AsyncSession = Depends(get_session)) -> StatusRes
             status=r.status,
             started_at=r.started_at,
             finished_at=r.finished_at,
-            bills_created=r.bills_created,
-            bills_updated=r.bills_updated,
+            records_created=r.records_created,
+            records_updated=r.records_updated,
         )
         for r in runs
     ]

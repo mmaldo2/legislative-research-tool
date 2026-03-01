@@ -18,7 +18,7 @@ class IngestionRun(Base):
     )
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String, default="running")  # running, completed, failed
-    bills_created: Mapped[int] = mapped_column(Integer, default=0)
-    bills_updated: Mapped[int] = mapped_column(Integer, default=0)
+    records_created: Mapped[int] = mapped_column(Integer, default=0)
+    records_updated: Mapped[int] = mapped_column(Integer, default=0)
     errors: Mapped[list | None] = mapped_column(JSONB, default=None)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSONB, default=dict)

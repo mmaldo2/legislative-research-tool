@@ -16,8 +16,8 @@ class IngestionRunResponse(BaseModel):
     status: str
     started_at: datetime | None = None
     finished_at: datetime | None = None
-    bills_created: int
-    bills_updated: int
+    records_created: int
+    records_updated: int
 
 
 class StatusResponse(BaseModel):

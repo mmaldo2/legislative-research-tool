@@ -35,16 +35,6 @@ class TopicClassificationOutput(BaseModel):
     confidence: float
 
 
-class BillComparisonOutput(BaseModel):
-    """Structured output for comparing two bills or bill versions."""
-
-    similarities: list[str]
-    differences: list[str]
-    key_changes: list[str]
-    overall_assessment: str
-    similarity_score: float
-
-
 class AnalysisResponse(BaseModel):
     """Read-only view of a stored AI analysis."""
 

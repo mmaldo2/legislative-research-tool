@@ -26,11 +26,11 @@ class TestIngestionRunResponse:
             status="completed",
             started_at=datetime(2025, 1, 1),
             finished_at=datetime(2025, 1, 1, 0, 30),
-            bills_created=500,
-            bills_updated=50,
+            records_created=500,
+            records_updated=50,
         )
         assert run.source == "govinfo"
-        assert run.bills_created == 500
+        assert run.records_created == 500
 
     def test_running_run(self):
         run = IngestionRunResponse(
@@ -38,8 +38,8 @@ class TestIngestionRunResponse:
             source="openstates",
             run_type="incremental",
             status="running",
-            bills_created=0,
-            bills_updated=0,
+            records_created=0,
+            records_updated=0,
         )
         assert run.finished_at is None
 

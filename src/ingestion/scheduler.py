@@ -7,30 +7,42 @@ Runs background jobs for periodic data refresh:
 """
 
 import logging
+from collections.abc import Callable
+from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from src.database import async_session_factory
+from src.ingestion.base import BaseIngester
 
 logger = logging.getLogger(__name__)
 
 scheduler = AsyncIOScheduler()
 
 
+async def _run_ingestion(
+    label: str,
+    factory: Callable[..., BaseIngester],
+    **kwargs: Any,
+) -> None:
+    """Generic scheduled ingestion runner."""
+    logger.info("Scheduled: starting %s ingestion", label)
+    async with async_session_factory() as session:
+        ingester = factory(session, **kwargs)
+        try:
+            await ingester.ingest()
+            logger.info("Scheduled: %s ingestion completed", label)
+        except Exception as e:
+            logger.error("Scheduled: %s ingestion failed: %s", label, e)
+        finally:
+            await ingester.close()
+
+
 async def _run_federal_ingestion() -> None:
     """Scheduled job: ingest federal bills."""
     from src.ingestion.govinfo import GovInfoIngester
 
-    logger.info("Scheduled: starting federal ingestion")
-    async with async_session_factory() as session:
-        ingester = GovInfoIngester(session, congress=119)
-        try:
-            await ingester.ingest()
-            logger.info("Scheduled: federal ingestion completed")
-        except Exception as e:
-            logger.error("Scheduled: federal ingestion failed: %s", e)
-        finally:
-            await ingester.close()
+    await _run_ingestion("federal", GovInfoIngester, congress=119)
 
 
 async def _run_state_ingestion() -> None:
@@ -38,32 +50,14 @@ async def _run_state_ingestion() -> None:
     from src.ingestion.openstates import STATE_JURISDICTIONS, OpenStatesIngester
 
     states = list(STATE_JURISDICTIONS.keys())
-    logger.info("Scheduled: starting state ingestion for %d states", len(states))
-    async with async_session_factory() as session:
-        ingester = OpenStatesIngester(session, states=states)
-        try:
-            await ingester.ingest()
-            logger.info("Scheduled: state ingestion completed")
-        except Exception as e:
-            logger.error("Scheduled: state ingestion failed: %s", e)
-        finally:
-            await ingester.close()
+    await _run_ingestion("state", OpenStatesIngester, states=states)
 
 
 async def _run_legislators_ingestion() -> None:
     """Scheduled job: update congress legislators."""
     from src.ingestion.congress_legislators import CongressLegislatorsIngester
 
-    logger.info("Scheduled: starting legislators ingestion")
-    async with async_session_factory() as session:
-        ingester = CongressLegislatorsIngester(session)
-        try:
-            await ingester.ingest()
-            logger.info("Scheduled: legislators ingestion completed")
-        except Exception as e:
-            logger.error("Scheduled: legislators ingestion failed: %s", e)
-        finally:
-            await ingester.close()
+    await _run_ingestion("legislators", CongressLegislatorsIngester)
 
 
 def configure_scheduler() -> AsyncIOScheduler:

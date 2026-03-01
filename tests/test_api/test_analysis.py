@@ -1,7 +1,6 @@
 """Tests for analysis API schemas and request validation."""
 
 from src.schemas.analysis import (
-    BillComparisonOutput,
     BillSummaryOutput,
     ClassifyRequest,
     SummarizeRequest,
@@ -46,13 +45,3 @@ class TestAnalysisOutputSchemas:
         )
         assert output.primary_topic == "Technology & Communications"
 
-    def test_comparison_output(self):
-        output = BillComparisonOutput(
-            similarities=["Both address data privacy"],
-            differences=["Scope differs — federal vs state"],
-            key_changes=["Added enforcement mechanism"],
-            overall_assessment="Substantially similar with key enforcement differences",
-            similarity_score=0.78,
-        )
-        assert output.similarity_score == 0.78
-        assert len(output.differences) == 1
