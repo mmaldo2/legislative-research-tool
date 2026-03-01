@@ -89,6 +89,38 @@ RESEARCH_TOOLS = [
         },
     },
     {
+        "name": "analyze_version_diff",
+        "description": (
+            "Analyze differences between two versions of the same bill. Identifies substantive "
+            "changes, their significance (major/moderate/minor), and overall direction of change. "
+            "Requires a bill with at least two text versions."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "bill_id": {
+                    "type": "string",
+                    "description": "The bill ID to compare versions for.",
+                },
+                "version_a_id": {
+                    "type": "string",
+                    "description": (
+                        "ID of the earlier version text. Omit to use the "
+                        "oldest available version."
+                    ),
+                },
+                "version_b_id": {
+                    "type": "string",
+                    "description": (
+                        "ID of the later version text. Omit to use the "
+                        "latest available version."
+                    ),
+                },
+            },
+            "required": ["bill_id"],
+        },
+    },
+    {
         "name": "analyze_constitutional",
         "description": (
             "Analyze a bill for potential constitutional concerns including First Amendment, "

@@ -195,7 +195,6 @@ export interface VersionDiffOutput {
   summary_of_changes: string;
   direction_of_change: string;
   amendments_incorporated: string[];
-  has_severability_clause: boolean;
   confidence: number;
 }
 

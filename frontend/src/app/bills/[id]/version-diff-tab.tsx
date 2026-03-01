@@ -81,9 +81,6 @@ export function VersionDiffTab({ billId, texts }: VersionDiffTabProps) {
             <span className="text-sm font-medium">Direction:</span>
             <Badge variant="secondary">{result.direction_of_change}</Badge>
           </div>
-          {result.has_severability_clause && (
-            <Badge variant="outline">Severability clause present</Badge>
-          )}
         </CardContent>
       </Card>
 

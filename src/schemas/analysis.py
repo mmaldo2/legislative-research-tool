@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.schemas.common import MetaResponse
 
@@ -23,7 +23,7 @@ class BillSummaryOutput(BaseModel):
     changes_to_existing_law: list[str]
     fiscal_implications: str | None = None
     effective_date: str | None = None
-    confidence: float
+    confidence: float = Field(ge=0.0, le=1.0)
 
 
 class TopicClassificationOutput(BaseModel):
@@ -32,7 +32,7 @@ class TopicClassificationOutput(BaseModel):
     primary_topic: str
     secondary_topics: list[str]
     policy_area: str
-    confidence: float
+    confidence: float = Field(ge=0.0, le=1.0)
 
 
 class VersionDiffRequest(BaseModel):
@@ -47,7 +47,7 @@ class ConstitutionalRequest(BaseModel):
 
 class PatternDetectRequest(BaseModel):
     bill_id: str
-    top_k: int = 5  # Number of similar bills to analyze
+    top_k: int = Field(default=5, ge=1, le=20)  # Number of similar bills to analyze
 
 
 class VersionDiffChange(BaseModel):
@@ -70,8 +70,7 @@ class VersionDiffOutput(BaseModel):
     summary_of_changes: str
     direction_of_change: str  # e.g. "narrowed scope", "added enforcement"
     amendments_incorporated: list[str]
-    has_severability_clause: bool = False
-    confidence: float
+    confidence: float = Field(ge=0.0, le=1.0)
 
 
 class ConstitutionalConcern(BaseModel):
@@ -92,7 +91,7 @@ class ConstitutionalAnalysisOutput(BaseModel):
     has_severability_clause: bool
     overall_risk_level: str  # "high", "moderate", "low", "minimal"
     summary: str
-    confidence: float
+    confidence: float = Field(ge=0.0, le=1.0)
 
 
 class PatternBillInfo(BaseModel):
@@ -114,9 +113,9 @@ class PatternDetectionOutput(BaseModel):
     bills_analyzed: list[PatternBillInfo]
     shared_provisions: list[str]
     key_variations: list[str]
-    model_legislation_confidence: float  # 0.0-1.0
+    model_legislation_confidence: float = Field(ge=0.0, le=1.0)
     summary: str
-    confidence: float
+    confidence: float = Field(ge=0.0, le=1.0)
 
 
 class AnalysisResponse(BaseModel):

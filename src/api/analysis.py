@@ -3,7 +3,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from sqlalchemy import func, select, text
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -26,6 +26,8 @@ from src.schemas.analysis import (
     VersionDiffRequest,
 )
 from src.schemas.common import MetaResponse
+from src.search.vector import find_similar_bill_ids
+from src.services.bill_service import extract_bill_text
 
 logger = logging.getLogger(__name__)
 
@@ -47,13 +49,7 @@ async def summarize_bill(
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
 
-    # Use the latest text version, fall back to title
-    bill_text = bill.title
-    if bill.texts:
-        for t in bill.texts:
-            if t.content_text:
-                bill_text = t.content_text
-                break
+    bill_text = extract_bill_text(bill)
 
     output = await harness.summarize(
         bill_id=bill.id,
@@ -146,13 +142,20 @@ async def version_diff(
     else:
         version_b = sorted_texts[-1]
 
+    # Guard: versions must be different
+    if version_a.id == version_b.id:
+        raise HTTPException(
+            status_code=400,
+            detail="Version A and Version B must be different text versions",
+        )
+
     output = await harness.version_diff(
         bill_id=bill.id,
         identifier=bill.identifier,
         jurisdiction=bill.jurisdiction_id,
-        version_a_name=version_a.version_name,
+        version_a_name=version_a.version_name or "Earlier Version",
         version_a_text=version_a.content_text,
-        version_b_name=version_b.version_name,
+        version_b_name=version_b.version_name or "Later Version",
         version_b_text=version_b.content_text,
     )
     await db.commit()
@@ -174,12 +177,7 @@ async def constitutional_analysis(
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
 
-    bill_text = bill.title
-    if bill.texts:
-        for t in bill.texts:
-            if t.content_text:
-                bill_text = t.content_text
-                break
+    bill_text = extract_bill_text(bill)
 
     output = await harness.constitutional_analysis(
         bill_id=bill.id,
@@ -207,67 +205,23 @@ async def pattern_detect(
     if not bill:
         raise HTTPException(status_code=404, detail="Bill not found")
 
-    source_text = bill.title
-    if bill.texts:
-        for t in bill.texts:
-            if t.content_text:
-                source_text = t.content_text
-                break
+    source_text = extract_bill_text(bill)
 
-    # Find similar bills via pgvector, excluding same jurisdiction
-    similar_query = text("""
-        SELECT be2.bill_id, 1 - (be1.embedding <=> be2.embedding) AS score
-        FROM bill_embeddings be1
-        JOIN bill_embeddings be2 ON be1.bill_id != be2.bill_id
-        JOIN bills b ON b.id = be2.bill_id
-        WHERE be1.bill_id = :bill_id
-          AND b.jurisdiction_id != :jurisdiction
-        ORDER BY be1.embedding <=> be2.embedding
-        LIMIT :top_k
-    """)
-    rows = (
-        await db.execute(
-            similar_query,
-            {"bill_id": req.bill_id, "jurisdiction": bill.jurisdiction_id, "top_k": req.top_k},
-        )
-    ).fetchall()
-
-    if not rows:
-        # Fallback to bill_similarities table
-        fallback_query = text("""
-            SELECT
-                CASE WHEN bill_id_a = :bill_id THEN bill_id_b
-                     ELSE bill_id_a END AS bill_id,
-                similarity_score AS score
-            FROM bill_similarities bs
-            JOIN bills b ON b.id = (
-                CASE WHEN bs.bill_id_a = :bill_id THEN bs.bill_id_b
-                     ELSE bs.bill_id_a END
-            )
-            WHERE (bs.bill_id_a = :bill_id OR bs.bill_id_b = :bill_id)
-              AND b.jurisdiction_id != :jurisdiction
-            ORDER BY bs.similarity_score DESC
-            LIMIT :top_k
-        """)
-        rows = (
-            await db.execute(
-                fallback_query,
-                {
-                    "bill_id": req.bill_id,
-                    "jurisdiction": bill.jurisdiction_id,
-                    "top_k": req.top_k,
-                },
-            )
-        ).fetchall()
-
-    if not rows:
+    # Find similar bills from other jurisdictions
+    matches = await find_similar_bill_ids(
+        db,
+        req.bill_id,
+        exclude_jurisdiction=bill.jurisdiction_id,
+        top_k=req.top_k,
+    )
+    if not matches:
         raise HTTPException(
             status_code=400,
             detail="No similar bills found in other jurisdictions for pattern analysis",
         )
 
     # Load similar bills with texts
-    matched_ids = [r.bill_id for r in rows]
+    matched_ids = [m.bill_id for m in matches]
     bills_result = await db.execute(
         select(Bill).where(Bill.id.in_(matched_ids)).options(selectinload(Bill.texts))
     )
@@ -276,12 +230,7 @@ async def pattern_detect(
     # Format similar bills text for the prompt
     similar_parts: list[str] = []
     for sb in similar_bills:
-        sb_text = sb.title
-        if sb.texts:
-            for t in sb.texts:
-                if t.content_text:
-                    sb_text = t.content_text
-                    break
+        sb_text = extract_bill_text(sb)
         similar_parts.append(
             f"Bill: {sb.identifier}\n"
             f"Jurisdiction: {sb.jurisdiction_id}\n"
