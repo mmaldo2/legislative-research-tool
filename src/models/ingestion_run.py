@@ -13,9 +13,7 @@ class IngestionRun(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(String, nullable=False)  # govinfo, openstates, legiscan
     run_type: Mapped[str] = mapped_column(String, nullable=False)  # full, incremental
-    started_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default="now()"
-    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String, default="running")  # running, completed, failed
     records_created: Mapped[int] = mapped_column(Integer, default=0)

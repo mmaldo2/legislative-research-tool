@@ -29,9 +29,7 @@ async def health_check(db: AsyncSession = Depends(get_session)) -> HealthRespons
 async def ingestion_status(db: AsyncSession = Depends(get_session)) -> StatusResponse:
     """Ingestion status — bill counts and recent ingestion runs."""
     total_bills = (await db.execute(select(func.count(Bill.id)))).scalar_one()
-    total_jurisdictions = (
-        await db.execute(select(func.count(Jurisdiction.id)))
-    ).scalar_one()
+    total_jurisdictions = (await db.execute(select(func.count(Jurisdiction.id)))).scalar_one()
 
     runs_result = await db.execute(
         select(IngestionRun).order_by(IngestionRun.started_at.desc()).limit(10)

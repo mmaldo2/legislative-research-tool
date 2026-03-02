@@ -292,9 +292,7 @@ async def policy_diffusion(
     # Load matched bills with status dates
     matched_ids = [m.bill_id for m in matches]
     score_map = {m.bill_id: m.score for m in matches}
-    bills_result = await db.execute(
-        select(Bill).where(Bill.id.in_(matched_ids))
-    )
+    bills_result = await db.execute(select(Bill).where(Bill.id.in_(matched_ids)))
     similar_bills = bills_result.scalars().all()
 
     # Build timeline sorted by status_date
@@ -327,9 +325,7 @@ async def policy_diffusion(
         total_jurisdictions=len(jurisdictions),
         earliest_date=min(dates) if dates else None,
         latest_date=max(dates) if dates else None,
-        summary=(
-            f"Found {len(events)} similar bills across {len(jurisdictions)} jurisdictions."
-        ),
+        summary=(f"Found {len(events)} similar bills across {len(jurisdictions)} jurisdictions."),
         confidence=0.8,
     )
 

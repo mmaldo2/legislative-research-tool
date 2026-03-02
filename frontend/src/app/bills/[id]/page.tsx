@@ -17,6 +17,7 @@ import { ConstitutionalTab } from "./constitutional-tab";
 import { PatternsTab } from "./patterns-tab";
 import { DiffusionTab } from "./diffusion-tab";
 import { PredictionTab } from "./prediction-tab";
+import { HearingsTab } from "./hearings-tab";
 import { SaveToCollection } from "@/components/save-to-collection";
 
 export async function generateMetadata({
@@ -115,6 +116,7 @@ export default async function BillDetailPage({
           <TabsTrigger value="patterns">Patterns</TabsTrigger>
           <TabsTrigger value="diffusion">Diffusion</TabsTrigger>
           <TabsTrigger value="prediction">Prediction</TabsTrigger>
+          <TabsTrigger value="hearings">Hearings</TabsTrigger>
         </TabsList>
 
         <TabsContent value="summary" className="mt-4">
@@ -165,6 +167,10 @@ export default async function BillDetailPage({
 
         <TabsContent value="prediction" className="mt-4">
           <PredictionTab billId={id} />
+        </TabsContent>
+
+        <TabsContent value="hearings" className="mt-4">
+          <HearingsTab billId={id} />
         </TabsContent>
       </Tabs>
     </div>

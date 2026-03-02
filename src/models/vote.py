@@ -25,14 +25,10 @@ class VoteEvent(Base):
 
 class VoteRecord(Base):
     __tablename__ = "vote_records"
-    __table_args__ = (
-        UniqueConstraint("vote_event_id", "person_id"),
-    )
+    __table_args__ = (UniqueConstraint("vote_event_id", "person_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    vote_event_id: Mapped[str] = mapped_column(
-        ForeignKey("vote_events.id"), nullable=False
-    )
+    vote_event_id: Mapped[str] = mapped_column(ForeignKey("vote_events.id"), nullable=False)
     person_id: Mapped[str] = mapped_column(ForeignKey("people.id"), nullable=False)
     option: Mapped[str] = mapped_column(String, nullable=False)
 

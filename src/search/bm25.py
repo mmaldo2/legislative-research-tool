@@ -55,9 +55,7 @@ class BM25Index:
                 texts_by_bill[row.bill_id] = row.content_text[:5000]
 
         # Stream bills in batches using yield_per
-        bill_count = (
-            await session.execute(select(func.count(Bill.id)))
-        ).scalar_one()
+        bill_count = (await session.execute(select(func.count(Bill.id)))).scalar_one()
 
         self._corpus = []
         self._bill_ids = []

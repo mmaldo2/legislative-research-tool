@@ -134,18 +134,13 @@ async def embed_all_bills(session: AsyncSession) -> int:
         # Batch update vectors via raw SQL
         for emb, embedding in new_embeddings:
             await session.execute(
-                text(
-                    "UPDATE bill_embeddings SET embedding = :vec::vector "
-                    "WHERE id = :id"
-                ),
+                text("UPDATE bill_embeddings SET embedding = :vec::vector WHERE id = :id"),
                 {"vec": str(embedding), "id": emb.id},
             )
             embedded_count += 1
 
         await session.commit()
-        logger.info(
-            "Embedded batch %d-%d (%d bills)", i, i + len(batch_texts), embedded_count
-        )
+        logger.info("Embedded batch %d-%d (%d bills)", i, i + len(batch_texts), embedded_count)
 
     logger.info("Embedding complete: %d bills embedded", embedded_count)
     return embedded_count

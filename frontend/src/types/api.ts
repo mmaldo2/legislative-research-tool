@@ -470,3 +470,25 @@ export interface ConversationListResponse {
   data: ConversationResponse[];
   meta: MetaResponse;
 }
+
+// --- Hearings ---
+
+export interface HearingResponse {
+  id: string;
+  bill_id: string | null;
+  committee_name: string;
+  committee_code: string | null;
+  chamber: string | null;
+  title: string;
+  hearing_date: string | null;
+  location: string | null;
+  url: string | null;
+  congress: number | null;
+  created_at: string | null;
+  linked_bill_ids: string[];
+}
+
+export interface HearingListResponse {
+  data: HearingResponse[];
+  meta: MetaResponse;
+}

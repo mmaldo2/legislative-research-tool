@@ -16,6 +16,7 @@ import type {
   ConversationListResponse,
   ConversationResponse,
   DiffusionOutput,
+  HearingListResponse,
   HealthResponse,
   JurisdictionListResponse,
   JurisdictionStatsResponse,
@@ -500,6 +501,33 @@ export function getExportCsvUrl(params: {
 
 export function getBillBriefUrl(billId: string): string {
   return `${API_BASE}/export/bills/${encodeURIComponent(billId)}/brief`;
+}
+
+// --- Hearings ---
+
+export async function listBillHearings(
+  billId: string,
+  params: { page?: number; per_page?: number } = {},
+): Promise<HearingListResponse> {
+  const query = qs(params);
+  return fetchApi<HearingListResponse>(
+    `/bills/${encodeURIComponent(billId)}/hearings${query}`,
+    { revalidate: 300 },
+  );
+}
+
+export async function listHearings(params: {
+  committee?: string;
+  chamber?: string;
+  congress?: number;
+  bill_id?: string;
+  date_from?: string;
+  date_to?: string;
+  q?: string;
+  page?: number;
+  per_page?: number;
+} = {}): Promise<HearingListResponse> {
+  return fetchApi<HearingListResponse>(`/hearings${qs(params)}`, { revalidate: 300 });
 }
 
 export { ApiError, RateLimitError };

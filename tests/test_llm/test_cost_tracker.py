@@ -28,9 +28,7 @@ class TestCostTracker:
     def test_batch_discount(self):
         tracker = CostTracker()
         normal = tracker.record("claude-sonnet-4-6", 1_000_000, 1_000_000, "summarize")
-        batch = tracker.record(
-            "claude-sonnet-4-6", 1_000_000, 1_000_000, "summarize", batch=True
-        )
+        batch = tracker.record("claude-sonnet-4-6", 1_000_000, 1_000_000, "summarize", batch=True)
         assert abs(batch.cost_usd - normal.cost_usd * 0.5) < 0.01
 
     def test_total_cost(self):

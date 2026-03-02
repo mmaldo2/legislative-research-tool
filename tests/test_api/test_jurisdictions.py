@@ -68,9 +68,7 @@ class TestJurisdictionStatsResponse:
 
 class TestSessionBillCount:
     def test_valid(self):
-        sbc = SessionBillCount(
-            session_id="us-119", session_name="119th Congress", bill_count=1500
-        )
+        sbc = SessionBillCount(session_id="us-119", session_name="119th Congress", bill_count=1500)
         assert sbc.session_id == "us-119"
         assert sbc.bill_count == 1500
 

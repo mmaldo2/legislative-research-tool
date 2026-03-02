@@ -109,9 +109,7 @@ async def get_jurisdiction_stats_endpoint(
 ) -> JurisdictionStatsResponse:
     """Get aggregate statistics for a jurisdiction."""
     # Verify jurisdiction exists
-    result = await db.execute(
-        select(Jurisdiction).where(Jurisdiction.id == jurisdiction_id)
-    )
+    result = await db.execute(select(Jurisdiction).where(Jurisdiction.id == jurisdiction_id))
     if not result.scalar_one_or_none():
         raise HTTPException(status_code=404, detail="Jurisdiction not found")
 

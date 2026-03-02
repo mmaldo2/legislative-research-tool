@@ -24,12 +24,8 @@ class Person(Base):
     bioguide_id: Mapped[str | None] = mapped_column(String)
     legiscan_id: Mapped[int | None] = mapped_column(Integer)
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default="now()"
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default="now()"
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
 
     sponsorships: Mapped[list["Sponsorship"]] = relationship(back_populates="person")
     vote_records: Mapped[list["VoteRecord"]] = relationship(back_populates="person")

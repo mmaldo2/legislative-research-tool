@@ -32,6 +32,7 @@ from src.schemas.chat import (
 )
 from src.schemas.common import MetaResponse
 from src.search.engine import hybrid_search
+from src.search.govinfo import get_govinfo_package, search_govinfo
 from src.search.vector import find_similar_bill_ids
 from src.services.bill_service import extract_bill_text
 
@@ -87,9 +88,7 @@ async def _tool_search_bills(
                 "title": bill.title,
                 "jurisdiction_id": bill.jurisdiction_id,
                 "status": bill.status,
-                "status_date": (
-                    str(bill.status_date) if bill.status_date else None
-                ),
+                "status_date": (str(bill.status_date) if bill.status_date else None),
                 "score": round(score, 4),
             }
         )
@@ -194,9 +193,7 @@ async def _tool_find_similar_bills(
 
     matches = await find_similar_bill_ids(db, bill_id, top_k=top_k)
     if not matches:
-        return json.dumps(
-            {"similar_bills": [], "source_bill_id": bill_id}
-        )
+        return json.dumps({"similar_bills": [], "source_bill_id": bill_id})
 
     matched_ids = [m.bill_id for m in matches]
     score_map = {m.bill_id: m.score for m in matches}
@@ -220,20 +217,14 @@ async def _tool_find_similar_bills(
             }
         )
 
-    return json.dumps(
-        {"similar_bills": similar, "source_bill_id": bill_id}
-    )
+    return json.dumps({"similar_bills": similar, "source_bill_id": bill_id})
 
 
 async def _tool_analyze_version_diff(
     arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
 ) -> str:
     bill_id = arguments.get("bill_id", "")
-    stmt = (
-        select(Bill)
-        .where(Bill.id == bill_id)
-        .options(texts_without_markup(Bill.texts))
-    )
+    stmt = select(Bill).where(Bill.id == bill_id).options(texts_without_markup(Bill.texts))
     result = await db.execute(stmt)
     bill = result.scalar_one_or_none()
     if not bill:
@@ -244,9 +235,7 @@ async def _tool_analyze_version_diff(
         key=lambda t: t.version_date or t.created_at,
     )
     if len(sorted_texts) < 2:
-        return json.dumps(
-            {"error": "Bill must have at least 2 text versions with content."}
-        )
+        return json.dumps({"error": "Bill must have at least 2 text versions with content."})
 
     # Resolve version A (default: oldest)
     version_a_id = arguments.get("version_a_id")
@@ -267,9 +256,7 @@ async def _tool_analyze_version_diff(
         version_b = sorted_texts[-1]
 
     if version_a.id == version_b.id:
-        return json.dumps(
-            {"error": "Version A and Version B must be different."}
-        )
+        return json.dumps({"error": "Version A and Version B must be different."})
 
     output = await harness.version_diff(
         bill_id=bill.id,
@@ -288,11 +275,7 @@ async def _tool_analyze_constitutional(
     arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
 ) -> str:
     bill_id = arguments.get("bill_id", "")
-    stmt = (
-        select(Bill)
-        .where(Bill.id == bill_id)
-        .options(texts_without_markup(Bill.texts))
-    )
+    stmt = select(Bill).where(Bill.id == bill_id).options(texts_without_markup(Bill.texts))
     result = await db.execute(stmt)
     bill = result.scalar_one_or_none()
     if not bill:
@@ -317,11 +300,7 @@ async def _tool_analyze_patterns(
     bill_id = arguments.get("bill_id", "")
     top_k = arguments.get("top_k", 5)
 
-    stmt = (
-        select(Bill)
-        .where(Bill.id == bill_id)
-        .options(texts_without_markup(Bill.texts))
-    )
+    stmt = select(Bill).where(Bill.id == bill_id).options(texts_without_markup(Bill.texts))
     result = await db.execute(stmt)
     bill = result.scalar_one_or_none()
     if not bill:
@@ -331,18 +310,17 @@ async def _tool_analyze_patterns(
 
     # Find similar bills from other jurisdictions
     matches = await find_similar_bill_ids(
-        db, bill_id, exclude_jurisdiction=bill.jurisdiction_id, top_k=top_k,
+        db,
+        bill_id,
+        exclude_jurisdiction=bill.jurisdiction_id,
+        top_k=top_k,
     )
     if not matches:
-        return json.dumps(
-            {"error": "No similar bills found in other jurisdictions."}
-        )
+        return json.dumps({"error": "No similar bills found in other jurisdictions."})
 
     matched_ids = [m.bill_id for m in matches]
     bills_result = await db.execute(
-        select(Bill)
-        .where(Bill.id.in_(matched_ids))
-        .options(texts_without_markup(Bill.texts))
+        select(Bill).where(Bill.id.in_(matched_ids)).options(texts_without_markup(Bill.texts))
     )
     similar_bills = bills_result.scalars().all()
 
@@ -368,10 +346,33 @@ async def _tool_analyze_patterns(
     return json.dumps(output.model_dump())
 
 
+async def _tool_search_govinfo(
+    arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
+) -> str:
+    query = arguments.get("query", "")
+    collection = arguments.get("collection")
+    congress = arguments.get("congress")
+    page_size = arguments.get("page_size", 10)
+
+    result = await search_govinfo(
+        query=query,
+        collection=collection,
+        congress=congress,
+        page_size=page_size,
+    )
+    return json.dumps(result)
+
+
+async def _tool_get_govinfo_document(
+    arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
+) -> str:
+    package_id = arguments.get("package_id", "")
+    result = await get_govinfo_package(package_id)
+    return json.dumps(result)
+
+
 # Registry mapping tool names to handler functions
-_ToolHandler = Callable[
-    [dict[str, Any], AsyncSession, LLMHarness], Coroutine[Any, Any, str]
-]
+_ToolHandler = Callable[[dict[str, Any], AsyncSession, LLMHarness], Coroutine[Any, Any, str]]
 _TOOL_HANDLERS: dict[str, _ToolHandler] = {
     "search_bills": _tool_search_bills,
     "get_bill_detail": _tool_get_bill_detail,
@@ -380,6 +381,8 @@ _TOOL_HANDLERS: dict[str, _ToolHandler] = {
     "analyze_version_diff": _tool_analyze_version_diff,
     "analyze_constitutional": _tool_analyze_constitutional,
     "analyze_patterns": _tool_analyze_patterns,
+    "search_govinfo": _tool_search_govinfo,
+    "get_govinfo_document": _tool_get_govinfo_document,
 }
 
 
@@ -405,11 +408,7 @@ async def execute_tool(
 
 def _extract_text(response: Any) -> str:
     """Extract concatenated text from an Anthropic response's content blocks."""
-    parts = [
-        block.text
-        for block in response.content
-        if block.type == "text"
-    ]
+    parts = [block.text for block in response.content if block.type == "text"]
     return "\n".join(parts)
 
 
@@ -486,9 +485,7 @@ async def chat(
         )
         conversation = result.scalar_one_or_none()
         if not conversation:
-            raise HTTPException(
-                status_code=404, detail="Conversation not found"
-            )
+            raise HTTPException(status_code=404, detail="Conversation not found")
         if conversation.client_id != client_id:
             raise HTTPException(
                 status_code=403,
@@ -518,9 +515,7 @@ async def chat(
         if msg.role == "user":
             messages.append({"role": "user", "content": msg.content})
         elif msg.role == "assistant":
-            messages.append(
-                {"role": "assistant", "content": msg.content}
-            )
+            messages.append({"role": "assistant", "content": msg.content})
 
     messages = _trim_history(messages, _HISTORY_CHAR_BUDGET)
 
@@ -549,9 +544,7 @@ async def chat(
             break
 
         elif response.stop_reason == "tool_use":
-            api_messages.append(
-                {"role": "assistant", "content": response.content}
-            )
+            api_messages.append({"role": "assistant", "content": response.content})
 
             tool_results = []
             for block in response.content:
@@ -567,24 +560,15 @@ async def chat(
                     )
 
                     try:
-                        result_str = await execute_tool(
-                            tool_name, tool_input, db, harness
-                        )
+                        result_str = await execute_tool(tool_name, tool_input, db, harness)
                     except (
                         ValueError,
                         LookupError,
                         json.JSONDecodeError,
                     ):
-                        logger.exception(
-                            "Tool execution error: %s", tool_name
-                        )
+                        logger.exception("Tool execution error: %s", tool_name)
                         result_str = json.dumps(
-                            {
-                                "error": (
-                                    f"Tool '{tool_name}' encountered"
-                                    " an internal error."
-                                )
-                            }
+                            {"error": (f"Tool '{tool_name}' encountered an internal error.")}
                         )
 
                     # Summarize for metadata
@@ -594,9 +578,7 @@ async def chat(
                     elif "total" in result_data:
                         summary = f"{result_data['total']} results"
                     elif "bill_id" in result_data:
-                        ident = result_data.get(
-                            "identifier", result_data["bill_id"]
-                        )
+                        ident = result_data.get("identifier", result_data["bill_id"])
                         summary = f"Retrieved {ident}"
                     else:
                         summary = f"{len(result_str)} chars"
@@ -617,9 +599,7 @@ async def chat(
                         }
                     )
 
-            api_messages.append(
-                {"role": "user", "content": tool_results}
-            )
+            api_messages.append({"role": "user", "content": tool_results})
 
         else:
             final_text = _extract_text(response)
@@ -629,8 +609,7 @@ async def chat(
     else:
         extracted = _extract_text(response)
         final_text = extracted or (
-            "I reached the maximum number of research steps."
-            " Here is what I found so far."
+            "I reached the maximum number of research steps. Here is what I found so far."
         )
 
     # 6. Store assistant message with tool_calls metadata
@@ -648,11 +627,7 @@ async def chat(
     await db.commit()
 
     # 7. Build response
-    tool_call_infos = (
-        [ToolCallInfo(**tc) for tc in all_tool_calls]
-        if all_tool_calls
-        else None
-    )
+    tool_call_infos = [ToolCallInfo(**tc) for tc in all_tool_calls] if all_tool_calls else None
 
     return ChatResponse(
         conversation_id=conversation.id,
@@ -673,9 +648,7 @@ async def list_conversations(
     db: AsyncSession = Depends(get_session),
 ) -> ConversationListResponse:
     """List conversations owned by the current client."""
-    stmt = select(Conversation).where(
-        Conversation.client_id == client_id
-    )
+    stmt = select(Conversation).where(Conversation.client_id == client_id)
 
     count_stmt = select(func.count()).select_from(stmt.subquery())
     total = (await db.execute(count_stmt)).scalar_one()
@@ -696,9 +669,7 @@ async def list_conversations(
 
     return ConversationListResponse(
         data=data,
-        meta=MetaResponse(
-            total_count=total, page=page, per_page=per_page
-        ),
+        meta=MetaResponse(total_count=total, page=page, per_page=per_page),
     )
 
 
@@ -719,9 +690,7 @@ async def get_conversation(
     )
     conversation = result.scalar_one_or_none()
     if not conversation:
-        raise HTTPException(
-            status_code=404, detail="Conversation not found"
-        )
+        raise HTTPException(status_code=404, detail="Conversation not found")
     if conversation.client_id != client_id:
         raise HTTPException(
             status_code=403,
@@ -732,11 +701,7 @@ async def get_conversation(
         ChatMessageResponse(
             role=m.role,
             content=m.content,
-            tool_calls=(
-                [ToolCallInfo(**tc) for tc in m.tool_calls]
-                if m.tool_calls
-                else None
-            ),
+            tool_calls=([ToolCallInfo(**tc) for tc in m.tool_calls] if m.tool_calls else None),
             created_at=m.created_at,
         )
         for m in conversation.messages
@@ -750,25 +715,17 @@ async def get_conversation(
     )
 
 
-@router.delete(
-    "/conversations/{conversation_id}", status_code=204
-)
+@router.delete("/conversations/{conversation_id}", status_code=204)
 async def delete_conversation(
     conversation_id: str,
     client_id: str = Depends(get_client_id),
     db: AsyncSession = Depends(get_session),
 ) -> None:
     """Delete a conversation and all its messages."""
-    result = await db.execute(
-        select(Conversation).where(
-            Conversation.id == conversation_id
-        )
-    )
+    result = await db.execute(select(Conversation).where(Conversation.id == conversation_id))
     conversation = result.scalar_one_or_none()
     if not conversation:
-        raise HTTPException(
-            status_code=404, detail="Conversation not found"
-        )
+        raise HTTPException(status_code=404, detail="Conversation not found")
     if conversation.client_id != client_id:
         raise HTTPException(
             status_code=403,

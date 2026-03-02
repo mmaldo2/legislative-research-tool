@@ -44,4 +44,3 @@ class TestAnalysisOutputSchemas:
             confidence=0.88,
         )
         assert output.primary_topic == "Technology & Communications"
-

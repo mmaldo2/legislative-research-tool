@@ -20,9 +20,7 @@ class BillText(Base):
     word_count: Mapped[int | None] = mapped_column(Integer)
     content_hash: Mapped[str | None] = mapped_column(String)
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default="now()"
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
 
     bill: Mapped["Bill"] = relationship(back_populates="texts")
 
