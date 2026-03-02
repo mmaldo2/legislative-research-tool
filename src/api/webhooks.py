@@ -13,11 +13,12 @@ from src.models.webhook_endpoint import WebhookEndpoint
 from src.schemas.webhook import (
     WebhookDeliveryResponse,
     WebhookEndpointCreate,
+    WebhookEndpointCreateResponse,
     WebhookEndpointResponse,
     WebhookTestResponse,
 )
 from src.services.auth_service import AuthContext
-from src.services.webhook_dispatcher import enqueue_delivery
+from src.services.webhook_dispatcher import enqueue_delivery, validate_webhook_url
 
 router = APIRouter()
 
@@ -28,36 +29,43 @@ def _require_org(auth: AuthContext) -> uuid.UUID:
     return auth.org_id
 
 
-@router.post("/webhooks", response_model=WebhookEndpointResponse, status_code=201)
+@router.post("/webhooks", response_model=WebhookEndpointCreateResponse, status_code=201)
 @limiter.limit("10/minute")
 async def create_webhook_endpoint(
     request: Request,
     body: WebhookEndpointCreate,
     auth: AuthContext = Depends(require_api_key),
     db: AsyncSession = Depends(get_session),
-) -> WebhookEndpointResponse:
+) -> WebhookEndpointCreateResponse:
     """Register a new webhook endpoint for the caller's organization.
 
     A signing secret is generated automatically for HMAC-SHA256 verification.
+    The secret is returned only in this response — store it securely.
     """
     org_id = _require_org(auth)
 
+    url = str(body.url)
+    ssrf_error = validate_webhook_url(url)
+    if ssrf_error:
+        raise HTTPException(status_code=422, detail=ssrf_error)
+
     endpoint = WebhookEndpoint(
         org_id=org_id,
-        url=str(body.url),
+        url=url,
         secret=secrets.token_urlsafe(32),
     )
     db.add(endpoint)
     await db.commit()
     await db.refresh(endpoint)
 
-    return WebhookEndpointResponse(
+    return WebhookEndpointCreateResponse(
         id=endpoint.id,
         org_id=endpoint.org_id,
         url=endpoint.url,
         is_active=endpoint.is_active,
         failure_count=endpoint.failure_count,
         created_at=endpoint.created_at,
+        secret=endpoint.secret,
     )
 
 

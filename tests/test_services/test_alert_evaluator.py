@@ -177,7 +177,7 @@ class TestEvaluateAlertsForChanges:
         endpoint.id = sub.webhook_endpoint_id
         endpoint.is_active = True
 
-        # Mock execute calls in order
+        # Mock execute calls: bills, searches, subscriptions (batch), endpoints (batch)
         bill_result = MagicMock()
         bill_result.scalars.return_value.all.return_value = [bill]
 
@@ -188,7 +188,7 @@ class TestEvaluateAlertsForChanges:
         sub_result.scalars.return_value.all.return_value = [sub]
 
         ep_result = MagicMock()
-        ep_result.scalar_one_or_none.return_value = endpoint
+        ep_result.scalars.return_value.all.return_value = [endpoint]
 
         session.execute.side_effect = [bill_result, search_result, sub_result, ep_result]
 
@@ -221,8 +221,13 @@ class TestEvaluateAlertsForChanges:
 
         sub = MagicMock()
         sub.saved_search_id = search.id
+        sub.webhook_endpoint_id = uuid.uuid4()
         sub.event_types = ["bill.created"]
         sub.is_active = True
+
+        endpoint = MagicMock()
+        endpoint.id = sub.webhook_endpoint_id
+        endpoint.is_active = True
 
         bill_result = MagicMock()
         bill_result.scalars.return_value.all.return_value = [bill]
@@ -233,7 +238,10 @@ class TestEvaluateAlertsForChanges:
         sub_result = MagicMock()
         sub_result.scalars.return_value.all.return_value = [sub]
 
-        session.execute.side_effect = [bill_result, search_result, sub_result]
+        ep_result = MagicMock()
+        ep_result.scalars.return_value.all.return_value = [endpoint]
+
+        session.execute.side_effect = [bill_result, search_result, sub_result, ep_result]
 
         with patch(
             "src.services.alert_evaluator.enqueue_delivery",
@@ -265,8 +273,13 @@ class TestEvaluateAlertsForChanges:
 
         sub = MagicMock()
         sub.saved_search_id = search.id
+        sub.webhook_endpoint_id = uuid.uuid4()
         sub.event_types = ["bill.created"]  # Only created, not status_changed
         sub.is_active = True
+
+        endpoint = MagicMock()
+        endpoint.id = sub.webhook_endpoint_id
+        endpoint.is_active = True
 
         bill_result = MagicMock()
         bill_result.scalars.return_value.all.return_value = [bill]
@@ -277,7 +290,10 @@ class TestEvaluateAlertsForChanges:
         sub_result = MagicMock()
         sub_result.scalars.return_value.all.return_value = [sub]
 
-        session.execute.side_effect = [bill_result, search_result, sub_result]
+        ep_result = MagicMock()
+        ep_result.scalars.return_value.all.return_value = [endpoint]
+
+        session.execute.side_effect = [bill_result, search_result, sub_result, ep_result]
 
         with patch(
             "src.services.alert_evaluator.enqueue_delivery",

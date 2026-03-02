@@ -13,6 +13,7 @@ from src.services.webhook_dispatcher import (
     deliver_webhook,
     enqueue_delivery,
     sign_payload,
+    validate_webhook_url,
     verify_signature,
 )
 
@@ -110,6 +111,52 @@ class TestEnqueueDelivery:
         assert before <= delivery.next_retry_at <= after
 
 
+class TestValidateWebhookUrl:
+    def test_rejects_http(self):
+        assert validate_webhook_url("http://example.com/hook") is not None
+
+    def test_accepts_https(self):
+        with patch("src.services.webhook_dispatcher.socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [
+                (2, 1, 6, "", ("93.184.216.34", 443)),
+            ]
+            assert validate_webhook_url("https://example.com/hook") is None
+
+    def test_rejects_private_ip(self):
+        with patch("src.services.webhook_dispatcher.socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [
+                (2, 1, 6, "", ("10.0.0.1", 443)),
+            ]
+            result = validate_webhook_url("https://internal.example.com/hook")
+            assert result is not None
+            assert "private" in result
+
+    def test_rejects_localhost(self):
+        with patch("src.services.webhook_dispatcher.socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [
+                (2, 1, 6, "", ("127.0.0.1", 443)),
+            ]
+            result = validate_webhook_url("https://localhost/hook")
+            assert result is not None
+
+    def test_rejects_link_local(self):
+        with patch("src.services.webhook_dispatcher.socket.getaddrinfo") as mock_dns:
+            mock_dns.return_value = [
+                (2, 1, 6, "", ("169.254.169.254", 443)),
+            ]
+            result = validate_webhook_url("https://metadata.internal/hook")
+            assert result is not None
+
+    def test_rejects_unresolvable_host(self):
+        import socket
+
+        with patch("src.services.webhook_dispatcher.socket.getaddrinfo") as mock_dns:
+            mock_dns.side_effect = socket.gaierror("Name or service not known")
+            result = validate_webhook_url("https://nonexistent.invalid/hook")
+            assert result is not None
+            assert "resolve" in result.lower()
+
+
 class TestDeliverWebhook:
     @pytest.mark.asyncio
     async def test_success_marks_delivered(self):
@@ -126,7 +173,10 @@ class TestDeliverWebhook:
         mock_response = MagicMock()
         mock_response.status_code = 200
 
-        with patch("src.services.webhook_dispatcher.httpx.AsyncClient") as mock_cls:
+        with (
+            patch("src.services.webhook_dispatcher.validate_webhook_url", return_value=None),
+            patch("src.services.webhook_dispatcher.httpx.AsyncClient") as mock_cls,
+        ):
             mock_client = AsyncMock()
             mock_client.post.return_value = mock_response
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
@@ -154,7 +204,10 @@ class TestDeliverWebhook:
         mock_response = MagicMock()
         mock_response.status_code = 500
 
-        with patch("src.services.webhook_dispatcher.httpx.AsyncClient") as mock_cls:
+        with (
+            patch("src.services.webhook_dispatcher.validate_webhook_url", return_value=None),
+            patch("src.services.webhook_dispatcher.httpx.AsyncClient") as mock_cls,
+        ):
             mock_client = AsyncMock()
             mock_client.post.return_value = mock_response
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
@@ -182,7 +235,10 @@ class TestDeliverWebhook:
         mock_response = MagicMock()
         mock_response.status_code = 503
 
-        with patch("src.services.webhook_dispatcher.httpx.AsyncClient") as mock_cls:
+        with (
+            patch("src.services.webhook_dispatcher.validate_webhook_url", return_value=None),
+            patch("src.services.webhook_dispatcher.httpx.AsyncClient") as mock_cls,
+        ):
             mock_client = AsyncMock()
             mock_client.post.return_value = mock_response
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
@@ -208,7 +264,10 @@ class TestDeliverWebhook:
         endpoint.url = "https://example.com/hook"
         endpoint.secret = "secret"
 
-        with patch("src.services.webhook_dispatcher.httpx.AsyncClient") as mock_cls:
+        with (
+            patch("src.services.webhook_dispatcher.validate_webhook_url", return_value=None),
+            patch("src.services.webhook_dispatcher.httpx.AsyncClient") as mock_cls,
+        ):
             mock_client = AsyncMock()
             mock_client.post.side_effect = httpx.TimeoutException("timed out")
             mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
@@ -218,6 +277,29 @@ class TestDeliverWebhook:
 
         assert result is False
         assert delivery.last_error == "Timeout"
+
+    @pytest.mark.asyncio
+    async def test_ssrf_dead_letters_delivery(self):
+        delivery = MagicMock()
+        delivery.id = uuid.uuid4()
+        delivery.payload = {}
+        delivery.event_type = "test"
+        delivery.attempt_count = 0
+
+        endpoint = MagicMock()
+        endpoint.url = "https://internal.example.com/hook"
+        endpoint.secret = "secret"
+
+        with patch(
+            "src.services.webhook_dispatcher.validate_webhook_url",
+            return_value="Webhook URLs must not target private or reserved IP addresses",
+        ):
+            result = await deliver_webhook(delivery, endpoint)
+
+        assert result is False
+        assert delivery.status == "dead_letter"
+        assert delivery.next_retry_at is None
+        assert "private" in delivery.last_error
 
 
 class TestRetrySchedule:

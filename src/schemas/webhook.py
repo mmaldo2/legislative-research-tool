@@ -3,15 +3,11 @@
 import uuid
 from datetime import datetime
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, HttpUrl
 
 
 class WebhookEndpointCreate(BaseModel):
     url: HttpUrl
-    event_types: list[str] = Field(
-        default=["bill.created", "bill.status_changed"],
-        description="Event types this endpoint will receive",
-    )
 
 
 class WebhookEndpointResponse(BaseModel):
@@ -21,6 +17,12 @@ class WebhookEndpointResponse(BaseModel):
     is_active: bool
     failure_count: int
     created_at: datetime | None = None
+
+
+class WebhookEndpointCreateResponse(WebhookEndpointResponse):
+    """Returned only on POST — includes the signing secret (shown once)."""
+
+    secret: str
 
 
 class WebhookDeliveryResponse(BaseModel):

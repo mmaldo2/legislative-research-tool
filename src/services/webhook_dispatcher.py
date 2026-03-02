@@ -2,12 +2,15 @@
 
 import hashlib
 import hmac
+import ipaddress
 import json
 import logging
 import secrets
+import socket
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlparse
 
 import httpx
 from sqlalchemy import select, update
@@ -17,6 +20,50 @@ from src.models.webhook_delivery import WebhookDelivery
 from src.models.webhook_endpoint import WebhookEndpoint
 
 logger = logging.getLogger(__name__)
+
+# Private/reserved IP networks that webhook URLs must not resolve to
+_BLOCKED_NETWORKS = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+    ipaddress.ip_network("127.0.0.0/8"),
+    ipaddress.ip_network("169.254.0.0/16"),  # link-local / cloud metadata
+    ipaddress.ip_network("0.0.0.0/8"),
+    ipaddress.ip_network("::1/128"),
+    ipaddress.ip_network("fc00::/7"),
+    ipaddress.ip_network("fe80::/10"),
+]
+
+
+def validate_webhook_url(url: str) -> str | None:
+    """Validate a webhook URL is safe to deliver to.
+
+    Returns an error message if invalid, or None if valid.
+    """
+    parsed = urlparse(url)
+
+    # Enforce HTTPS only
+    if parsed.scheme != "https":
+        return "Webhook URLs must use HTTPS"
+
+    if not parsed.hostname:
+        return "Invalid URL: no hostname"
+
+    # Resolve hostname and check against blocked networks
+    try:
+        addrs = socket.getaddrinfo(
+            parsed.hostname, parsed.port or 443, proto=socket.IPPROTO_TCP
+        )
+    except socket.gaierror:
+        return f"Cannot resolve hostname: {parsed.hostname}"
+
+    for _, _, _, _, sockaddr in addrs:
+        ip = ipaddress.ip_address(sockaddr[0])
+        for network in _BLOCKED_NETWORKS:
+            if ip in network:
+                return "Webhook URLs must not target private or reserved IP addresses"
+
+    return None
 
 # Retry schedule in seconds: ~24 hours total coverage
 # 1m, 5m, 15m, 1h, 2h, 4h, 8h, 16h
@@ -73,6 +120,15 @@ async def enqueue_delivery(
 
 async def deliver_webhook(delivery: WebhookDelivery, endpoint: WebhookEndpoint) -> bool:
     """Attempt HTTP POST delivery. Returns True on success."""
+    # SSRF check at delivery time (DNS can change after registration)
+    ssrf_error = validate_webhook_url(endpoint.url)
+    if ssrf_error:
+        delivery.last_error = ssrf_error
+        delivery.attempt_count += 1
+        delivery.status = "dead_letter"
+        delivery.next_retry_at = None
+        return False
+
     headers = sign_payload(delivery.payload, endpoint.secret)
     headers["Content-Type"] = "application/json"
     headers["X-Webhook-Event"] = delivery.event_type

@@ -68,14 +68,17 @@ def _mock_delivery(**overrides):
 
 
 class TestCreateWebhookEndpoint:
-    def test_create_returns_201(self, client, org_id):
+    def test_create_returns_201_with_secret(self, client, org_id):
         mock_ep = _mock_endpoint(org_id)
         mock_session = AsyncMock()
 
         app.dependency_overrides[get_session] = _override_session(mock_session)
         app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=org_id, tier="pro")
 
-        with patch("src.api.webhooks.WebhookEndpoint") as mock_model:
+        with (
+            patch("src.api.webhooks.WebhookEndpoint") as mock_model,
+            patch("src.api.webhooks.validate_webhook_url", return_value=None),
+        ):
             mock_model.return_value = mock_ep
             response = client.post(
                 "/api/v1/webhooks",
@@ -86,8 +89,7 @@ class TestCreateWebhookEndpoint:
         data = response.json()
         assert data["url"] == "https://example.com/webhook"
         assert data["is_active"] is True
-        # Secret should NOT be in response
-        assert "secret" not in data
+        assert data["secret"] == "test-secret-key"
 
     def test_create_requires_org(self, client):
         app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="dev")
@@ -108,6 +110,24 @@ class TestCreateWebhookEndpoint:
             json={"url": "not-a-url"},
         )
         assert response.status_code == 422
+
+    def test_create_ssrf_blocked_returns_422(self, client, org_id):
+        mock_session = AsyncMock()
+
+        app.dependency_overrides[get_session] = _override_session(mock_session)
+        app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=org_id, tier="pro")
+
+        with patch(
+            "src.api.webhooks.validate_webhook_url",
+            return_value="Webhook URLs must not target private or reserved IP addresses",
+        ):
+            response = client.post(
+                "/api/v1/webhooks",
+                json={"url": "https://internal.example.com/webhook"},
+            )
+
+        assert response.status_code == 422
+        assert "private or reserved" in response.json()["detail"]
 
 
 class TestListWebhookEndpoints:

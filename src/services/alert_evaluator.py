@@ -51,17 +51,39 @@ async def evaluate_alerts_for_changes(
     if not saved_searches:
         return 0
 
+    search_ids = [s.id for s in saved_searches]
+
+    # Batch-load all active subscriptions for these searches (avoids N+1)
+    sub_result = await session.execute(
+        select(AlertSubscription).where(
+            AlertSubscription.saved_search_id.in_(search_ids),
+            AlertSubscription.is_active.is_(True),
+        )
+    )
+    all_subs = list(sub_result.scalars().all())
+
+    if not all_subs:
+        return 0
+
+    # Group subscriptions by saved_search_id
+    subs_by_search: dict[int, list[AlertSubscription]] = {}
+    for sub in all_subs:
+        subs_by_search.setdefault(sub.saved_search_id, []).append(sub)
+
+    # Batch-load all active webhook endpoints referenced by subscriptions (avoids N+1)
+    endpoint_ids = {sub.webhook_endpoint_id for sub in all_subs}
+    ep_result = await session.execute(
+        select(WebhookEndpoint).where(
+            WebhookEndpoint.id.in_(endpoint_ids),
+            WebhookEndpoint.is_active.is_(True),
+        )
+    )
+    endpoints = {ep.id: ep for ep in ep_result.scalars().all()}
+
     enqueued = 0
 
     for search in saved_searches:
-        # Find active subscriptions for this search
-        sub_result = await session.execute(
-            select(AlertSubscription).where(
-                AlertSubscription.saved_search_id == search.id,
-                AlertSubscription.is_active.is_(True),
-            )
-        )
-        subscriptions = list(sub_result.scalars().all())
+        subscriptions = subs_by_search.get(search.id, [])
         if not subscriptions:
             continue
 
@@ -80,14 +102,7 @@ async def evaluate_alerts_for_changes(
                 if event_type not in sub.event_types:
                     continue
 
-                # Fetch the endpoint
-                ep_result = await session.execute(
-                    select(WebhookEndpoint).where(
-                        WebhookEndpoint.id == sub.webhook_endpoint_id,
-                        WebhookEndpoint.is_active.is_(True),
-                    )
-                )
-                endpoint = ep_result.scalar_one_or_none()
+                endpoint = endpoints.get(sub.webhook_endpoint_id)
                 if not endpoint:
                     continue
 
