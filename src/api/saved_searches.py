@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.deps import get_session, limiter, require_api_key
+from src.api.deps import get_session, limiter, require_api_key, require_org
 from src.models.alert_subscription import AlertSubscription
 from src.models.saved_search import SavedSearch
 from src.models.webhook_endpoint import WebhookEndpoint
@@ -23,13 +23,6 @@ from src.services.auth_service import AuthContext
 router = APIRouter()
 
 
-def _require_org(auth: AuthContext) -> uuid.UUID:
-    """Extract org_id, raising 403 in dev mode (no org)."""
-    if auth.org_id is None:
-        raise HTTPException(status_code=403, detail="Organization context required")
-    return auth.org_id
-
-
 @router.post("/saved-searches", response_model=SavedSearchResponse, status_code=201)
 @limiter.limit("30/minute")
 async def create_saved_search(
@@ -39,12 +32,12 @@ async def create_saved_search(
     db: AsyncSession = Depends(get_session),
 ) -> SavedSearchResponse:
     """Create a new saved search for the caller's organization."""
-    org_id = _require_org(auth)
+    org_id = require_org(auth)
 
     search = SavedSearch(
         org_id=org_id,
         name=body.name,
-        criteria=body.criteria,
+        criteria=body.criteria.model_dump(exclude_none=True),
         alerts_enabled=body.alerts_enabled,
     )
     db.add(search)
@@ -66,14 +59,19 @@ async def create_saved_search(
 async def list_saved_searches(
     auth: AuthContext = Depends(require_api_key),
     db: AsyncSession = Depends(get_session),
+    page: int = 1,
+    per_page: int = 50,
 ) -> list[SavedSearchResponse]:
     """List saved searches for the caller's organization."""
-    org_id = _require_org(auth)
+    org_id = require_org(auth)
+    per_page = min(per_page, 100)
 
     result = await db.execute(
         select(SavedSearch)
         .where(SavedSearch.org_id == org_id)
         .order_by(SavedSearch.created_at.desc())
+        .offset((page - 1) * per_page)
+        .limit(per_page)
     )
     searches = result.scalars().all()
 
@@ -91,6 +89,33 @@ async def list_saved_searches(
     ]
 
 
+@router.get("/saved-searches/{search_id}", response_model=SavedSearchResponse)
+async def get_saved_search(
+    search_id: uuid.UUID,
+    auth: AuthContext = Depends(require_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> SavedSearchResponse:
+    """Get a single saved search."""
+    org_id = require_org(auth)
+
+    result = await db.execute(
+        select(SavedSearch).where(SavedSearch.id == search_id, SavedSearch.org_id == org_id)
+    )
+    search = result.scalar_one_or_none()
+    if not search:
+        raise HTTPException(status_code=404, detail="Saved search not found")
+
+    return SavedSearchResponse(
+        id=search.id,
+        org_id=search.org_id,
+        name=search.name,
+        criteria=search.criteria,
+        alerts_enabled=search.alerts_enabled,
+        created_at=search.created_at,
+        updated_at=search.updated_at,
+    )
+
+
 @router.put("/saved-searches/{search_id}", response_model=SavedSearchResponse)
 async def update_saved_search(
     search_id: uuid.UUID,
@@ -99,7 +124,7 @@ async def update_saved_search(
     db: AsyncSession = Depends(get_session),
 ) -> SavedSearchResponse:
     """Update a saved search's criteria or alert settings."""
-    org_id = _require_org(auth)
+    org_id = require_org(auth)
 
     result = await db.execute(
         select(SavedSearch).where(SavedSearch.id == search_id, SavedSearch.org_id == org_id)
@@ -111,7 +136,7 @@ async def update_saved_search(
     if body.name is not None:
         search.name = body.name
     if body.criteria is not None:
-        search.criteria = body.criteria
+        search.criteria = body.criteria.model_dump(exclude_none=True)
     if body.alerts_enabled is not None:
         search.alerts_enabled = body.alerts_enabled
 
@@ -137,7 +162,7 @@ async def delete_saved_search(
     db: AsyncSession = Depends(get_session),
 ) -> None:
     """Delete a saved search and its alert subscriptions."""
-    org_id = _require_org(auth)
+    org_id = require_org(auth)
 
     result = await db.execute(
         select(SavedSearch).where(SavedSearch.id == search_id, SavedSearch.org_id == org_id)
@@ -164,7 +189,7 @@ async def create_alert_subscription(
     db: AsyncSession = Depends(get_session),
 ) -> AlertSubscriptionResponse:
     """Subscribe a webhook endpoint to alerts from a saved search."""
-    org_id = _require_org(auth)
+    org_id = require_org(auth)
 
     # Verify saved search belongs to org
     result = await db.execute(
@@ -204,3 +229,73 @@ async def create_alert_subscription(
         is_active=sub.is_active,
         created_at=sub.created_at,
     )
+
+
+@router.get(
+    "/saved-searches/{search_id}/alerts",
+    response_model=list[AlertSubscriptionResponse],
+)
+async def list_alert_subscriptions(
+    search_id: uuid.UUID,
+    auth: AuthContext = Depends(require_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> list[AlertSubscriptionResponse]:
+    """List alert subscriptions for a saved search."""
+    org_id = require_org(auth)
+
+    # Verify saved search belongs to org
+    result = await db.execute(
+        select(SavedSearch).where(SavedSearch.id == search_id, SavedSearch.org_id == org_id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Saved search not found")
+
+    sub_result = await db.execute(
+        select(AlertSubscription)
+        .where(AlertSubscription.saved_search_id == search_id)
+        .order_by(AlertSubscription.created_at.desc())
+    )
+    subs = sub_result.scalars().all()
+
+    return [
+        AlertSubscriptionResponse(
+            id=s.id,
+            saved_search_id=s.saved_search_id,
+            webhook_endpoint_id=s.webhook_endpoint_id,
+            event_types=s.event_types,
+            is_active=s.is_active,
+            created_at=s.created_at,
+        )
+        for s in subs
+    ]
+
+
+@router.delete("/saved-searches/{search_id}/alerts/{sub_id}", status_code=204)
+async def delete_alert_subscription(
+    search_id: uuid.UUID,
+    sub_id: uuid.UUID,
+    auth: AuthContext = Depends(require_api_key),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    """Delete an alert subscription."""
+    org_id = require_org(auth)
+
+    # Verify saved search belongs to org
+    result = await db.execute(
+        select(SavedSearch).where(SavedSearch.id == search_id, SavedSearch.org_id == org_id)
+    )
+    if not result.scalar_one_or_none():
+        raise HTTPException(status_code=404, detail="Saved search not found")
+
+    sub_result = await db.execute(
+        select(AlertSubscription).where(
+            AlertSubscription.id == sub_id,
+            AlertSubscription.saved_search_id == search_id,
+        )
+    )
+    sub = sub_result.scalar_one_or_none()
+    if not sub:
+        raise HTTPException(status_code=404, detail="Alert subscription not found")
+
+    await db.delete(sub)
+    await db.commit()

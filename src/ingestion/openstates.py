@@ -19,6 +19,7 @@ from src.ingestion.normalizer import (
     generate_bill_id,
     generate_text_id,
     normalize_bill_status,
+    normalize_identifier,
 )
 from src.models.bill import Bill
 from src.models.bill_action import BillAction
@@ -180,6 +181,15 @@ class OpenStatesIngester(BaseIngester):
             results = data.get("results", [])
             if not results:
                 break
+
+            # Batch-prefetch old values for this page (1 query instead of N)
+            page_bill_ids = []
+            for bd in results:
+                ident = normalize_identifier(bd.get("identifier", ""))
+                os_sess = bd.get("session", "")
+                sid = f"{jurisdiction_id}-{os_sess}"
+                page_bill_ids.append(generate_bill_id(jurisdiction_id, sid, ident))
+            await self._prefetch_old_values(page_bill_ids)
 
             for bill_data in results:
                 was_created = await self._upsert_bill(bill_data, jurisdiction_id)

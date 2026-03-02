@@ -78,6 +78,8 @@ class TestCreateWebhookEndpoint:
         with (
             patch("src.api.webhooks.WebhookEndpoint") as mock_model,
             patch("src.api.webhooks.validate_webhook_url", return_value=None),
+            patch("src.api.webhooks.secrets.token_urlsafe", return_value="test-secret-key"),
+            patch("src.api.webhooks.encrypt_secret", return_value="encrypted-test-secret"),
         ):
             mock_model.return_value = mock_ep
             response = client.post(

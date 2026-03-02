@@ -5,7 +5,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.bill_change_event import BillChangeEvent
 from src.models.ingestion_run import IngestionRun
-from src.services.change_tracker import get_existing_bill, track_bill_changes
+from src.services.change_tracker import (
+    batch_get_existing_bills,
+    get_existing_bill,
+    track_bill_changes,
+)
 
 
 class BaseIngester(ABC):
@@ -17,6 +21,7 @@ class BaseIngester(ABC):
         self.session = session
         self.run: IngestionRun | None = None
         self.change_events: list[BillChangeEvent] = []
+        self._old_values_cache: dict[str, dict | None] = {}
 
     async def start_run(self, run_type: str = "full") -> IngestionRun:
         self.run = IngestionRun(
@@ -35,8 +40,17 @@ class BaseIngester(ABC):
             self.run.finished_at = datetime.now(tz=UTC)
             await self.session.commit()
 
+    async def _prefetch_old_values(self, bill_ids: list[str]) -> None:
+        """Batch-load tracked field values for a page of bills (single IN query)."""
+        self._old_values_cache = await batch_get_existing_bills(self.session, bill_ids)
+
     async def _get_old_values(self, bill_id: str) -> dict | None:
-        """Fetch existing bill field values before upsert (for change tracking)."""
+        """Fetch existing bill field values before upsert (for change tracking).
+
+        Uses batch cache when available, falls back to individual query.
+        """
+        if bill_id in self._old_values_cache:
+            return self._old_values_cache.pop(bill_id)
         return await get_existing_bill(self.session, bill_id)
 
     async def _track_changes(

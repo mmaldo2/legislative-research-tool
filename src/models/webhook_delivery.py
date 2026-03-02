@@ -8,6 +8,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.database import Base
+from src.models.enums import DeliveryStatus
 
 
 class WebhookDelivery(Base):
@@ -24,8 +25,8 @@ class WebhookDelivery(Base):
     idempotency_key: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
     status: Mapped[str] = mapped_column(
-        String, nullable=False, default="queued", index=True
-    )  # queued, attempting, delivered, failed, dead_letter
+        String, nullable=False, default=DeliveryStatus.QUEUED, index=True
+    )
     attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_status_code: Mapped[int | None] = mapped_column(Integer)
     last_error: Mapped[str | None] = mapped_column(String)

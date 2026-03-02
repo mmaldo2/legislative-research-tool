@@ -241,6 +241,18 @@ class LegiScanIngester(BaseIngester):
                     state_abbr,
                 )
 
+                # Batch-prefetch old values for this dataset (1 query instead of N)
+                page_bill_ids = []
+                for bd in bills:
+                    st = bd["state"]
+                    if st not in STATE_JURISDICTIONS:
+                        continue
+                    jid, _ = STATE_JURISDICTIONS[st]
+                    sid = f"{jid}-{bd['session_name']}"
+                    ident = normalize_identifier(bd["bill_number"])
+                    page_bill_ids.append(generate_bill_id(jid, sid, ident))
+                await self._prefetch_old_values(page_bill_ids)
+
                 for bill_data in bills:
                     created = await self._upsert_bill(bill_data)
                     if created:

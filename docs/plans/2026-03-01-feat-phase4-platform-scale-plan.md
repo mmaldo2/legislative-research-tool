@@ -1,7 +1,7 @@
 ---
 title: "feat: Phase 4 — Platform & Scale"
 type: feat
-status: active
+status: in-progress
 date: 2026-03-01
 ---
 

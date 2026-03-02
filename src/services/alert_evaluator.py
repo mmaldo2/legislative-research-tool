@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.alert_subscription import AlertSubscription
 from src.models.bill import Bill
 from src.models.bill_change_event import BillChangeEvent
+from src.models.enums import ChangeType
 from src.models.saved_search import SavedSearch
 from src.models.webhook_endpoint import WebhookEndpoint
 from src.services.webhook_dispatcher import enqueue_delivery
@@ -15,12 +16,12 @@ from src.services.webhook_dispatcher import enqueue_delivery
 logger = logging.getLogger(__name__)
 
 # Map change_type to webhook event_type
-CHANGE_TYPE_TO_EVENT = {
-    "created": "bill.created",
-    "status_changed": "bill.status_changed",
-    "updated": "bill.updated",
-    "text_added": "bill.text_added",
-    "action_added": "bill.action_added",
+CHANGE_TYPE_TO_EVENT: dict[ChangeType, str] = {
+    ChangeType.CREATED: "bill.created",
+    ChangeType.STATUS_CHANGED: "bill.status_changed",
+    ChangeType.UPDATED: "bill.updated",
+    ChangeType.TEXT_ADDED: "bill.text_added",
+    ChangeType.ACTION_ADDED: "bill.action_added",
 }
 
 

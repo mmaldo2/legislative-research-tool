@@ -6,18 +6,25 @@ from datetime import datetime
 from pydantic import BaseModel, Field
 
 
+class SearchCriteria(BaseModel):
+    """Typed search criteria — validated fields only."""
+
+    model_config = {"extra": "forbid"}
+
+    query: str | None = Field(None, max_length=500)
+    jurisdiction_id: str | None = Field(None, max_length=50)
+    status: str | None = Field(None, max_length=50)
+
+
 class SavedSearchCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
-    criteria: dict = Field(
-        ...,
-        description="Search criteria: {query, jurisdiction_id, mode, status, filters}",
-    )
+    criteria: SearchCriteria
     alerts_enabled: bool = False
 
 
 class SavedSearchUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=200)
-    criteria: dict | None = None
+    criteria: SearchCriteria | None = None
     alerts_enabled: bool | None = None
 
 
