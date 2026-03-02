@@ -23,9 +23,11 @@ from src.api.organizations import router as organizations_router
 from src.api.people import router as people_router
 from src.api.regulatory import router as regulatory_router
 from src.api.reports import router as reports_router
+from src.api.saved_searches import router as saved_searches_router
 from src.api.search import router as search_router
 from src.api.status import router as status_router
 from src.api.votes import router as votes_router
+from src.api.webhooks import router as webhooks_router
 from src.config import settings
 
 logger = logging.getLogger(__name__)
@@ -89,6 +91,10 @@ app.include_router(regulatory_router, prefix="/api/v1", tags=["Regulatory"], dep
 app.include_router(hearings_router, prefix="/api/v1", tags=["Hearings"], dependencies=auth_deps)
 app.include_router(crs_router, prefix="/api/v1", tags=["CRS Reports"], dependencies=auth_deps)
 app.include_router(api_keys_router, prefix="/api/v1", tags=["API Keys"], dependencies=auth_deps)
+app.include_router(
+    saved_searches_router, prefix="/api/v1", tags=["Saved Searches"], dependencies=auth_deps
+)
+app.include_router(webhooks_router, prefix="/api/v1", tags=["Webhooks"], dependencies=auth_deps)
 
 # Pro+ tier routes (LLM-powered endpoints)
 app.include_router(analysis_router, prefix="/api/v1", tags=["Analysis"], dependencies=pro_deps)

@@ -319,28 +319,28 @@ Depends on Phase 4A (needs org_id for scoping). This is the user's top priority.
 - `frontend/src/hooks/use-saved-searches.ts` — Migrate to server-side API (keep localStorage as offline cache)
 
 **Acceptance criteria:**
-- [ ] `bill_change_events` table records per-bill changes with field-level diffs
-- [ ] Every ingester emits change events via `BaseIngester._track_change()`
-- [ ] `saved_searches` table with serialized search criteria (query, jurisdiction, mode, filters)
-- [ ] `POST /api/v1/saved-searches` — create saved search
-- [ ] `GET /api/v1/saved-searches` — list org's saved searches
-- [ ] `PUT /api/v1/saved-searches/{id}` — update search criteria
-- [ ] `DELETE /api/v1/saved-searches/{id}` — delete search
-- [ ] `POST /api/v1/saved-searches/{id}/alerts` — enable alerts with webhook endpoint
-- [ ] `webhook_endpoints` table with URL, HMAC secret, event type filter
-- [ ] `POST /api/v1/webhooks` — register webhook endpoint
-- [ ] `GET /api/v1/webhooks` — list org's endpoints
-- [ ] `DELETE /api/v1/webhooks/{id}` — remove endpoint
-- [ ] `GET /api/v1/webhooks/{id}/deliveries` — delivery history with status
-- [ ] `POST /api/v1/webhooks/{id}/test` — send test payload
-- [ ] HMAC-SHA256 signed payloads with `X-Webhook-Signature` header
-- [ ] Exponential backoff: 8 attempts over ~24 hours with jitter
-- [ ] Circuit breaker: disable endpoint after 5 consecutive dead-letter deliveries
-- [ ] Webhook payload includes `event_type`, `bill_id`, `identifier`, `jurisdiction_id`, `change_summary`, `detail_url`
-- [ ] Filter-only saved searches evaluated within 5 minutes of ingestion
+- [x] `bill_change_events` table records per-bill changes with field-level diffs
+- [x] Every ingester emits change events via `BaseIngester._track_change()`
+- [x] `saved_searches` table with serialized search criteria (query, jurisdiction, mode, filters)
+- [x] `POST /api/v1/saved-searches` — create saved search
+- [x] `GET /api/v1/saved-searches` — list org's saved searches
+- [x] `PUT /api/v1/saved-searches/{id}` — update search criteria
+- [x] `DELETE /api/v1/saved-searches/{id}` — delete search
+- [x] `POST /api/v1/saved-searches/{id}/alerts` — enable alerts with webhook endpoint
+- [x] `webhook_endpoints` table with URL, HMAC secret, event type filter
+- [x] `POST /api/v1/webhooks` — register webhook endpoint
+- [x] `GET /api/v1/webhooks` — list org's endpoints
+- [x] `DELETE /api/v1/webhooks/{id}` — remove endpoint
+- [x] `GET /api/v1/webhooks/{id}/deliveries` — delivery history with status
+- [x] `POST /api/v1/webhooks/{id}/test` — send test payload
+- [x] HMAC-SHA256 signed payloads with `X-Webhook-Signature` header
+- [x] Exponential backoff: 8 attempts over ~24 hours with jitter
+- [x] Circuit breaker: disable endpoint after 5 consecutive dead-letter deliveries
+- [x] Webhook payload includes `event_type`, `bill_id`, `identifier`, `jurisdiction_id`, `change_summary`, `detail_url`
+- [x] Filter-only saved searches evaluated within 5 minutes of ingestion
 - [ ] Semantic saved searches evaluated nightly
-- [ ] `webhook_deliveries` table serves as job queue (status tracking)
-- [ ] APScheduler job processes delivery queue every 60 seconds
+- [x] `webhook_deliveries` table serves as job queue (status tracking)
+- [x] APScheduler job processes delivery queue every 60 seconds
 - [ ] Frontend migrates saved searches to server-side API
 - [ ] 40+ tests covering change tracking, alert matching, webhook delivery, retry logic, HMAC verification
 

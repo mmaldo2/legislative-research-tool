@@ -22,3 +22,5 @@ class Organization(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     api_keys: Mapped[list["APIKey"]] = relationship(back_populates="organization")
+    saved_searches: Mapped[list["SavedSearch"]] = relationship(back_populates="organization")
+    webhook_endpoints: Mapped[list["WebhookEndpoint"]] = relationship(back_populates="organization")
