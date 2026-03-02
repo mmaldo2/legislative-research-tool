@@ -542,15 +542,21 @@ class LLMHarness:
         period_covered = f"{bills_data.meta.date_from} to {bills_data.meta.date_to}"
         total_bills = bills_data.meta.total_count
 
-        # Format data as text for the prompt
+        # Format data as text for the prompt — sanitize dimension values
+        # to mitigate indirect prompt injection from database content
+        def _safe_dim(val: str) -> str:
+            return val[:100].replace("\n", " ").replace("\r", " ")
+
         bills_text = "\n".join(
-            f"  {p.period} | {p.dimension}: {p.count}" for p in bills_data.data[:50]
+            f"  {p.period} | {_safe_dim(p.dimension)}: {p.count}"
+            for p in bills_data.data[:50]
         )
         actions_text = "\n".join(
-            f"  {p.period} | {p.dimension}: {p.count}" for p in actions_data.data[:50]
+            f"  {p.period} | {_safe_dim(p.dimension)}: {p.count}"
+            for p in actions_data.data[:50]
         )
         topics_text = "\n".join(
-            f"  {p.period} | {p.dimension}: {p.count} ({p.share_pct}%)"
+            f"  {p.period} | {_safe_dim(p.dimension)}: {p.count} ({p.share_pct}%)"
             for p in topics_data.data[:50]
         )
 

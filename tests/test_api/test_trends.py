@@ -6,7 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from src.api.app import app
-from src.api.deps import get_session, require_api_key
+from src.api.deps import get_llm_harness, get_session, require_api_key
 from src.schemas.trend import (
     TrendDataPoint,
     TrendMeta,
@@ -124,29 +124,21 @@ class TestGetBillTrends:
         assert call_kwargs["jurisdiction"] == "us-ca"
         assert call_kwargs["top_n"] == 10
 
-    def test_invalid_bucket_defaults_to_month(self, client):
+    def test_invalid_bucket_returns_422(self, client):
         mock_session = AsyncMock()
         app.dependency_overrides[get_session] = _override_session(mock_session)
         app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="dev")
 
-        with patch("src.api.trends.bill_count_by_period", new_callable=AsyncMock) as mock_fn:
-            mock_fn.return_value = _sample_trend_response()
-            client.get("/api/v1/trends/bills?bucket=invalid")
+        response = client.get("/api/v1/trends/bills?bucket=invalid")
+        assert response.status_code == 422
 
-        call_kwargs = mock_fn.call_args[1]
-        assert call_kwargs["bucket"] == "month"
-
-    def test_invalid_group_by_defaults_to_jurisdiction(self, client):
+    def test_invalid_group_by_returns_422(self, client):
         mock_session = AsyncMock()
         app.dependency_overrides[get_session] = _override_session(mock_session)
         app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="dev")
 
-        with patch("src.api.trends.bill_count_by_period", new_callable=AsyncMock) as mock_fn:
-            mock_fn.return_value = _sample_trend_response()
-            client.get("/api/v1/trends/bills?group_by=invalid")
-
-        call_kwargs = mock_fn.call_args[1]
-        assert call_kwargs["group_by"] == "jurisdiction"
+        response = client.get("/api/v1/trends/bills?group_by=invalid")
+        assert response.status_code == 422
 
 
 class TestGetActionTrends:
@@ -231,21 +223,20 @@ class TestGetTrendSummary:
             confidence=0.85,
         )
 
+        mock_harness = MagicMock()
+        mock_harness.generate_trend_narrative = AsyncMock(return_value=summary)
+        app.dependency_overrides[get_llm_harness] = lambda: mock_harness
+
         with (
             patch("src.api.trends.bill_count_by_period", new_callable=AsyncMock) as mock_bills,
             patch("src.api.trends.action_count_by_period", new_callable=AsyncMock) as mock_actions,
             patch(
                 "src.api.trends.topic_distribution_by_period", new_callable=AsyncMock
             ) as mock_topics,
-            patch("src.llm.harness.LLMHarness") as mock_harness_cls,
         ):
             mock_bills.return_value = _sample_trend_response()
             mock_actions.return_value = _sample_trend_response()
             mock_topics.return_value = _sample_topic_response()
-
-            mock_harness = MagicMock()
-            mock_harness.generate_trend_narrative = AsyncMock(return_value=summary)
-            mock_harness_cls.return_value = mock_harness
 
             response = client.get("/api/v1/trends/summary")
 
@@ -272,23 +263,53 @@ class TestGetTrendSummary:
             confidence=0.7,
         )
 
+        mock_harness = MagicMock()
+        mock_harness.generate_trend_narrative = AsyncMock(return_value=summary)
+        app.dependency_overrides[get_llm_harness] = lambda: mock_harness
+
         with (
             patch("src.api.trends.bill_count_by_period", new_callable=AsyncMock) as mock_bills,
             patch("src.api.trends.action_count_by_period", new_callable=AsyncMock) as mock_actions,
             patch(
                 "src.api.trends.topic_distribution_by_period", new_callable=AsyncMock
             ) as mock_topics,
-            patch("src.llm.harness.LLMHarness") as mock_harness_cls,
         ):
             mock_bills.return_value = _sample_trend_response()
             mock_actions.return_value = _sample_trend_response()
             mock_topics.return_value = _sample_topic_response()
 
-            mock_harness = MagicMock()
-            mock_harness.generate_trend_narrative = AsyncMock(return_value=summary)
-            mock_harness_cls.return_value = mock_harness
-
             response = client.get("/api/v1/trends/summary")
+
+        assert response.status_code == 200
+
+
+class TestDateRangeValidation:
+    def test_date_from_after_date_to_returns_400(self, client):
+        mock_session = AsyncMock()
+        app.dependency_overrides[get_session] = _override_session(mock_session)
+        app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="dev")
+
+        response = client.get("/api/v1/trends/bills?date_from=2024-12-01&date_to=2024-01-01")
+        assert response.status_code == 400
+        assert "date_from must be before date_to" in response.json()["detail"]
+
+    def test_date_range_exceeds_max_returns_400(self, client):
+        mock_session = AsyncMock()
+        app.dependency_overrides[get_session] = _override_session(mock_session)
+        app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="dev")
+
+        response = client.get("/api/v1/trends/bills?date_from=2020-01-01&date_to=2024-12-31")
+        assert response.status_code == 400
+        assert "cannot exceed" in response.json()["detail"]
+
+    def test_valid_date_range_passes(self, client):
+        mock_session = AsyncMock()
+        app.dependency_overrides[get_session] = _override_session(mock_session)
+        app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="dev")
+
+        with patch("src.api.trends.bill_count_by_period", new_callable=AsyncMock) as mock_fn:
+            mock_fn.return_value = _sample_trend_response()
+            response = client.get("/api/v1/trends/bills?date_from=2024-01-01&date_to=2024-12-31")
 
         assert response.status_code == 200
 
@@ -316,11 +337,31 @@ class TestSchemaValidation:
         assert len(s.key_findings) == 2
         assert s.confidence == 0.9
 
+    def test_trend_summary_confidence_bounds(self):
+        """Confidence must be between 0.0 and 1.0."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            TrendSummaryResponse(confidence=1.5)
+        with pytest.raises(ValidationError):
+            TrendSummaryResponse(confidence=-0.1)
+
     def test_trend_meta_defaults(self):
         m = TrendMeta()
         assert m.bucket == "month"
         assert m.group_by == "jurisdiction"
-        assert m.total_count == 0
+
+    def test_trend_meta_inherits_meta_response_fields(self):
+        """TrendMeta inherits ai_enriched, ai_model, etc. from MetaResponse."""
+        m = TrendMeta()
+        assert hasattr(m, "ai_enriched")
+        assert hasattr(m, "ai_model")
+        assert m.ai_enriched is False
+
+    def test_trend_summary_has_provenance_fields(self):
+        s = TrendSummaryResponse(ai_model="claude-3", ai_prompt_version="v1")
+        assert s.ai_model == "claude-3"
+        assert s.ai_prompt_version == "v1"
 
 
 class TestCSVSanitization:
@@ -345,6 +386,31 @@ class TestCSVSanitization:
         # The = should be sanitized with a leading quote
         assert "'=CMD()" in response.text
 
+    def test_pipe_and_semicolon_sanitized(self, client):
+        """Pipe and semicolon prefixes are also dangerous (OWASP)."""
+        mock_session = AsyncMock()
+        app.dependency_overrides[get_session] = _override_session(mock_session)
+        app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="dev")
+
+        for prefix in ["|", ";"]:
+            malicious_response = TrendResponse(
+                data=[
+                    TrendDataPoint(
+                        period="2024-01-01", dimension=f"{prefix}cmd", count=1
+                    ),
+                ],
+                meta=TrendMeta(),
+            )
+
+            with patch(
+                "src.api.trends.bill_count_by_period", new_callable=AsyncMock
+            ) as mock_fn:
+                mock_fn.return_value = malicious_response
+                response = client.get("/api/v1/trends/bills?format=csv")
+
+            assert response.status_code == 200
+            assert f"'{prefix}cmd" in response.text
+
 
 class TestLLMPromptFormatting:
     def test_prompt_template_formats(self):
@@ -362,3 +428,15 @@ class TestLLMPromptFormatting:
         assert "2024-01 to 2024-12" in formatted
         assert "jurisdiction" in formatted
         assert "100" in formatted
+
+    def test_prompt_has_data_boundaries(self):
+        from src.llm.prompts.trend_narrative_v1 import SYSTEM_PROMPT
+
+        assert "<data>" in SYSTEM_PROMPT or "data" in SYSTEM_PROMPT.lower()
+
+    def test_system_prompt_warns_about_data_sections(self):
+        from src.llm.prompts.trend_narrative_v1 import SYSTEM_PROMPT, USER_PROMPT_TEMPLATE
+
+        assert "raw" in SYSTEM_PROMPT.lower() or "data" in SYSTEM_PROMPT.lower()
+        assert "<data>" in USER_PROMPT_TEMPLATE
+        assert "</data>" in USER_PROMPT_TEMPLATE

@@ -1,6 +1,7 @@
 """Tests for the trend aggregation service."""
 
 from datetime import date, datetime
+from typing import NamedTuple
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -16,6 +17,14 @@ from src.services.trend_service import (
 )
 
 
+class FakeRow(NamedTuple):
+    """Typed test row matching AggregateRow protocol."""
+
+    period: datetime
+    dimension: str
+    count: int
+
+
 @pytest.fixture(autouse=True)
 def _clear_cache():
     """Clear the TTL cache before each test."""
@@ -24,13 +33,9 @@ def _clear_cache():
     _cache.clear()
 
 
-def _make_row(period, dimension, count):
-    """Create a mock row with period, dimension, count attributes."""
-    row = MagicMock()
-    row.period = period
-    row.dimension = dimension
-    row.count = count
-    return row
+def _make_row(period: datetime, dimension: str, count: int) -> FakeRow:
+    """Create a typed row with period, dimension, count attributes."""
+    return FakeRow(period=period, dimension=dimension, count=count)
 
 
 class TestCacheKey:

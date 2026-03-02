@@ -2,7 +2,9 @@
 
 import hashlib
 import logging
-from datetime import date, timedelta
+from collections.abc import Sequence
+from datetime import date, datetime, timedelta
+from typing import Protocol, runtime_checkable
 
 from cachetools import TTLCache
 from sqlalchemy import func, select
@@ -20,6 +22,15 @@ from src.schemas.trend import (
 
 logger = logging.getLogger(__name__)
 
+
+@runtime_checkable
+class AggregateRow(Protocol):
+    """Protocol for rows returned by aggregation queries."""
+
+    period: datetime
+    dimension: str
+    count: int
+
 # In-process TTL cache: 256 entries, 5 minute TTL
 _cache: TTLCache = TTLCache(maxsize=256, ttl=300)
 
@@ -31,7 +42,7 @@ VALID_ACTION_GROUP_BY = {"jurisdiction", "action_type", "chamber"}
 def _cache_key(*args: object) -> str:
     """Build a deterministic cache key from query parameters."""
     raw = ":".join(str(a) for a in args)
-    return hashlib.md5(raw.encode()).hexdigest()
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
 def _default_date_from() -> date:
@@ -40,6 +51,20 @@ def _default_date_from() -> date:
 
 def _default_date_to() -> date:
     return date.today()
+
+
+def _validate_bucket(bucket: str) -> str:
+    """Validate and return bucket, raising ValueError if invalid."""
+    if bucket not in VALID_BUCKETS:
+        raise ValueError(f"Invalid bucket: {bucket!r}. Must be one of {sorted(VALID_BUCKETS)}")
+    return bucket
+
+
+def _validate_group_by(group_by: str, valid_set: set[str]) -> str:
+    """Validate and return group_by, raising ValueError if invalid."""
+    if group_by not in valid_set:
+        raise ValueError(f"Invalid group_by: {group_by!r}. Must be one of {sorted(valid_set)}")
+    return group_by
 
 
 async def bill_count_by_period(
@@ -55,6 +80,8 @@ async def bill_count_by_period(
     top_n: int = 15,
 ) -> TrendResponse:
     """Aggregate bill counts by time bucket and dimension."""
+    bucket = _validate_bucket(bucket)
+    group_by = _validate_group_by(group_by, VALID_BILL_GROUP_BY)
     date_from = date_from or _default_date_from()
     date_to = date_to or _default_date_to()
 
@@ -126,6 +153,8 @@ async def action_count_by_period(
     top_n: int = 15,
 ) -> TrendResponse:
     """Aggregate action counts by time bucket and dimension."""
+    bucket = _validate_bucket(bucket)
+    group_by = _validate_group_by(group_by, VALID_ACTION_GROUP_BY)
     date_from = date_from or _default_date_from()
     date_to = date_to or _default_date_to()
 
@@ -201,6 +230,7 @@ async def topic_distribution_by_period(
     top_n: int = 15,
 ) -> TrendTopicResponse:
     """Aggregate topic distribution with share_pct per period."""
+    bucket = _validate_bucket(bucket)
     date_from = date_from or _default_date_from()
     date_to = date_to or _default_date_to()
 
@@ -297,7 +327,7 @@ def _top_n_dimensions(dimension_totals: dict[str, int], top_n: int) -> set[str]:
     return {dim for dim, _ in sorted_dims[:top_n]}
 
 
-def _apply_top_n(rows: list, top_n: int) -> tuple[list[TrendDataPoint], int]:
+def _apply_top_n(rows: Sequence[AggregateRow], top_n: int) -> tuple[list[TrendDataPoint], int]:
     """Aggregate rows into TrendDataPoints, collapsing beyond top_n into 'Other'."""
     # Sum total counts per dimension across all periods
     dimension_totals: dict[str, int] = {}

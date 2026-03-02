@@ -1,77 +1,60 @@
 """Trend aggregation endpoints — time-series legislative analytics."""
 
-import csv
-import io
-import re
 from datetime import date
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.deps import get_session, limiter, require_tier
-from src.schemas.trend import TrendSummaryResponse
+from src.api.deps import get_llm_harness, get_session, limiter, require_tier
+from src.llm.harness import LLMHarness
+from src.schemas.trend import TrendResponse, TrendSummaryResponse, TrendTopicResponse
 from src.services.trend_service import (
-    VALID_ACTION_GROUP_BY,
-    VALID_BILL_GROUP_BY,
-    VALID_BUCKETS,
     action_count_by_period,
     bill_count_by_period,
     topic_distribution_by_period,
 )
+from src.utils.csv import csv_response, trend_to_csv
 
 router = APIRouter()
 
-_CSV_FORMULA_RE = re.compile(r"^[=+\-@\t\r]")
+BillGroupBy = Literal["jurisdiction", "topic", "status", "classification"]
+ActionGroupBy = Literal["jurisdiction", "action_type", "chamber"]
+Bucket = Literal["month", "quarter", "year"]
+Format = Literal["json", "csv"]
+
+MAX_DATE_RANGE_DAYS = 1095  # ~3 years
 
 
-def _sanitize_csv(value: str) -> str:
-    """Prepend a single quote to values that could trigger spreadsheet formula injection."""
-    if _CSV_FORMULA_RE.match(value):
-        return "'" + value
-    return value
+def _validate_date_range(date_from: date | None, date_to: date | None) -> None:
+    """Validate date range constraints."""
+    if date_from and date_to:
+        if date_from > date_to:
+            raise HTTPException(400, detail="date_from must be before date_to")
+        if (date_to - date_from).days > MAX_DATE_RANGE_DAYS:
+            raise HTTPException(
+                400,
+                detail=f"Date range cannot exceed {MAX_DATE_RANGE_DAYS} days (~3 years)",
+            )
 
 
-def _trend_to_csv(data: list, columns: list[str]) -> str:
-    """Convert trend data points to CSV string."""
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(columns)
-    for point in data:
-        row = [_sanitize_csv(str(getattr(point, col, ""))) for col in columns]
-        writer.writerow(row)
-    output.seek(0)
-    return output.getvalue()
-
-
-def _csv_response(csv_content: str, filename: str) -> StreamingResponse:
-    return StreamingResponse(
-        iter([csv_content]),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
-    )
-
-
-@router.get("/trends/bills", response_model=None)
+@router.get("/trends/bills", response_model=TrendResponse)
 @limiter.limit("30/minute")
 async def get_bill_trends(
     request: Request,
-    group_by: str = Query("jurisdiction", description="Dimension to group by"),
-    bucket: str = Query("month", description="Time bucket: month, quarter, year"),
+    group_by: BillGroupBy = Query("jurisdiction", description="Dimension to group by"),
+    bucket: Bucket = Query("month", description="Time bucket: month, quarter, year"),
     date_from: date | None = Query(None, description="Start date (inclusive)"),
     date_to: date | None = Query(None, description="End date (inclusive)"),
     jurisdiction: str | None = Query(None, description="Filter by jurisdiction ID"),
     topic: str | None = Query(None, description="Filter by topic (ARRAY containment)"),
     session_id: str | None = Query(None, description="Filter by legislative session"),
     top_n: int = Query(15, ge=1, le=50, description="Max dimension values"),
-    format: str = Query("json", pattern="^(json|csv)$"),
+    format: Format = Query("json"),
     db: AsyncSession = Depends(get_session),
 ):
     """Bill counts grouped by time bucket and dimension."""
-    if bucket not in VALID_BUCKETS:
-        bucket = "month"
-    if group_by not in VALID_BILL_GROUP_BY:
-        group_by = "jurisdiction"
+    _validate_date_range(date_from, date_to)
 
     result = await bill_count_by_period(
         db,
@@ -86,32 +69,29 @@ async def get_bill_trends(
     )
 
     if format == "csv":
-        csv_content = _trend_to_csv(result.data, ["period", "dimension", "count"])
-        return _csv_response(csv_content, "bill_trends.csv")
+        csv_content = trend_to_csv(result.data, ["period", "dimension", "count"])
+        return csv_response(csv_content, "bill_trends.csv")
 
     return result
 
 
-@router.get("/trends/actions", response_model=None)
+@router.get("/trends/actions", response_model=TrendResponse)
 @limiter.limit("30/minute")
 async def get_action_trends(
     request: Request,
-    group_by: str = Query("jurisdiction", description="Dimension to group by"),
-    bucket: str = Query("month", description="Time bucket: month, quarter, year"),
+    group_by: ActionGroupBy = Query("jurisdiction", description="Dimension to group by"),
+    bucket: Bucket = Query("month", description="Time bucket: month, quarter, year"),
     date_from: date | None = Query(None, description="Start date (inclusive)"),
     date_to: date | None = Query(None, description="End date (inclusive)"),
     jurisdiction: str | None = Query(None, description="Filter by jurisdiction ID"),
     action_type: str | None = Query(None, description="Filter by action classification"),
     session_id: str | None = Query(None, description="Filter by legislative session"),
     top_n: int = Query(15, ge=1, le=50, description="Max dimension values"),
-    format: str = Query("json", pattern="^(json|csv)$"),
+    format: Format = Query("json"),
     db: AsyncSession = Depends(get_session),
 ):
     """Action counts grouped by time bucket and dimension."""
-    if bucket not in VALID_BUCKETS:
-        bucket = "month"
-    if group_by not in VALID_ACTION_GROUP_BY:
-        group_by = "jurisdiction"
+    _validate_date_range(date_from, date_to)
 
     result = await action_count_by_period(
         db,
@@ -126,28 +106,27 @@ async def get_action_trends(
     )
 
     if format == "csv":
-        csv_content = _trend_to_csv(result.data, ["period", "dimension", "count"])
-        return _csv_response(csv_content, "action_trends.csv")
+        csv_content = trend_to_csv(result.data, ["period", "dimension", "count"])
+        return csv_response(csv_content, "action_trends.csv")
 
     return result
 
 
-@router.get("/trends/topics", response_model=None)
+@router.get("/trends/topics", response_model=TrendTopicResponse)
 @limiter.limit("30/minute")
 async def get_topic_trends(
     request: Request,
-    bucket: str = Query("month", description="Time bucket: month, quarter, year"),
+    bucket: Bucket = Query("month", description="Time bucket: month, quarter, year"),
     date_from: date | None = Query(None, description="Start date (inclusive)"),
     date_to: date | None = Query(None, description="End date (inclusive)"),
     jurisdiction: str | None = Query(None, description="Filter by jurisdiction ID"),
     session_id: str | None = Query(None, description="Filter by legislative session"),
     top_n: int = Query(15, ge=1, le=50, description="Max dimension values"),
-    format: str = Query("json", pattern="^(json|csv)$"),
+    format: Format = Query("json"),
     db: AsyncSession = Depends(get_session),
 ):
     """Topic distribution over time with percentage share."""
-    if bucket not in VALID_BUCKETS:
-        bucket = "month"
+    _validate_date_range(date_from, date_to)
 
     result = await topic_distribution_by_period(
         db,
@@ -160,8 +139,10 @@ async def get_topic_trends(
     )
 
     if format == "csv":
-        csv_content = _trend_to_csv(result.data, ["period", "dimension", "count", "share_pct"])
-        return _csv_response(csv_content, "topic_trends.csv")
+        csv_content = trend_to_csv(
+            result.data, ["period", "dimension", "count", "share_pct"]
+        )
+        return csv_response(csv_content, "topic_trends.csv")
 
     return result
 
@@ -170,7 +151,7 @@ async def get_topic_trends(
 @limiter.limit("5/minute")
 async def get_trend_summary(
     request: Request,
-    bucket: str = Query("month", description="Time bucket: month, quarter, year"),
+    bucket: Bucket = Query("month", description="Time bucket: month, quarter, year"),
     date_from: date | None = Query(None, description="Start date (inclusive)"),
     date_to: date | None = Query(None, description="End date (inclusive)"),
     jurisdiction: str | None = Query(None, description="Filter by jurisdiction ID"),
@@ -178,15 +159,12 @@ async def get_trend_summary(
     session_id: str | None = Query(None, description="Filter by legislative session"),
     top_n: int = Query(15, ge=1, le=50, description="Max dimension values"),
     db: AsyncSession = Depends(get_session),
+    harness: LLMHarness = Depends(get_llm_harness),
 ) -> TrendSummaryResponse:
     """LLM-generated trend narrative from aggregated data (pro+ tier)."""
-    from src.api.deps import get_anthropic_client
-    from src.llm.harness import LLMHarness
+    _validate_date_range(date_from, date_to)
 
-    if bucket not in VALID_BUCKETS:
-        bucket = "month"
-
-    # Run the three aggregation queries to feed the LLM
+    # Run the three aggregation queries while we still hold the session
     bills = await bill_count_by_period(
         db,
         bucket=bucket,
@@ -216,7 +194,6 @@ async def get_trend_summary(
         top_n=top_n,
     )
 
-    harness = LLMHarness(db_session=db, client=get_anthropic_client())
     return await harness.generate_trend_narrative(
         bills_data=bills,
         actions_data=actions,

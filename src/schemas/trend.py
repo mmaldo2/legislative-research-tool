@@ -2,6 +2,8 @@
 
 from pydantic import BaseModel, Field
 
+from src.schemas.common import MetaResponse
+
 
 class TrendDataPoint(BaseModel):
     period: str = Field(description="ISO date string for the start of the time bucket")
@@ -13,10 +15,7 @@ class TrendTopicDataPoint(TrendDataPoint):
     share_pct: float = Field(description="Percentage share of total bills in this period")
 
 
-class TrendMeta(BaseModel):
-    sources: list[str] = []
-    last_updated: str | None = None
-    total_count: int = 0
+class TrendMeta(MetaResponse):
     bucket: str = "month"
     group_by: str = "jurisdiction"
     date_from: str = ""
@@ -38,4 +37,6 @@ class TrendSummaryResponse(BaseModel):
     key_findings: list[str] = []
     period_covered: str = ""
     bills_analyzed: int = 0
-    confidence: float = 0.0
+    confidence: float = Field(0.0, ge=0.0, le=1.0)
+    ai_model: str | None = None
+    ai_prompt_version: str | None = None
