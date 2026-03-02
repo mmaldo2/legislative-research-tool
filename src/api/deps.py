@@ -1,5 +1,6 @@
 """FastAPI dependency injection."""
 
+import secrets
 from collections.abc import AsyncGenerator
 
 import anthropic
@@ -58,7 +59,7 @@ async def require_api_key(
         return AuthContext(org_id=None, tier="dev")
 
     # Legacy static key mode (backward compatibility during migration)
-    if settings.api_key and api_key == settings.api_key:
+    if settings.api_key and api_key and secrets.compare_digest(api_key, settings.api_key):
         return AuthContext(org_id=None, tier="dev")
 
     if not api_key:

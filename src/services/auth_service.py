@@ -7,7 +7,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -115,9 +115,14 @@ async def verify_api_key(session: AsyncSession, raw_key: str) -> AuthContext | N
     if key.expires_at and key.expires_at < datetime.now(UTC):
         return None
 
-    # Update usage stats
-    key.last_used_at = datetime.now(UTC)
-    key.request_count += 1
-    await session.commit()
+    # Update usage stats with atomic SQL increment (avoids race condition)
+    await session.execute(
+        update(APIKey)
+        .where(APIKey.id == key.id)
+        .values(
+            last_used_at=datetime.now(UTC),
+            request_count=APIKey.request_count + 1,
+        )
+    )
 
     return AuthContext(org_id=key.org_id, tier=key.organization.plan)

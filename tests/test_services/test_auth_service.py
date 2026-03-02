@@ -149,6 +149,7 @@ class TestVerifyApiKey:
         mock_org.plan = "free"
 
         mock_key = MagicMock()
+        mock_key.id = uuid.uuid4()
         mock_key.org_id = org_id
         mock_key.organization = mock_org
         mock_key.is_active = True
@@ -163,9 +164,8 @@ class TestVerifyApiKey:
 
         await verify_api_key(session, "sk_live_testkey")
 
-        assert mock_key.request_count == 6
-        assert mock_key.last_used_at is not None
-        session.commit.assert_called_once()
+        # verify_api_key calls execute twice: SELECT + atomic UPDATE
+        assert session.execute.call_count == 2
 
     @pytest.mark.asyncio
     async def test_non_expired_key_succeeds(self):
