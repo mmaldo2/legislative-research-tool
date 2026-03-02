@@ -26,6 +26,7 @@ from src.api.reports import router as reports_router
 from src.api.saved_searches import router as saved_searches_router
 from src.api.search import router as search_router
 from src.api.status import router as status_router
+from src.api.trends import router as trends_router
 from src.api.votes import router as votes_router
 from src.api.webhooks import router as webhooks_router
 from src.config import settings
@@ -95,6 +96,7 @@ app.include_router(
     saved_searches_router, prefix="/api/v1", tags=["Saved Searches"], dependencies=auth_deps
 )
 app.include_router(webhooks_router, prefix="/api/v1", tags=["Webhooks"], dependencies=auth_deps)
+app.include_router(trends_router, prefix="/api/v1", tags=["Trends"], dependencies=auth_deps)
 
 # Pro+ tier routes (LLM-powered endpoints)
 app.include_router(analysis_router, prefix="/api/v1", tags=["Analysis"], dependencies=pro_deps)

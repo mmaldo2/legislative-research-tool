@@ -14,18 +14,9 @@ from src.api.deps import escape_like, get_session, limiter
 from src.models.bill import Bill
 from src.models.bill_text import texts_without_markup
 from src.models.sponsorship import Sponsorship
+from src.utils.csv import sanitize_csv
 
 router = APIRouter()
-
-# Pattern for CSV formula injection: cells starting with =, +, -, @, tab, carriage return
-_CSV_FORMULA_RE = re.compile(r"^[=+\-@\t\r]")
-
-
-def _sanitize_csv(value: str) -> str:
-    """Prepend a single quote to values that could trigger spreadsheet formula injection."""
-    if _CSV_FORMULA_RE.match(value):
-        return "'" + value
-    return value
 
 
 @router.get("/export/bills/csv")
@@ -89,13 +80,13 @@ async def export_bills_csv(
         row = [
             bill.id,
             bill.identifier,
-            _sanitize_csv(bill.title),
+            sanitize_csv(bill.title),
             bill.jurisdiction_id,
             bill.session_id,
             bill.status or "",
             str(bill.status_date or ""),
-            _sanitize_csv("; ".join(bill.classification or [])),
-            _sanitize_csv("; ".join(bill.subject or [])),
+            sanitize_csv("; ".join(bill.classification or [])),
+            sanitize_csv("; ".join(bill.subject or [])),
         ]
         if include_summary:
             summary = ""
@@ -103,14 +94,14 @@ async def export_bills_csv(
                 if a.analysis_type == "summary" and a.result:
                     summary = a.result.get("plain_english_summary", "")
                     break
-            row.append(_sanitize_csv(summary))
+            row.append(sanitize_csv(summary))
         writer.writerow(row)
 
     output.seek(0)
     return StreamingResponse(
         iter([output.getvalue()]),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=bills_export.csv"},
+        headers={"Content-Disposition": 'attachment; filename="bills_export.csv"'},
     )
 
 

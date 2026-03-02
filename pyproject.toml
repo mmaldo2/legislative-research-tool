@@ -19,6 +19,8 @@ dependencies = [
     "bm25s>=0.2.0",
     "apscheduler>=3.10.0",
     "slowapi>=0.1.9",
+    "cachetools>=5.5.0",
+    "cryptography>=44.0.0",
 ]
 
 [project.optional-dependencies]
