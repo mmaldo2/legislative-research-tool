@@ -25,6 +25,7 @@ from src.llm.prompts import (
     predict_v1,
     report_v1,
     summarize_v1,
+    trend_narrative_v1,
     version_diff_v1,
 )
 from src.models.ai_analysis import AiAnalysis
@@ -38,6 +39,7 @@ from src.schemas.analysis import (
     VersionDiffOutput,
 )
 from src.schemas.compare import BillComparisonOutput
+from src.schemas.trend import TrendResponse, TrendSummaryResponse, TrendTopicResponse
 
 logger = logging.getLogger(__name__)
 
@@ -527,3 +529,70 @@ class LLMHarness:
             cost_label="generate_report",
             skip_store=True,
         )
+
+    async def generate_trend_narrative(
+        self,
+        bills_data: TrendResponse,
+        actions_data: TrendResponse,
+        topics_data: TrendTopicResponse,
+        bucket: str = "month",
+        group_by: str = "jurisdiction",
+    ) -> TrendSummaryResponse:
+        """Generate an LLM narrative summary from aggregated trend data."""
+        period_covered = f"{bills_data.meta.date_from} to {bills_data.meta.date_to}"
+        total_bills = bills_data.meta.total_count
+
+        # Format data as text for the prompt
+        bills_text = "\n".join(
+            f"  {p.period} | {p.dimension}: {p.count}" for p in bills_data.data[:50]
+        )
+        actions_text = "\n".join(
+            f"  {p.period} | {p.dimension}: {p.count}" for p in actions_data.data[:50]
+        )
+        topics_text = "\n".join(
+            f"  {p.period} | {p.dimension}: {p.count} ({p.share_pct}%)"
+            for p in topics_data.data[:50]
+        )
+
+        user_prompt = trend_narrative_v1.USER_PROMPT_TEMPLATE.format(
+            period_covered=period_covered,
+            group_by=group_by,
+            bucket=bucket,
+            bills_data=bills_text or "(no data)",
+            actions_data=actions_text or "(no data)",
+            topics_data=topics_text or "(no data)",
+            total_bills=total_bills,
+        )
+
+        c_hash = self.content_hash(user_prompt, trend_narrative_v1.PROMPT_VERSION)
+
+        try:
+            result = await self._run_analysis(
+                bill_id=f"trend-{c_hash[:12]}",
+                analysis_type="trend_narrative",
+                prompt_version=trend_narrative_v1.PROMPT_VERSION,
+                model=settings.summary_model,
+                c_hash=c_hash,
+                system_prompt=trend_narrative_v1.SYSTEM_PROMPT,
+                user_prompt=user_prompt,
+                max_tokens=2048,
+                output_type=TrendSummaryResponse,
+                fallback_fn=lambda text: TrendSummaryResponse(
+                    narrative=text or "Unable to generate summary.",
+                    key_findings=[],
+                    confidence=0.3,
+                ),
+                cost_label="trend_narrative",
+                skip_store=True,
+            )
+        except Exception:
+            logger.exception("Failed to generate trend narrative")
+            result = TrendSummaryResponse(
+                narrative="Unable to generate trend summary at this time.",
+                key_findings=[],
+                confidence=0.0,
+            )
+
+        result.period_covered = period_covered
+        result.bills_analyzed = total_bills
+        return result
