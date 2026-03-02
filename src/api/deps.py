@@ -1,6 +1,7 @@
 """FastAPI dependency injection."""
 
 import secrets
+import uuid
 from collections.abc import AsyncGenerator
 
 import anthropic
@@ -95,6 +96,13 @@ async def get_llm_harness(
     session: AsyncSession = Depends(get_session),
 ) -> LLMHarness:
     return LLMHarness(db_session=session, client=get_anthropic_client())
+
+
+def require_org(auth: AuthContext) -> uuid.UUID:
+    """Extract org_id from auth context, raising 403 if missing (e.g. dev mode)."""
+    if auth.org_id is None:
+        raise HTTPException(status_code=403, detail="Organization context required")
+    return auth.org_id
 
 
 def escape_like(value: str) -> str:

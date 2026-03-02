@@ -25,6 +25,12 @@ class WebhookEndpointCreateResponse(WebhookEndpointResponse):
     secret: str
 
 
+class WebhookEndpointUpdate(BaseModel):
+    """Fields that can be updated on a webhook endpoint."""
+
+    is_active: bool | None = None
+
+
 class WebhookDeliveryResponse(BaseModel):
     id: uuid.UUID
     endpoint_id: uuid.UUID

@@ -118,8 +118,15 @@ async def enqueue_delivery(
     return delivery
 
 
-async def deliver_webhook(delivery: WebhookDelivery, endpoint: WebhookEndpoint) -> bool:
-    """Attempt HTTP POST delivery. Returns True on success."""
+async def deliver_webhook(
+    delivery: WebhookDelivery,
+    endpoint: WebhookEndpoint,
+    client: httpx.AsyncClient | None = None,
+) -> bool:
+    """Attempt HTTP POST delivery. Returns True on success.
+
+    An optional shared httpx.AsyncClient can be passed for connection reuse.
+    """
     # SSRF check at delivery time (DNS can change after registration)
     ssrf_error = validate_webhook_url(endpoint.url)
     if ssrf_error:
@@ -136,9 +143,9 @@ async def deliver_webhook(delivery: WebhookDelivery, endpoint: WebhookEndpoint) 
 
     body = json.dumps(delivery.payload, separators=(",", ":"), sort_keys=True)
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
+    async def _do_post(http_client: httpx.AsyncClient) -> bool:
         try:
-            resp = await client.post(endpoint.url, content=body, headers=headers)
+            resp = await http_client.post(endpoint.url, content=body, headers=headers)
             delivery.last_status_code = resp.status_code
 
             if 200 <= resp.status_code < 300:
@@ -152,6 +159,16 @@ async def deliver_webhook(delivery: WebhookDelivery, endpoint: WebhookEndpoint) 
             delivery.last_error = "Timeout"
         except httpx.HTTPError as e:
             delivery.last_error = str(e)[:500]
+        return False
+
+    if client:
+        success = await _do_post(client)
+    else:
+        async with httpx.AsyncClient(timeout=30.0) as new_client:
+            success = await _do_post(new_client)
+
+    if success:
+        return True
 
     # Failed — schedule retry or dead-letter
     delivery.attempt_count += 1
@@ -199,40 +216,39 @@ async def process_delivery_queue(session: AsyncSession) -> int:
     endpoints = {ep.id: ep for ep in ep_result.scalars().all()}
 
     successes = 0
-    for delivery in deliveries:
-        endpoint = endpoints.get(delivery.endpoint_id)
-        if not endpoint or not endpoint.is_active:
-            delivery.status = "dead_letter"
-            delivery.last_error = "Endpoint inactive or deleted"
-            delivery.next_retry_at = None
-            continue
+    # Track failure counts in memory to handle multiple failures per endpoint in one batch
+    failure_counts: dict[uuid.UUID, int] = {}
 
-        delivery.status = "attempting"
-        await session.flush()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        for delivery in deliveries:
+            endpoint = endpoints.get(delivery.endpoint_id)
+            if not endpoint or not endpoint.is_active:
+                delivery.status = "dead_letter"
+                delivery.last_error = "Endpoint inactive or deleted"
+                delivery.next_retry_at = None
+                continue
 
-        success = await deliver_webhook(delivery, endpoint)
-        if success:
-            successes += 1
-            # Reset failure count on success
-            await session.execute(
-                update(WebhookEndpoint)
-                .where(WebhookEndpoint.id == endpoint.id)
-                .values(failure_count=0)
+            success = await deliver_webhook(delivery, endpoint, client)
+            if success:
+                successes += 1
+                failure_counts[endpoint.id] = 0
+            else:
+                current = failure_counts.get(endpoint.id, endpoint.failure_count)
+                failure_counts[endpoint.id] = current + 1
+
+    # Apply failure count updates in bulk
+    for ep_id, count in failure_counts.items():
+        values: dict = {"failure_count": count}
+        if count >= CIRCUIT_BREAKER_THRESHOLD:
+            values["is_active"] = False
+            logger.warning(
+                "Circuit breaker tripped for endpoint %s after %d failures",
+                ep_id,
+                count,
             )
-        else:
-            # Increment failure count, check circuit breaker
-            new_count = endpoint.failure_count + 1
-            values: dict = {"failure_count": new_count}
-            if new_count >= CIRCUIT_BREAKER_THRESHOLD:
-                values["is_active"] = False
-                logger.warning(
-                    "Circuit breaker tripped for endpoint %s after %d failures",
-                    endpoint.id,
-                    new_count,
-                )
-            await session.execute(
-                update(WebhookEndpoint).where(WebhookEndpoint.id == endpoint.id).values(**values)
-            )
+        await session.execute(
+            update(WebhookEndpoint).where(WebhookEndpoint.id == ep_id).values(**values)
+        )
 
     await session.commit()
     logger.info("Webhook delivery: %d/%d successful", successes, len(deliveries))
