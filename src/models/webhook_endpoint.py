@@ -27,7 +27,7 @@ class WebhookEndpoint(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    organization: Mapped["Organization"] = relationship()
+    organization: Mapped["Organization"] = relationship(back_populates="webhook_endpoints")
     deliveries: Mapped[list["WebhookDelivery"]] = relationship(
         back_populates="endpoint", cascade="all, delete-orphan"
     )

@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -21,14 +22,14 @@ class SavedSearch(Base):
         index=True,
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
-    criteria: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    criteria: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     # criteria schema: {query, jurisdiction_id, mode, status, filters: {}}
     alerts_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    organization: Mapped["Organization"] = relationship()
+    organization: Mapped["Organization"] = relationship(back_populates="saved_searches")
     alert_subscriptions: Mapped[list["AlertSubscription"]] = relationship(
         back_populates="saved_search", cascade="all, delete-orphan"
     )

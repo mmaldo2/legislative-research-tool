@@ -126,6 +126,15 @@ class GovInfoIngester(BaseIngester):
             if not bills:
                 break
 
+            # Batch-prefetch old values for this page (1 query instead of N)
+            page_bill_ids = []
+            for bd in bills:
+                bt = bd.get("type", "").lower()
+                bn = bd.get("number", "")
+                ident = normalize_identifier(f"{bt}{bn}")
+                page_bill_ids.append(generate_bill_id("us", session_id, ident))
+            await self._prefetch_old_values(page_bill_ids)
+
             for bill_data in bills:
                 created = await self._upsert_bill_from_congress_api(bill_data, session_id)
                 if created:

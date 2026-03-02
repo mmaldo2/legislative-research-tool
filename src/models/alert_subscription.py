@@ -26,7 +26,7 @@ class AlertSubscription(Base):
         nullable=False,
         index=True,
     )
-    event_types: Mapped[list] = mapped_column(
+    event_types: Mapped[list[str]] = mapped_column(
         JSONB, nullable=False
     )  # ["bill.created", "bill.status_changed", ...]
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

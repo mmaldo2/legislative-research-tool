@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.bill import Bill
 from src.models.bill_change_event import BillChangeEvent
+from src.models.enums import ChangeType
 
 logger = logging.getLogger(__name__)
 
@@ -21,6 +22,30 @@ async def get_existing_bill(session: AsyncSession, bill_id: str) -> dict | None:
     if not bill:
         return None
     return {field: _serialize(getattr(bill, field, None)) for field in TRACKED_FIELDS}
+
+
+async def batch_get_existing_bills(
+    session: AsyncSession, bill_ids: list[str]
+) -> dict[str, dict | None]:
+    """Batch-fetch current tracked field values for multiple bills in one query.
+
+    Returns a dict mapping bill_id -> field values (or None if bill is new).
+    Bill IDs not found in the database are mapped to None.
+    """
+    if not bill_ids:
+        return {}
+
+    result = await session.execute(select(Bill).where(Bill.id.in_(bill_ids)))
+    bills = {b.id: b for b in result.scalars().all()}
+
+    return {
+        bid: (
+            {field: _serialize(getattr(bills[bid], field, None)) for field in TRACKED_FIELDS}
+            if bid in bills
+            else None
+        )
+        for bid in bill_ids
+    }
 
 
 async def track_bill_changes(
@@ -46,7 +71,7 @@ async def track_bill_changes(
         # Brand new bill — emit a single "created" event
         event = BillChangeEvent(
             bill_id=bill_id,
-            change_type="created",
+            change_type=ChangeType.CREATED,
             ingestion_run_id=ingestion_run_id,
         )
         session.add(event)
@@ -61,7 +86,7 @@ async def track_bill_changes(
         if old_val == new_val:
             continue
 
-        change_type = "status_changed" if field == "status" else "updated"
+        change_type = ChangeType.STATUS_CHANGED if field == "status" else ChangeType.UPDATED
         event = BillChangeEvent(
             bill_id=bill_id,
             change_type=change_type,

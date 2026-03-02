@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     # API security
     api_key: str = ""  # Required in production; empty = dev mode (no auth)
     cors_origins: str = "http://localhost:3000"  # Comma-separated allowed origins
+    webhook_encryption_key: str = ""  # Fernet key for encrypting webhook secrets at rest
 
     # LLM defaults
     summary_model: str = "claude-sonnet-4-6"

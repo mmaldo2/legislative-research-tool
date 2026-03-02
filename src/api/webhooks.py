@@ -19,6 +19,7 @@ from src.schemas.webhook import (
     WebhookTestResponse,
 )
 from src.services.auth_service import AuthContext
+from src.services.crypto import encrypt_secret
 from src.services.webhook_dispatcher import enqueue_delivery, validate_webhook_url
 
 router = APIRouter()
@@ -44,10 +45,12 @@ async def create_webhook_endpoint(
     if ssrf_error:
         raise HTTPException(status_code=422, detail=ssrf_error)
 
+    plaintext_secret = secrets.token_urlsafe(32)
+
     endpoint = WebhookEndpoint(
         org_id=org_id,
         url=url,
-        secret=secrets.token_urlsafe(32),
+        secret=encrypt_secret(plaintext_secret),
     )
     db.add(endpoint)
     await db.commit()
@@ -60,7 +63,7 @@ async def create_webhook_endpoint(
         is_active=endpoint.is_active,
         failure_count=endpoint.failure_count,
         created_at=endpoint.created_at,
-        secret=endpoint.secret,
+        secret=plaintext_secret,
     )
 
 
