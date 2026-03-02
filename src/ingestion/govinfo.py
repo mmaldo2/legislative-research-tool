@@ -161,6 +161,9 @@ class GovInfoIngester(BaseIngester):
         status_text = latest_action.get("text", "")
         status = normalize_bill_status(status_text) if status_text else "introduced"
 
+        # Snapshot current values for change tracking
+        old_values = await self._get_old_values(bill_id)
+
         stmt = pg_insert(Bill).values(
             id=bill_id,
             jurisdiction_id="us",
@@ -182,6 +185,10 @@ class GovInfoIngester(BaseIngester):
             },
         )
         result = await self.session.execute(stmt)
+
+        # Track changes
+        await self._track_changes(bill_id, old_values, {"title": title, "status": status})
+
         return result.rowcount > 0
 
     async def _fetch_bills_from_govinfo_bulk(self) -> None:
@@ -272,6 +279,9 @@ class GovInfoIngester(BaseIngester):
             latest = actions_data[-1]["text"]
             status = normalize_bill_status(latest)
 
+        # Snapshot current values for change tracking
+        old_values = await self._get_old_values(bill_id)
+
         # Upsert bill
         stmt = pg_insert(Bill).values(
             id=bill_id,
@@ -297,6 +307,11 @@ class GovInfoIngester(BaseIngester):
             },
         )
         await self.session.execute(stmt)
+
+        # Track changes
+        await self._track_changes(
+            bill_id, old_values, {"title": title, "status": status, "subject": subjects}
+        )
 
         # Upsert actions
         for i, action in enumerate(actions_data):

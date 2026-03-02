@@ -232,6 +232,9 @@ class OpenStatesIngester(BaseIngester):
         actions = bill_data.get("latest_action_description", "")
         status = normalize_bill_status(actions) if actions else "introduced"
 
+        # Snapshot current values for change tracking
+        old_values = await self._get_old_values(bill_id)
+
         stmt = pg_insert(Bill).values(
             id=bill_id,
             jurisdiction_id=jurisdiction_id,
@@ -256,6 +259,11 @@ class OpenStatesIngester(BaseIngester):
         )
         result = await self.session.execute(stmt)
         was_created = result.rowcount > 0
+
+        # Track changes
+        await self._track_changes(
+            bill_id, old_values, {"title": title, "status": status, "subject": subject}
+        )
 
         # Fetch full bill detail for texts, actions, sponsors
         await self._fetch_bill_detail(openstates_id, bill_id)

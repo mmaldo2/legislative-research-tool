@@ -3,7 +3,9 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.models.bill_change_event import BillChangeEvent
 from src.models.ingestion_run import IngestionRun
+from src.services.change_tracker import get_existing_bill, track_bill_changes
 
 
 class BaseIngester(ABC):
@@ -14,6 +16,7 @@ class BaseIngester(ABC):
     def __init__(self, session: AsyncSession):
         self.session = session
         self.run: IngestionRun | None = None
+        self.change_events: list[BillChangeEvent] = []
 
     async def start_run(self, run_type: str = "full") -> IngestionRun:
         self.run = IngestionRun(
@@ -23,6 +26,7 @@ class BaseIngester(ABC):
         )
         self.session.add(self.run)
         await self.session.flush()
+        self.change_events = []
         return self.run
 
     async def finish_run(self, status: str = "completed") -> None:
@@ -30,6 +34,22 @@ class BaseIngester(ABC):
             self.run.status = status
             self.run.finished_at = datetime.now(tz=UTC)
             await self.session.commit()
+
+    async def _get_old_values(self, bill_id: str) -> dict | None:
+        """Fetch existing bill field values before upsert (for change tracking)."""
+        return await get_existing_bill(self.session, bill_id)
+
+    async def _track_changes(
+        self,
+        bill_id: str,
+        old_values: dict | None,
+        new_values: dict,
+    ) -> list[BillChangeEvent]:
+        """Record field-level changes for a bill. Call after upsert."""
+        run_id = self.run.id if self.run else None
+        events = await track_bill_changes(self.session, bill_id, old_values, new_values, run_id)
+        self.change_events.extend(events)
+        return events
 
     @abstractmethod
     async def ingest(self) -> None:

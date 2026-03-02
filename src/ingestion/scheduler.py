@@ -8,6 +8,7 @@ Runs background jobs for periodic data refresh:
 - Weekly: LegiScan dataset cross-reference (Saturdays 5:00 AM UTC)
 - Weekly: committee hearings (Wednesdays 5:00 AM UTC)
 - Weekly: CRS reports (Thursdays 5:00 AM UTC)
+- Every 60s: webhook delivery queue processing
 """
 
 import logging
@@ -29,13 +30,26 @@ async def _run_ingestion(
     factory: Callable[..., BaseIngester],
     **kwargs: Any,
 ) -> None:
-    """Generic scheduled ingestion runner."""
+    """Generic scheduled ingestion runner with post-ingestion alert evaluation."""
     logger.info("Scheduled: starting %s ingestion", label)
     async with async_session_factory() as session:
         ingester = factory(session, **kwargs)
         try:
             await ingester.ingest()
             logger.info("Scheduled: %s ingestion completed", label)
+
+            # Post-ingestion: evaluate alerts for any detected changes
+            if ingester.change_events:
+                from src.services.alert_evaluator import evaluate_alerts_for_changes
+
+                enqueued = await evaluate_alerts_for_changes(session, ingester.change_events)
+                if enqueued:
+                    await session.commit()
+                    logger.info(
+                        "Post-ingestion: enqueued %d alert deliveries from %d changes",
+                        enqueued,
+                        len(ingester.change_events),
+                    )
         except Exception as e:
             logger.error("Scheduled: %s ingestion failed: %s", label, e)
         finally:
@@ -90,6 +104,19 @@ async def _run_crs_reports_ingestion() -> None:
     from src.ingestion.crs_reports import CrsReportIngester
 
     await _run_ingestion("crs_reports", CrsReportIngester, months_back=1, max_reports=200)
+
+
+async def _run_webhook_delivery() -> None:
+    """Scheduled job: process the webhook delivery queue (retries + new deliveries)."""
+    from src.services.webhook_dispatcher import process_delivery_queue
+
+    async with async_session_factory() as session:
+        try:
+            delivered = await process_delivery_queue(session)
+            if delivered:
+                logger.info("Webhook queue: delivered %d webhooks", delivered)
+        except Exception as e:
+            logger.error("Webhook queue processing failed: %s", e)
 
 
 def configure_scheduler() -> AsyncIOScheduler:
@@ -169,5 +196,14 @@ def configure_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    logger.info("Ingestion scheduler configured with 7 jobs")
+    # Webhook delivery queue — every 60 seconds
+    scheduler.add_job(
+        _run_webhook_delivery,
+        "interval",
+        seconds=60,
+        id="webhook_delivery",
+        replace_existing=True,
+    )
+
+    logger.info("Ingestion scheduler configured with 8 jobs")
     return scheduler

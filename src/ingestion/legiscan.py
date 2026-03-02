@@ -409,6 +409,9 @@ class LegiScanIngester(BaseIngester):
                     }
                 )
 
+        # Snapshot current values for change tracking
+        old_values = await self._get_old_values(bill_id)
+
         # Upsert
         stmt = pg_insert(Bill).values(
             id=bill_id,
@@ -434,6 +437,14 @@ class LegiScanIngester(BaseIngester):
             },
         )
         result = await self.session.execute(stmt)
+
+        # Track changes
+        await self._track_changes(
+            bill_id,
+            old_values,
+            {"title": title, "status": status, "status_date": status_date},
+        )
+
         return result.rowcount > 0
 
     async def _ensure_jurisdiction(self, jur_id: str, name: str, abbreviation: str) -> None:
