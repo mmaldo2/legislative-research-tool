@@ -10,15 +10,17 @@ from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 
 from src.api.analysis import router as analysis_router
+from src.api.api_keys import router as api_keys_router
 from src.api.bills import router as bills_router
 from src.api.chat import router as chat_router
 from src.api.collections import router as collections_router
 from src.api.compare import router as compare_router
 from src.api.crs import router as crs_router
-from src.api.deps import limiter, require_api_key
+from src.api.deps import limiter, require_api_key, require_tier
 from src.api.export import router as export_router
 from src.api.hearings import router as hearings_router
 from src.api.jurisdictions import router as jurisdictions_router
+from src.api.organizations import router as organizations_router
 from src.api.people import router as people_router
 from src.api.regulatory import router as regulatory_router
 from src.api.reports import router as reports_router
@@ -55,27 +57,36 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mount routers — all require API key auth except status (health check is public)
+# Mount routers — all require API key auth except status and org creation
 auth_deps = [Depends(require_api_key)]
+pro_deps = [Depends(require_tier("pro", "enterprise"))]
+
+# Public routes
+app.include_router(status_router, prefix="/api/v1", tags=["Status"])
+app.include_router(organizations_router, prefix="/api/v1", tags=["Organizations"])
+
+# Authenticated routes (all tiers)
 app.include_router(bills_router, prefix="/api/v1", tags=["Bills"], dependencies=auth_deps)
 app.include_router(people_router, prefix="/api/v1", tags=["People"], dependencies=auth_deps)
 app.include_router(search_router, prefix="/api/v1", tags=["Search"], dependencies=auth_deps)
-app.include_router(analysis_router, prefix="/api/v1", tags=["Analysis"], dependencies=auth_deps)
 app.include_router(votes_router, prefix="/api/v1", tags=["Votes"], dependencies=auth_deps)
 app.include_router(
     jurisdictions_router, prefix="/api/v1", tags=["Reference Data"], dependencies=auth_deps
 )
-app.include_router(compare_router, prefix="/api/v1", tags=["Compare"], dependencies=auth_deps)
 app.include_router(
     collections_router, prefix="/api/v1", tags=["Collections"], dependencies=auth_deps
 )
-app.include_router(chat_router, prefix="/api/v1", tags=["Chat"], dependencies=auth_deps)
 app.include_router(export_router, prefix="/api/v1", tags=["Export"], dependencies=auth_deps)
-app.include_router(reports_router, prefix="/api/v1", tags=["Reports"], dependencies=auth_deps)
 app.include_router(regulatory_router, prefix="/api/v1", tags=["Regulatory"], dependencies=auth_deps)
 app.include_router(hearings_router, prefix="/api/v1", tags=["Hearings"], dependencies=auth_deps)
 app.include_router(crs_router, prefix="/api/v1", tags=["CRS Reports"], dependencies=auth_deps)
-app.include_router(status_router, prefix="/api/v1", tags=["Status"])
+app.include_router(api_keys_router, prefix="/api/v1", tags=["API Keys"], dependencies=auth_deps)
+
+# Pro+ tier routes (LLM-powered endpoints)
+app.include_router(analysis_router, prefix="/api/v1", tags=["Analysis"], dependencies=pro_deps)
+app.include_router(compare_router, prefix="/api/v1", tags=["Compare"], dependencies=pro_deps)
+app.include_router(chat_router, prefix="/api/v1", tags=["Chat"], dependencies=pro_deps)
+app.include_router(reports_router, prefix="/api/v1", tags=["Reports"], dependencies=pro_deps)
 
 
 @app.exception_handler(Exception)
