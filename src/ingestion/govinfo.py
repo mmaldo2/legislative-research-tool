@@ -62,9 +62,7 @@ class GovInfoIngester(BaseIngester):
 
     async def _ensure_jurisdiction(self) -> None:
         """Ensure the 'us' federal jurisdiction exists."""
-        result = await self.session.execute(
-            select(Jurisdiction).where(Jurisdiction.id == "us")
-        )
+        result = await self.session.execute(select(Jurisdiction).where(Jurisdiction.id == "us"))
         if not result.scalar_one_or_none():
             self.session.add(
                 Jurisdiction(
@@ -148,9 +146,7 @@ class GovInfoIngester(BaseIngester):
             self.run.records_created = bills_created
             self.run.records_updated = bills_updated
 
-    async def _upsert_bill_from_congress_api(
-        self, bill_data: dict, session_id: str
-    ) -> bool:
+    async def _upsert_bill_from_congress_api(self, bill_data: dict, session_id: str) -> bool:
         """Insert or update a bill from Congress.gov API response. Returns True if created."""
         bill_type = bill_data.get("type", "").lower()
         bill_number = bill_data.get("number", "")
@@ -233,9 +229,7 @@ class GovInfoIngester(BaseIngester):
         await self.session.commit()
         logger.info("Completed GovInfo bulk ingestion: %d bills", count)
 
-    async def _parse_bill_status_xml(
-        self, xml_text: str, session_id: str, source_url: str
-    ) -> None:
+    async def _parse_bill_status_xml(self, xml_text: str, session_id: str, source_url: str) -> None:
         """Parse a BILLSTATUS XML document and upsert the bill."""
         try:
             root = SafeET.fromstring(xml_text)
@@ -264,11 +258,13 @@ class GovInfoIngester(BaseIngester):
             action_date_str = action_el.findtext("actionDate")
             action_text = action_el.findtext("text") or ""
             if action_date_str and action_text:
-                actions_data.append({
-                    "date": action_date_str,
-                    "text": action_text,
-                    "chamber": action_el.findtext("actionCode") or "",
-                })
+                actions_data.append(
+                    {
+                        "date": action_date_str,
+                        "text": action_text,
+                        "chamber": action_el.findtext("actionCode") or "",
+                    }
+                )
 
         # Determine status from latest action
         status = "introduced"

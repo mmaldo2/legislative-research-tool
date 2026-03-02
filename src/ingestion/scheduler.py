@@ -2,8 +2,12 @@
 
 Runs background jobs for periodic data refresh:
 - Daily: federal bills from GovInfo
+- Daily: Federal Register regulatory documents (6:00 AM UTC)
 - Weekly: state bills from Open States (all 50 states)
 - Weekly: congress legislators update
+- Weekly: LegiScan dataset cross-reference (Saturdays 5:00 AM UTC)
+- Weekly: committee hearings (Wednesdays 5:00 AM UTC)
+- Weekly: CRS reports (Thursdays 5:00 AM UTC)
 """
 
 import logging
@@ -60,6 +64,34 @@ async def _run_legislators_ingestion() -> None:
     await _run_ingestion("legislators", CongressLegislatorsIngester)
 
 
+async def _run_legiscan_ingestion() -> None:
+    """Scheduled job: ingest LegiScan weekly datasets."""
+    from src.ingestion.legiscan import LegiScanIngester
+
+    await _run_ingestion("legiscan", LegiScanIngester)
+
+
+async def _run_federal_register_ingestion() -> None:
+    """Scheduled job: ingest Federal Register regulatory documents."""
+    from src.ingestion.federal_register import FederalRegisterIngester
+
+    await _run_ingestion("federal_register", FederalRegisterIngester, lookback_days=7)
+
+
+async def _run_hearings_ingestion() -> None:
+    """Scheduled job: ingest committee hearings from Congress.gov."""
+    from src.ingestion.committee_hearings import CommitteeHearingIngester
+
+    await _run_ingestion("hearings", CommitteeHearingIngester, congress=119)
+
+
+async def _run_crs_reports_ingestion() -> None:
+    """Scheduled job: ingest CRS reports from EveryCRSReport.com."""
+    from src.ingestion.crs_reports import CrsReportIngester
+
+    await _run_ingestion("crs_reports", CrsReportIngester, months_back=1, max_reports=200)
+
+
 def configure_scheduler() -> AsyncIOScheduler:
     """Configure and return the scheduler with all ingestion jobs."""
     # Daily federal check at 2:00 AM UTC
@@ -94,5 +126,48 @@ def configure_scheduler() -> AsyncIOScheduler:
         replace_existing=True,
     )
 
-    logger.info("Ingestion scheduler configured with 3 jobs")
+    # Weekly LegiScan cross-reference — Saturdays at 5:00 AM UTC
+    scheduler.add_job(
+        _run_legiscan_ingestion,
+        "cron",
+        day_of_week="sat",
+        hour=5,
+        minute=0,
+        id="legiscan_ingestion",
+        replace_existing=True,
+    )
+
+    # Daily Federal Register regulatory documents — 6:00 AM UTC
+    scheduler.add_job(
+        _run_federal_register_ingestion,
+        "cron",
+        hour=6,
+        minute=0,
+        id="federal_register_ingestion",
+        replace_existing=True,
+    )
+
+    # Weekly committee hearings — Wednesdays at 5:00 AM UTC
+    scheduler.add_job(
+        _run_hearings_ingestion,
+        "cron",
+        day_of_week="wed",
+        hour=5,
+        minute=0,
+        id="hearings_ingestion",
+        replace_existing=True,
+    )
+
+    # Weekly CRS reports — Thursdays at 5:00 AM UTC
+    scheduler.add_job(
+        _run_crs_reports_ingestion,
+        "cron",
+        day_of_week="thu",
+        hour=5,
+        minute=0,
+        id="crs_reports_ingestion",
+        replace_existing=True,
+    )
+
+    logger.info("Ingestion scheduler configured with 7 jobs")
     return scheduler

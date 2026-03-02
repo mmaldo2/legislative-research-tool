@@ -9,9 +9,7 @@ from src.database import Base
 
 class Bill(Base):
     __tablename__ = "bills"
-    __table_args__ = (
-        UniqueConstraint("jurisdiction_id", "session_id", "identifier"),
-    )
+    __table_args__ = (UniqueConstraint("jurisdiction_id", "session_id", "identifier"),)
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     jurisdiction_id: Mapped[str] = mapped_column(
@@ -33,12 +31,8 @@ class Bill(Base):
     source_urls: Mapped[list[str] | None] = mapped_column(JSONB, default=None)
     last_ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default="now()"
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default="now()"
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
 
     jurisdiction: Mapped["Jurisdiction"] = relationship(back_populates="bills")
     session: Mapped["LegislativeSession"] = relationship(back_populates="bills")

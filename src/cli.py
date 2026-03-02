@@ -1,10 +1,11 @@
 """CLI interface for the legislative research tool.
 
 Commands:
-  ingest federal    — Fetch federal bills from GovInfo/Congress.gov
-  ingest states     — Fetch state bills from Open States
-  analyze bill <id> — Generate AI analysis for a specific bill
-  status            — Show ingestion and analysis status
+  ingest federal        — Fetch federal bills from GovInfo/Congress.gov
+  ingest states         — Fetch state bills from Open States
+  ingest crs-reports    — Fetch CRS reports from EveryCRSReport.com
+  analyze bill <id>     — Generate AI analysis for a specific bill
+  status                — Show ingestion and analysis status
 """
 
 import asyncio
@@ -85,6 +86,119 @@ async def _ingest_states(state_list: list[str]):
             await ingester.close()
 
 
+@ingest.command("legiscan")
+@click.option(
+    "--states",
+    default=None,
+    help="Comma-separated state abbreviations (default: all states)",
+)
+def ingest_legiscan(states: str | None):
+    """Ingest bills from LegiScan weekly dataset."""
+    state_list = [s.strip().upper() for s in states.split(",")] if states else None
+    asyncio.run(_ingest_legiscan(state_list))
+
+
+async def _ingest_legiscan(state_list: list[str] | None):
+    from src.database import async_session_factory
+    from src.ingestion.legiscan import LegiScanIngester
+
+    logger.info(
+        "Starting LegiScan ingestion%s",
+        f" for: {', '.join(state_list)}" if state_list else " (all states)",
+    )
+    async with async_session_factory() as session:
+        ingester = LegiScanIngester(session, states=state_list)
+        try:
+            await ingester.ingest()
+            logger.info("LegiScan ingestion completed successfully")
+        finally:
+            await ingester.close()
+
+
+@ingest.command("federal-register")
+@click.option(
+    "--days",
+    default=30,
+    help="Number of days to look back (default: 30)",
+)
+@click.option(
+    "--types",
+    default="RULE,PRORULE,NOTICE",
+    help="Comma-separated document types: RULE, PRORULE, NOTICE (default: all three)",
+)
+def ingest_federal_register(days: int, types: str):
+    """Ingest regulatory documents from the Federal Register API."""
+    doc_types = [t.strip() for t in types.split(",")]
+    asyncio.run(_ingest_federal_register(days, doc_types))
+
+
+async def _ingest_federal_register(days: int, document_types: list[str]):
+    from src.database import async_session_factory
+    from src.ingestion.federal_register import FederalRegisterIngester
+
+    logger.info("Starting Federal Register ingestion (last %d days)", days)
+    async with async_session_factory() as session:
+        ingester = FederalRegisterIngester(
+            session, lookback_days=days, document_types=document_types
+        )
+        try:
+            await ingester.ingest()
+            logger.info("Federal Register ingestion completed successfully")
+        finally:
+            await ingester.close()
+
+
+@ingest.command("hearings")
+@click.option("--congress", default=119, help="Congress number (default: 119)")
+def ingest_hearings(congress: int):
+    """Ingest committee hearings from Congress.gov API."""
+    asyncio.run(_ingest_hearings(congress))
+
+
+async def _ingest_hearings(congress: int):
+    from src.database import async_session_factory
+    from src.ingestion.committee_hearings import CommitteeHearingIngester
+
+    logger.info("Starting committee hearings ingestion for %dth Congress", congress)
+    async with async_session_factory() as session:
+        ingester = CommitteeHearingIngester(session, congress=congress)
+        try:
+            await ingester.ingest()
+            logger.info("Committee hearings ingestion completed successfully")
+        finally:
+            await ingester.close()
+
+
+@ingest.command("crs-reports")
+@click.option(
+    "--months",
+    default=6,
+    help="Number of months to look back (default: 6)",
+)
+@click.option(
+    "--max-reports",
+    default=500,
+    help="Maximum number of reports to ingest (default: 500)",
+)
+def ingest_crs_reports(months: int, max_reports: int):
+    """Ingest CRS reports from EveryCRSReport.com."""
+    asyncio.run(_ingest_crs_reports(months, max_reports))
+
+
+async def _ingest_crs_reports(months: int, max_reports: int):
+    from src.database import async_session_factory
+    from src.ingestion.crs_reports import CrsReportIngester
+
+    logger.info("Starting CRS report ingestion (last %d months, max %d)", months, max_reports)
+    async with async_session_factory() as session:
+        ingester = CrsReportIngester(session, months_back=months, max_reports=max_reports)
+        try:
+            await ingester.ingest()
+            logger.info("CRS report ingestion completed successfully")
+        finally:
+            await ingester.close()
+
+
 @ingest.command("legislators")
 def ingest_legislators():
     """Ingest Congress legislators from unitedstates/congress-legislators."""
@@ -122,9 +236,7 @@ async def _analyze_bill(bill_id: str):
 
     async with async_session_factory() as session:
         result = await session.execute(
-            select(Bill)
-            .options(texts_without_markup(Bill.texts))
-            .where(Bill.id == bill_id)
+            select(Bill).options(texts_without_markup(Bill.texts)).where(Bill.id == bill_id)
         )
         bill = result.scalar_one_or_none()
 
@@ -196,9 +308,7 @@ async def _show_status():
 
         # Recent ingestion runs
         runs = await session.execute(
-            select(IngestionRun)
-            .order_by(IngestionRun.started_at.desc())
-            .limit(5)
+            select(IngestionRun).order_by(IngestionRun.started_at.desc()).limit(5)
         )
         click.echo("\nRecent Ingestion Runs:")
         for run in runs.scalars():

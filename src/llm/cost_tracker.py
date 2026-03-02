@@ -40,10 +40,9 @@ class CostTracker:
         pricing = PRICING.get(model, {"input": 3.00, "output": 15.00})
         discount = BATCH_DISCOUNT if batch else 1.0
 
-        cost = (
-            (tokens_input / 1_000_000) * pricing["input"] * discount
-            + (tokens_output / 1_000_000) * pricing["output"] * discount
-        )
+        cost = (tokens_input / 1_000_000) * pricing["input"] * discount + (
+            tokens_output / 1_000_000
+        ) * pricing["output"] * discount
 
         record = UsageRecord(
             model=model,

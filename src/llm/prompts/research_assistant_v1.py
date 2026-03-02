@@ -23,6 +23,11 @@ severity-rated concerns with relevant Supreme Court precedents.
 - analyze_patterns: Detect cross-jurisdictional legislative patterns and model legislation by \
 comparing a bill against similar bills from other states. Identifies shared frameworks, common \
 provisions, and potential source organizations.
+- search_govinfo: Search the GovInfo API for official federal government documents including \
+bills, committee reports, hearings, Federal Register notices, and public laws. Returns document \
+metadata and download links from the U.S. Government Publishing Office.
+- get_govinfo_document: Retrieve detailed metadata and download links for a specific GovInfo \
+document package. Use with package_id from search_govinfo results.
 
 Guidelines:
 - Always cite specific bills by their identifier (e.g. "HB 1234") and include the bill ID \

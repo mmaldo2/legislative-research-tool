@@ -45,11 +45,7 @@ async def generate_report(
 
     # Load full bill data with texts
     bill_ids = [r[0] for r in results]
-    stmt = (
-        select(Bill)
-        .where(Bill.id.in_(bill_ids))
-        .options(texts_without_markup(Bill.texts))
-    )
+    stmt = select(Bill).where(Bill.id.in_(bill_ids)).options(texts_without_markup(Bill.texts))
     db_result = await db.execute(stmt)
     bills = db_result.scalars().all()
 

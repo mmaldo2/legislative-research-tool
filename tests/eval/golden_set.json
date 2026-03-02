@@ -1,0 +1,176 @@
+{
+  "version": "1.0",
+  "description": "Golden evaluation set for legislative research AI analysis quality.",
+  "test_cases": [
+    {
+      "id": "summary-001",
+      "category": "summarization",
+      "input": {
+        "identifier": "HB 1234",
+        "jurisdiction": "us-ca",
+        "title": "California Clean Energy Transition Act",
+        "bill_text": "SECTION 1. SHORT TITLE. This Act may be cited as the 'California Clean Energy Transition Act'.\n\nSECTION 2. FINDINGS. The Legislature finds that:\n(a) Climate change poses an existential threat to California.\n(b) Transitioning to clean energy sources will create jobs and reduce pollution.\n(c) California should achieve 100% clean energy by 2045.\n\nSECTION 3. CLEAN ENERGY STANDARD.\n(a) By December 31, 2030, each retail seller and local publicly owned electric utility shall procure 60 percent of its electricity from eligible renewable energy resources.\n(b) By December 31, 2040, each retail seller and local publicly owned electric utility shall procure 80 percent of its electricity from eligible renewable energy resources.\n(c) By December 31, 2045, each retail seller and local publicly owned electric utility shall procure 100 percent of its electricity from eligible renewable energy resources.\n\nSECTION 4. PENALTIES.\n(a) Any retail seller that fails to comply with the requirements of Section 3 shall be subject to a penalty of $50 per megawatt-hour of shortfall.\n(b) Penalties collected under this section shall be deposited into the Clean Energy Transition Fund.\n\nSECTION 5. WORKER TRANSITION PROGRAM.\n(a) The Employment Development Department shall establish a clean energy worker transition program.\n(b) The program shall provide retraining, job placement services, and wage supplements for workers displaced from fossil fuel industries."
+      },
+      "expected": {
+        "must_mention": [
+          "clean energy",
+          "100%",
+          "2045",
+          "renewable",
+          "penalty",
+          "worker transition"
+        ],
+        "must_not_mention": [
+          "nuclear",
+          "fracking"
+        ],
+        "key_provisions_min_count": 3,
+        "affected_populations_min_count": 2
+      }
+    },
+    {
+      "id": "summary-002",
+      "category": "summarization",
+      "input": {
+        "identifier": "SB 5678",
+        "jurisdiction": "us-ny",
+        "title": "New York Tenant Protection Act",
+        "bill_text": "SECTION 1. SHORT TITLE. This act shall be known as the 'Tenant Protection Act of 2025'.\n\nSECTION 2. JUST CAUSE EVICTION.\n(a) No landlord shall evict a tenant from a dwelling unit unless the landlord can establish one of the following grounds:\n  (1) Nonpayment of rent after 14 days written notice.\n  (2) Material breach of a lease provision after 30 days written notice.\n  (3) Criminal activity on the premises.\n  (4) Owner move-in, limited to one unit per building.\n\nSECTION 3. RENT INCREASE LIMITATIONS.\n(a) Annual rent increases shall not exceed 5 percent or the consumer price index, whichever is lower.\n(b) No rent increase shall take effect less than 12 months after the prior increase.\n\nSECTION 4. ANTI-RETALIATION.\n(a) A landlord shall not retaliate against a tenant for exercising rights under this act.\n(b) Rebuttable presumption of retaliation if adverse action occurs within 6 months of protected activity.\n\nSECTION 5. ENFORCEMENT.\n(a) Tenants may bring civil action for violation of this act.\n(b) Court may award actual damages, punitive damages up to $10,000, and attorney's fees."
+      },
+      "expected": {
+        "must_mention": [
+          "eviction",
+          "just cause",
+          "rent increase",
+          "5 percent",
+          "retaliation",
+          "tenant"
+        ],
+        "must_not_mention": [
+          "commercial",
+          "mortgage"
+        ],
+        "key_provisions_min_count": 3,
+        "affected_populations_min_count": 2
+      }
+    },
+    {
+      "id": "classify-001",
+      "category": "classification",
+      "input": {
+        "identifier": "HB 1234",
+        "title": "California Clean Energy Transition Act",
+        "summary": "Requires California utilities to procure 100% clean energy by 2045 with interim targets, establishes penalties for noncompliance, and creates a worker transition program for displaced fossil fuel workers."
+      },
+      "expected": {
+        "primary_topic_must_be_one_of": [
+          "Energy",
+          "Environment",
+          "Climate",
+          "Clean Energy"
+        ],
+        "must_include_secondary_topic_from": [
+          "Labor",
+          "Employment",
+          "Worker",
+          "Environment",
+          "Climate"
+        ],
+        "confidence_min": 0.7
+      }
+    },
+    {
+      "id": "classify-002",
+      "category": "classification",
+      "input": {
+        "identifier": "SB 5678",
+        "title": "New York Tenant Protection Act",
+        "summary": "Establishes just cause eviction requirements, caps annual rent increases at 5% or CPI, prohibits landlord retaliation, and provides civil enforcement for tenants."
+      },
+      "expected": {
+        "primary_topic_must_be_one_of": [
+          "Housing",
+          "Tenant Rights",
+          "Real Estate",
+          "Consumer Protection"
+        ],
+        "must_include_secondary_topic_from": [
+          "Civil Rights",
+          "Consumer Protection",
+          "Housing",
+          "Tenant"
+        ],
+        "confidence_min": 0.7
+      }
+    },
+    {
+      "id": "constitutional-001",
+      "category": "constitutional_analysis",
+      "input": {
+        "identifier": "HB 9999",
+        "jurisdiction": "us-tx",
+        "title": "Social Media Content Moderation Act",
+        "bill_text": "SECTION 1. SHORT TITLE. This Act may be cited as the 'Social Media Content Moderation Act'.\n\nSECTION 2. DEFINITIONS.\n(a) 'Social media platform' means any internet website or application with more than 50 million monthly active users.\n\nSECTION 3. PROHIBITED PRACTICES.\n(a) A social media platform shall not censor, ban, or restrict the speech of any user based on the user's political viewpoint.\n(b) A social media platform shall not use an algorithm to suppress or de-amplify content based on political viewpoint.\n\nSECTION 4. TRANSPARENCY.\n(a) Platforms must publish their content moderation policies.\n(b) Platforms must provide written notice and appeal for any content removal.\n\nSECTION 5. ENFORCEMENT.\n(a) The Attorney General may bring action for violations.\n(b) Users may bring private cause of action with statutory damages of $25,000 per violation.\n(c) Platforms that violate this act shall be subject to a fine of $100,000 per day."
+      },
+      "expected": {
+        "must_identify_concerns_about": [
+          "First Amendment",
+          "Commerce Clause"
+        ],
+        "min_concerns_count": 2,
+        "overall_risk_must_be_one_of": [
+          "high",
+          "moderate"
+        ]
+      }
+    },
+    {
+      "id": "constitutional-002",
+      "category": "constitutional_analysis",
+      "input": {
+        "identifier": "SB 4444",
+        "jurisdiction": "us-fl",
+        "title": "Immigration Enforcement Cooperation Act",
+        "bill_text": "SECTION 1. This Act may be cited as the 'Immigration Enforcement Cooperation Act'.\n\nSECTION 2. COOPERATION WITH FEDERAL AUTHORITIES.\n(a) State and local law enforcement officers shall cooperate with federal immigration authorities.\n(b) Law enforcement officers are authorized to inquire about immigration status during any lawful stop.\n\nSECTION 3. PENALTIES FOR SANCTUARY POLICIES.\n(a) Any local government that adopts a policy prohibiting cooperation with federal immigration authorities shall forfeit state funding.\n(b) Officials who order noncooperation shall be subject to removal from office.\n\nSECTION 4. EMPLOYER VERIFICATION.\n(a) All employers with more than 5 employees must use the E-Verify system.\n(b) Failure to comply is a Class A misdemeanor."
+      },
+      "expected": {
+        "must_identify_concerns_about": [
+          "preemption",
+          "Equal Protection"
+        ],
+        "min_concerns_count": 2,
+        "overall_risk_must_be_one_of": [
+          "moderate",
+          "high"
+        ]
+      }
+    },
+    {
+      "id": "predict-001",
+      "category": "prediction",
+      "input": {
+        "identifier": "HB 100",
+        "jurisdiction": "us-ca",
+        "title": "Renewable Energy Tax Credit Extension",
+        "status": "engrossed",
+        "classification": "bill",
+        "sponsors_text": "- Alice Johnson (Democrat) [primary]\n- Bob Chen (Democrat) [cosponsor]\n- Carol Davis (Republican) [cosponsor]\n- Dan Evans (Democrat) [cosponsor]",
+        "sponsor_count": 4,
+        "actions_text": "- 2025-01-15: Introduced\n- 2025-02-20: Referred to Energy Committee\n- 2025-03-10: Committee hearing held\n- 2025-04-15: Passed committee (8-2)\n- 2025-05-01: Passed House (55-20)\n- 2025-06-15: Engrossed",
+        "action_count": 6,
+        "subjects": "Energy, Taxation, Environment",
+        "session_info": "2025-2026 Regular Session"
+      },
+      "expected": {
+        "passage_probability_min": 0.5,
+        "predicted_outcome_must_be_one_of": [
+          "likely to pass",
+          "will likely pass",
+          "moderate chance",
+          "likely passage"
+        ],
+        "min_key_factors": 2
+      }
+    }
+  ]
+}

@@ -3,6 +3,16 @@
 import pytest
 
 
+def pytest_addoption(parser):
+    """Register custom command-line options."""
+    parser.addoption(
+        "--run-eval",
+        action="store_true",
+        default=False,
+        help="Run LLM evaluation tests (slow, requires API key).",
+    )
+
+
 @pytest.fixture
 def sample_bill_text():
     return """\

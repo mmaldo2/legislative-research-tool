@@ -1,6 +1,5 @@
 """Tests for BM25 index (requires bm25s package)."""
 
-
 from src.search.bm25 import BM25Index
 
 

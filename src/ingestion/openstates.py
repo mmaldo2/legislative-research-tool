@@ -32,31 +32,56 @@ logger = logging.getLogger(__name__)
 
 # State abbreviation to jurisdiction ID mapping
 STATE_JURISDICTIONS = {
-    "al": ("us-al", "Alabama"), "ak": ("us-ak", "Alaska"),
-    "az": ("us-az", "Arizona"), "ar": ("us-ar", "Arkansas"),
-    "ca": ("us-ca", "California"), "co": ("us-co", "Colorado"),
-    "ct": ("us-ct", "Connecticut"), "de": ("us-de", "Delaware"),
-    "fl": ("us-fl", "Florida"), "ga": ("us-ga", "Georgia"),
-    "hi": ("us-hi", "Hawaii"), "id": ("us-id", "Idaho"),
-    "il": ("us-il", "Illinois"), "in": ("us-in", "Indiana"),
-    "ia": ("us-ia", "Iowa"), "ks": ("us-ks", "Kansas"),
-    "ky": ("us-ky", "Kentucky"), "la": ("us-la", "Louisiana"),
-    "me": ("us-me", "Maine"), "md": ("us-md", "Maryland"),
-    "ma": ("us-ma", "Massachusetts"), "mi": ("us-mi", "Michigan"),
-    "mn": ("us-mn", "Minnesota"), "ms": ("us-ms", "Mississippi"),
-    "mo": ("us-mo", "Missouri"), "mt": ("us-mt", "Montana"),
-    "ne": ("us-ne", "Nebraska"), "nv": ("us-nv", "Nevada"),
-    "nh": ("us-nh", "New Hampshire"), "nj": ("us-nj", "New Jersey"),
-    "nm": ("us-nm", "New Mexico"), "ny": ("us-ny", "New York"),
-    "nc": ("us-nc", "North Carolina"), "nd": ("us-nd", "North Dakota"),
-    "oh": ("us-oh", "Ohio"), "ok": ("us-ok", "Oklahoma"),
-    "or": ("us-or", "Oregon"), "pa": ("us-pa", "Pennsylvania"),
-    "ri": ("us-ri", "Rhode Island"), "sc": ("us-sc", "South Carolina"),
-    "sd": ("us-sd", "South Dakota"), "tn": ("us-tn", "Tennessee"),
-    "tx": ("us-tx", "Texas"), "ut": ("us-ut", "Utah"),
-    "vt": ("us-vt", "Vermont"), "va": ("us-va", "Virginia"),
-    "wa": ("us-wa", "Washington"), "wv": ("us-wv", "West Virginia"),
-    "wi": ("us-wi", "Wisconsin"), "wy": ("us-wy", "Wyoming"),
+    "al": ("us-al", "Alabama"),
+    "ak": ("us-ak", "Alaska"),
+    "az": ("us-az", "Arizona"),
+    "ar": ("us-ar", "Arkansas"),
+    "ca": ("us-ca", "California"),
+    "co": ("us-co", "Colorado"),
+    "ct": ("us-ct", "Connecticut"),
+    "de": ("us-de", "Delaware"),
+    "fl": ("us-fl", "Florida"),
+    "ga": ("us-ga", "Georgia"),
+    "hi": ("us-hi", "Hawaii"),
+    "id": ("us-id", "Idaho"),
+    "il": ("us-il", "Illinois"),
+    "in": ("us-in", "Indiana"),
+    "ia": ("us-ia", "Iowa"),
+    "ks": ("us-ks", "Kansas"),
+    "ky": ("us-ky", "Kentucky"),
+    "la": ("us-la", "Louisiana"),
+    "me": ("us-me", "Maine"),
+    "md": ("us-md", "Maryland"),
+    "ma": ("us-ma", "Massachusetts"),
+    "mi": ("us-mi", "Michigan"),
+    "mn": ("us-mn", "Minnesota"),
+    "ms": ("us-ms", "Mississippi"),
+    "mo": ("us-mo", "Missouri"),
+    "mt": ("us-mt", "Montana"),
+    "ne": ("us-ne", "Nebraska"),
+    "nv": ("us-nv", "Nevada"),
+    "nh": ("us-nh", "New Hampshire"),
+    "nj": ("us-nj", "New Jersey"),
+    "nm": ("us-nm", "New Mexico"),
+    "ny": ("us-ny", "New York"),
+    "nc": ("us-nc", "North Carolina"),
+    "nd": ("us-nd", "North Dakota"),
+    "oh": ("us-oh", "Ohio"),
+    "ok": ("us-ok", "Oklahoma"),
+    "or": ("us-or", "Oregon"),
+    "pa": ("us-pa", "Pennsylvania"),
+    "ri": ("us-ri", "Rhode Island"),
+    "sc": ("us-sc", "South Carolina"),
+    "sd": ("us-sd", "South Dakota"),
+    "tn": ("us-tn", "Tennessee"),
+    "tx": ("us-tx", "Texas"),
+    "ut": ("us-ut", "Utah"),
+    "vt": ("us-vt", "Vermont"),
+    "va": ("us-va", "Virginia"),
+    "wa": ("us-wa", "Washington"),
+    "wv": ("us-wv", "West Virginia"),
+    "wi": ("us-wi", "Wisconsin"),
+    "wy": ("us-wy", "Wyoming"),
     "dc": ("us-dc", "District of Columbia"),
     "pr": ("us-pr", "Puerto Rico"),
 }
@@ -99,7 +124,9 @@ class OpenStatesIngester(BaseIngester):
                 bills_updated += updated
                 logger.info(
                     "Completed %s: %d created, %d updated",
-                    state_abbr.upper(), created, updated,
+                    state_abbr.upper(),
+                    created,
+                    updated,
                 )
 
             if self.run:
@@ -111,12 +138,8 @@ class OpenStatesIngester(BaseIngester):
             await self.finish_run("failed")
             raise
 
-    async def _ensure_jurisdiction(
-        self, jur_id: str, name: str, abbreviation: str
-    ) -> None:
-        result = await self.session.execute(
-            select(Jurisdiction).where(Jurisdiction.id == jur_id)
-        )
+    async def _ensure_jurisdiction(self, jur_id: str, name: str, abbreviation: str) -> None:
+        result = await self.session.execute(select(Jurisdiction).where(Jurisdiction.id == jur_id))
         if not result.scalar_one_or_none():
             self.session.add(
                 Jurisdiction(
@@ -128,9 +151,7 @@ class OpenStatesIngester(BaseIngester):
             )
             await self.session.flush()
 
-    async def _fetch_state_bills(
-        self, state_abbr: str, jurisdiction_id: str
-    ) -> tuple[int, int]:
+    async def _fetch_state_bills(self, state_abbr: str, jurisdiction_id: str) -> tuple[int, int]:
         """Fetch bills for a state from Open States API. Returns (created, updated)."""
         created = 0
         updated = 0
@@ -263,9 +284,7 @@ class OpenStatesIngester(BaseIngester):
             version_name = version.get("note", "Unknown")
             text_id = generate_text_id(bill_id, version_name)
 
-            existing = await self.session.execute(
-                select(BillText).where(BillText.id == text_id)
-            )
+            existing = await self.session.execute(select(BillText).where(BillText.id == text_id))
             if existing.scalar_one_or_none():
                 continue
 
@@ -309,9 +328,7 @@ class OpenStatesIngester(BaseIngester):
                         action_date=action_date,
                         description=description,
                         classification=classification or None,
-                        chamber=action.get("organization", {}).get(
-                            "classification", None
-                        ),
+                        chamber=action.get("organization", {}).get("classification", None),
                         action_order=i,
                     )
                 )
@@ -328,9 +345,7 @@ class OpenStatesIngester(BaseIngester):
                 person_id = hashlib.sha256(person_name.encode()).hexdigest()[:16]
 
             # Ensure person exists
-            existing = await self.session.execute(
-                select(Person).where(Person.id == person_id)
-            )
+            existing = await self.session.execute(select(Person).where(Person.id == person_id))
             if not existing.scalar_one_or_none():
                 self.session.add(
                     Person(

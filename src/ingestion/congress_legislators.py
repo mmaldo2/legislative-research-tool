@@ -18,9 +18,7 @@ from src.models.person import Person
 logger = logging.getLogger(__name__)
 
 # Raw YAML URLs from unitedstates/congress-legislators
-CURRENT_LEGISLATORS_URL = (
-    "https://theunitedstates.io/congress-legislators/legislators-current.json"
-)
+CURRENT_LEGISLATORS_URL = "https://theunitedstates.io/congress-legislators/legislators-current.json"
 
 
 class CongressLegislatorsIngester(BaseIngester):
@@ -54,9 +52,7 @@ class CongressLegislatorsIngester(BaseIngester):
                 self.run.records_created = created
                 self.run.records_updated = updated
             await self.finish_run("completed")
-            logger.info(
-                "Congress legislators: %d created, %d updated", created, updated
-            )
+            logger.info("Congress legislators: %d created, %d updated", created, updated)
         except Exception as e:
             logger.error("Congress legislators ingestion failed: %s", e)
             await self.finish_run("failed")

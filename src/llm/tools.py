@@ -105,15 +105,13 @@ RESEARCH_TOOLS = [
                 "version_a_id": {
                     "type": "string",
                     "description": (
-                        "ID of the earlier version text. Omit to use the "
-                        "oldest available version."
+                        "ID of the earlier version text. Omit to use the oldest available version."
                     ),
                 },
                 "version_b_id": {
                     "type": "string",
                     "description": (
-                        "ID of the later version text. Omit to use the "
-                        "latest available version."
+                        "ID of the later version text. Omit to use the latest available version."
                     ),
                 },
             },
@@ -159,6 +157,69 @@ RESEARCH_TOOLS = [
                 },
             },
             "required": ["bill_id"],
+        },
+    },
+    {
+        "name": "search_govinfo",
+        "description": (
+            "Search the GovInfo API for federal government documents including bills, "
+            "committee reports, hearings, and Federal Register notices. Returns document "
+            "titles, collection types, dates, and download links. Use this for live queries "
+            "against the official federal government publishing office database."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Search query — keywords or phrases related to the "
+                        "federal document you are looking for."
+                    ),
+                },
+                "collection": {
+                    "type": "string",
+                    "description": (
+                        "GovInfo collection code to filter results. "
+                        "Common values: BILLS (legislation), CRPT (committee reports), "
+                        "CHRG (hearings), FR (Federal Register), PLAW (public laws), "
+                        "STATUTE (statutes at large). Omit to search all."
+                    ),
+                },
+                "congress": {
+                    "type": "string",
+                    "description": (
+                        "Congress number to filter (e.g. '118' for 118th Congress). "
+                        "Omit to search all congresses."
+                    ),
+                },
+                "page_size": {
+                    "type": "integer",
+                    "default": 10,
+                    "description": "Number of results to return (max 100).",
+                },
+            },
+            "required": ["query"],
+        },
+    },
+    {
+        "name": "get_govinfo_document",
+        "description": (
+            "Retrieve detailed metadata and download links for a specific GovInfo "
+            "document package. Use the package_id from search_govinfo results."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "package_id": {
+                    "type": "string",
+                    "description": (
+                        "The GovInfo package identifier "
+                        "(e.g. 'BILLS-118hr1234ih', 'CRPT-118srpt25')."
+                    ),
+                },
+            },
+            "required": ["package_id"],
         },
     },
 ]

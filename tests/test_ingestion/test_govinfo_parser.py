@@ -19,11 +19,7 @@ class TestBillStatusXmlParsing:
 
     def test_extract_subjects(self, sample_bill_xml):
         root = SafeET.fromstring(sample_bill_xml)
-        subjects = [
-            s.text
-            for s in root.findall(".//legislativeSubjects/item/name")
-            if s.text
-        ]
+        subjects = [s.text for s in root.findall(".//legislativeSubjects/item/name") if s.text]
         assert "Right of privacy" in subjects
         assert "Consumer protection" in subjects
 

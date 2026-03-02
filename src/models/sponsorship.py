@@ -6,9 +6,7 @@ from src.database import Base
 
 class Sponsorship(Base):
     __tablename__ = "sponsorships"
-    __table_args__ = (
-        UniqueConstraint("bill_id", "person_id", "classification"),
-    )
+    __table_args__ = (UniqueConstraint("bill_id", "person_id", "classification"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     bill_id: Mapped[str] = mapped_column(ForeignKey("bills.id"), nullable=False, index=True)

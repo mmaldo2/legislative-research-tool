@@ -42,8 +42,8 @@ from src.schemas.compare import BillComparisonOutput
 logger = logging.getLogger(__name__)
 
 # Text truncation limits — balances LLM context budget vs. analysis quality.
-MAX_SINGLE_TEXT_CHARS = 50_000   # Full bill text (summarize, constitutional)
-MAX_PAIRED_TEXT_CHARS = 25_000   # Each side of a comparison/diff
+MAX_SINGLE_TEXT_CHARS = 50_000  # Full bill text (summarize, constitutional)
+MAX_PAIRED_TEXT_CHARS = 25_000  # Each side of a comparison/diff
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -63,9 +63,7 @@ class LLMHarness:
         db_session: AsyncSession | None = None,
         client: anthropic.AsyncAnthropic | None = None,
     ):
-        self.client = client or anthropic.AsyncAnthropic(
-            api_key=settings.anthropic_api_key
-        )
+        self.client = client or anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         self.cost_tracker = CostTracker()
         self.db_session = db_session
 
@@ -151,9 +149,7 @@ class LLMHarness:
         """
         # 1. Check cache (skip for non-bill entities like reports)
         if not skip_store:
-            cached = await self._check_cache(
-                bill_id, analysis_type, prompt_version, c_hash
-            )
+            cached = await self._check_cache(bill_id, analysis_type, prompt_version, c_hash)
             if cached:
                 return output_type(**cached)
 
@@ -180,9 +176,7 @@ class LLMHarness:
         # 4. Track costs
         tokens_in = response.usage.input_tokens
         tokens_out = response.usage.output_tokens
-        usage = self.cost_tracker.record(
-            model, tokens_in, tokens_out, cost_label
-        )
+        usage = self.cost_tracker.record(model, tokens_in, tokens_out, cost_label)
 
         # 5. Store in DB (skip for non-bill entities like reports)
         if not skip_store:
@@ -253,9 +247,7 @@ class LLMHarness:
             analysis_type="topics",
             prompt_version=classify_v1.PROMPT_VERSION,
             model=settings.classify_model,
-            c_hash=self.content_hash(
-                f"{title}:{summary}", classify_v1.PROMPT_VERSION
-            ),
+            c_hash=self.content_hash(f"{title}:{summary}", classify_v1.PROMPT_VERSION),
             system_prompt=classify_v1.SYSTEM_PROMPT,
             user_prompt=classify_v1.USER_PROMPT_TEMPLATE.format(
                 identifier=identifier,
@@ -382,9 +374,7 @@ class LLMHarness:
             analysis_type="constitutional",
             prompt_version=constitutional_v1.PROMPT_VERSION,
             model=settings.summary_model,
-            c_hash=self.content_hash(
-                bill_text, constitutional_v1.PROMPT_VERSION
-            ),
+            c_hash=self.content_hash(bill_text, constitutional_v1.PROMPT_VERSION),
             system_prompt=constitutional_v1.SYSTEM_PROMPT,
             user_prompt=constitutional_v1.USER_PROMPT_TEMPLATE.format(
                 identifier=identifier,
@@ -513,9 +503,7 @@ class LLMHarness:
             analysis_type="report",
             prompt_version=report_v1.PROMPT_VERSION,
             model=settings.summary_model,
-            c_hash=self.content_hash(
-                f"{query}:{bills_text[:10000]}", report_v1.PROMPT_VERSION
-            ),
+            c_hash=self.content_hash(f"{query}:{bills_text[:10000]}", report_v1.PROMPT_VERSION),
             system_prompt=report_v1.SYSTEM_PROMPT,
             user_prompt=report_v1.USER_PROMPT_TEMPLATE.format(
                 query=query,

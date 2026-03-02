@@ -49,9 +49,7 @@ async def find_similar_bill_ids(
 
     min_score_clause = ""
     if min_score > 0.0:
-        min_score_clause = (
-            "AND 1 - (be1.embedding <=> be2.embedding) > :min_score"
-        )
+        min_score_clause = "AND 1 - (be1.embedding <=> be2.embedding) > :min_score"
         params["min_score"] = min_score
 
     # Try pgvector cosine similarity first
