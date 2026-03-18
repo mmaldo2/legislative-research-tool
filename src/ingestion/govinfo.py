@@ -446,8 +446,9 @@ class GovInfoIngester(BaseIngester):
         if bill_el is None:
             return
 
-        bill_type = (bill_el.findtext("billType") or "hr").lower()
-        bill_number = bill_el.findtext("billNumber") or ""
+        # GovInfo XML v3.0.0 uses <type>/<number>, older versions use <billType>/<billNumber>
+        bill_type = (bill_el.findtext("type") or bill_el.findtext("billType") or "hr").lower()
+        bill_number = bill_el.findtext("number") or bill_el.findtext("billNumber") or ""
         identifier = normalize_identifier(f"{bill_type}{bill_number}")
         bill_id = generate_bill_id("us", session_id, identifier)
         title = bill_el.findtext("title") or "No title"
