@@ -733,8 +733,16 @@ class GovInfoIngester(BaseIngester):
                 }
             )
 
-        if person_values:
-            stmt = pg_insert(Person).values(person_values)
+        # Deduplicate persons by ID (same legislator can appear twice in API response)
+        seen_person_ids: set[str] = set()
+        unique_person_values = []
+        for pv in person_values:
+            if pv["id"] not in seen_person_ids:
+                seen_person_ids.add(pv["id"])
+                unique_person_values.append(pv)
+
+        if unique_person_values:
+            stmt = pg_insert(Person).values(unique_person_values)
             stmt = stmt.on_conflict_do_update(
                 index_elements=["id"],
                 set_={
