@@ -11,3 +11,4 @@ data/exports/
 .ruff_cache/
 .pytest_cache/
 .mypy_cache/
+src/prediction/models/

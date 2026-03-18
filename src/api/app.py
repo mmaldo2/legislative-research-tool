@@ -21,6 +21,7 @@ from src.api.hearings import router as hearings_router
 from src.api.jurisdictions import router as jurisdictions_router
 from src.api.organizations import router as organizations_router
 from src.api.people import router as people_router
+from src.api.prediction import router as prediction_router
 from src.api.regulatory import router as regulatory_router
 from src.api.reports import router as reports_router
 from src.api.saved_searches import router as saved_searches_router
@@ -102,6 +103,9 @@ app.include_router(trends_router, prefix="/api/v1", tags=["Trends"], dependencie
 app.include_router(analysis_router, prefix="/api/v1", tags=["Analysis"], dependencies=pro_deps)
 app.include_router(compare_router, prefix="/api/v1", tags=["Compare"], dependencies=pro_deps)
 app.include_router(chat_router, prefix="/api/v1", tags=["Chat"], dependencies=pro_deps)
+app.include_router(
+    prediction_router, prefix="/api/v1", tags=["Prediction"], dependencies=pro_deps
+)
 app.include_router(reports_router, prefix="/api/v1", tags=["Reports"], dependencies=pro_deps)
 
 
