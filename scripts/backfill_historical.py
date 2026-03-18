@@ -81,7 +81,18 @@ def main() -> None:
         action="store_true",
         help="Skip detail enrichment (list fetch only)",
     )
+    parser.add_argument(
+        "--api-key",
+        type=str,
+        default=None,
+        help="Override CONGRESS_API_KEY (for parallel runs with separate keys)",
+    )
     args = parser.parse_args()
+
+    if args.api_key:
+        import os
+
+        os.environ["CONGRESS_API_KEY"] = args.api_key
 
     if args.start > args.end:
         print(
