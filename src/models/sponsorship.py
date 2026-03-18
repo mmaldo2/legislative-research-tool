@@ -4,6 +4,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.database import Base
 
 
+# NOTE: autoresearch/prepare.py has hardcoded SQL referencing these columns.
+# Update that file if you rename or remove columns here.
 class Sponsorship(Base):
     __tablename__ = "sponsorships"
     __table_args__ = (UniqueConstraint("bill_id", "person_id", "classification"),)
