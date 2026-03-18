@@ -6,6 +6,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.database import Base
 
 
+# NOTE: autoresearch/prepare.py has hardcoded SQL referencing these columns.
+# Update that file if you rename or remove columns here.
 class BillAction(Base):
     __tablename__ = "bill_actions"
 

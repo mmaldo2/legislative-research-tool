@@ -7,6 +7,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.database import Base
 
 
+# NOTE: autoresearch/prepare.py has hardcoded SQL referencing these columns.
+# Update that file if you rename or remove columns here.
 class Bill(Base):
     __tablename__ = "bills"
     __table_args__ = (UniqueConstraint("jurisdiction_id", "session_id", "identifier"),)
