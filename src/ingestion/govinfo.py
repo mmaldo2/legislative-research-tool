@@ -6,9 +6,11 @@ Primary source for federal legislation.
 
 import asyncio
 import hashlib
+import io
 import logging
 import random
 import re
+import zipfile
 from datetime import UTC, date, datetime
 
 import defusedxml.ElementTree as SafeET
@@ -43,6 +45,13 @@ CONGRESS_API_BASE = "https://api.congress.gov/v3"
 
 # GovInfo bulk data base
 GOVINFO_BULK_BASE = "https://www.govinfo.gov/bulkdata"
+
+# GovInfo bulk ZIP URL pattern: BILLSTATUS-{congress}-{type}.zip
+# Contains one XML file per bill with full status, actions, sponsors, cosponsors
+GOVINFO_BULK_ZIP_URL = (
+    "https://www.govinfo.gov/bulkdata/BILLSTATUS/{congress}/{type}"
+    "/BILLSTATUS-{congress}-{type}.zip"
+)
 
 # All federal bill types for bulk ingestion
 BILL_TYPES = ["hr", "s", "hres", "sres", "hjres", "sjres", "hconres", "sconres"]
@@ -348,6 +357,75 @@ class GovInfoIngester(BaseIngester):
             total_count += count
 
         logger.info("Total GovInfo bulk ingestion: %d bills across all types", total_count)
+
+    async def ingest_from_bulk_zip(self) -> None:
+        """Ingest bills from GovInfo bulk ZIP downloads.
+
+        Downloads one ZIP per bill type containing all BILLSTATUS XML files.
+        Each XML has full actions, sponsors, cosponsors — no per-bill API
+        calls needed. This is 100x faster than the per-bill enrichment path.
+
+        URL pattern: BILLSTATUS-{congress}-{type}.zip
+        """
+        await self.start_run("full")
+        try:
+            await self._ensure_jurisdiction()
+            await self._ensure_session()
+
+            session_id = f"us-{self.congress}"
+            total_count = 0
+
+            for bill_type in BILL_TYPES:
+                url = GOVINFO_BULK_ZIP_URL.format(
+                    congress=self.congress, type=bill_type
+                )
+                logger.info("Downloading bulk ZIP for %s/%s", self.congress, bill_type)
+
+                try:
+                    resp = await self.client.get(url, follow_redirects=True, timeout=120.0)
+                    resp.raise_for_status()
+                except httpx.HTTPError as e:
+                    logger.warning("Failed to download ZIP for %s: %s", bill_type, e)
+                    continue
+
+                # Parse ZIP in memory
+                try:
+                    zf = zipfile.ZipFile(io.BytesIO(resp.content))
+                except zipfile.BadZipFile:
+                    logger.error("Invalid ZIP for %s/%s", self.congress, bill_type)
+                    continue
+
+                xml_names = [n for n in zf.namelist() if n.endswith(".xml")]
+                logger.info("Processing %d XMLs from %s ZIP", len(xml_names), bill_type)
+                count = 0
+
+                for xml_name in xml_names:
+                    try:
+                        xml_text = zf.read(xml_name).decode("utf-8")
+                        source_url = f"{url}#{xml_name}"
+                        await self._parse_bill_status_xml(xml_text, session_id, source_url)
+                        count += 1
+                        if count % 100 == 0:
+                            await self.session.commit()
+                            logger.info("Processed %d/%d %s XMLs", count, len(xml_names), bill_type)
+                    except Exception as e:
+                        logger.warning("Failed to parse %s: %s", xml_name, e)
+
+                await self.session.commit()
+                logger.info("Completed %s: %d bills from ZIP", bill_type, count)
+                total_count += count
+
+            logger.info(
+                "Bulk ZIP ingestion complete: %d bills for Congress %d",
+                total_count, self.congress,
+            )
+            if self.run:
+                self.run.records_created = total_count
+            await self.finish_run("completed")
+        except Exception as e:
+            logger.error("Bulk ZIP ingestion failed: %s", e)
+            await self.finish_run("failed")
+            raise
 
     async def _parse_bill_status_xml(
         self, xml_text: str, session_id: str, source_url: str
