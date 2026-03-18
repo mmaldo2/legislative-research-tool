@@ -62,10 +62,29 @@ def sample_bill_xml():
     <billType>hr</billType>
     <title>Consumer Data Privacy Act of 2025</title>
     <congress>119</congress>
+    <introducedDate>2025-01-15</introducedDate>
     <legislativeSubjects>
       <item><name>Right of privacy</name></item>
       <item><name>Consumer protection</name></item>
     </legislativeSubjects>
+    <sponsors>
+      <item>
+        <bioguideId>S001150</bioguideId>
+        <fullName>Rep. Smith, Adam [D-WA-9]</fullName>
+        <firstName>Adam</firstName>
+        <lastName>Smith</lastName>
+        <party>D</party>
+      </item>
+    </sponsors>
+    <cosponsors>
+      <item>
+        <bioguideId>J000295</bioguideId>
+        <fullName>Rep. Johnson, Bill [R-OH-6]</fullName>
+        <firstName>Bill</firstName>
+        <lastName>Johnson</lastName>
+        <party>R</party>
+      </item>
+    </cosponsors>
     <actions>
       <item>
         <actionDate>2025-01-15</actionDate>

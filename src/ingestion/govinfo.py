@@ -4,7 +4,10 @@ Fetches bill status and text from GovInfo's bulk data and API.
 Primary source for federal legislation.
 """
 
+import asyncio
+import hashlib
 import logging
+import random
 import re
 from datetime import UTC, date, datetime
 
@@ -28,7 +31,9 @@ from src.models.bill import Bill
 from src.models.bill_action import BillAction
 from src.models.bill_text import BillText
 from src.models.jurisdiction import Jurisdiction
+from src.models.person import Person
 from src.models.session import LegislativeSession
+from src.models.sponsorship import Sponsorship
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +42,23 @@ CONGRESS_API_BASE = "https://api.congress.gov/v3"
 
 # GovInfo bulk data base
 GOVINFO_BULK_BASE = "https://www.govinfo.gov/bulkdata"
+
+# All federal bill types for bulk ingestion
+BILL_TYPES = ["hr", "s", "hres", "sres", "hjres", "sjres", "hconres", "sconres"]
+
+# Congress start/end dates for historical sessions
+CONGRESS_DATES: dict[int, tuple[str, str]] = {
+    110: ("2007-01-04", "2009-01-03"),
+    111: ("2009-01-06", "2011-01-03"),
+    112: ("2011-01-05", "2013-01-03"),
+    113: ("2013-01-03", "2015-01-03"),
+    114: ("2015-01-06", "2017-01-03"),
+    115: ("2017-01-03", "2019-01-03"),
+    116: ("2019-01-03", "2021-01-03"),
+    117: ("2021-01-03", "2023-01-03"),
+    118: ("2023-01-03", "2025-01-03"),
+    119: ("2025-01-03", "2027-01-03"),
+}
 
 
 class GovInfoIngester(BaseIngester):
@@ -75,22 +97,52 @@ class GovInfoIngester(BaseIngester):
             await self.session.flush()
 
     async def _ensure_session(self) -> None:
-        """Ensure the current Congress session exists."""
+        """Ensure the Congress session exists with start/end dates."""
         session_id = f"us-{self.congress}"
-        result = await self.session.execute(
-            select(LegislativeSession).where(LegislativeSession.id == session_id)
+        dates = CONGRESS_DATES.get(self.congress)
+        start_date = date.fromisoformat(dates[0]) if dates else None
+        end_date = date.fromisoformat(dates[1]) if dates else None
+
+        stmt = pg_insert(LegislativeSession).values(
+            id=session_id,
+            jurisdiction_id="us",
+            name=f"{self.congress}th Congress",
+            identifier=str(self.congress),
+            classification="primary",
+            start_date=start_date,
+            end_date=end_date,
         )
-        if not result.scalar_one_or_none():
-            self.session.add(
-                LegislativeSession(
-                    id=session_id,
-                    jurisdiction_id="us",
-                    name=f"{self.congress}th Congress",
-                    identifier=str(self.congress),
-                    classification="primary",
-                )
-            )
-            await self.session.flush()
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["id"],
+            set_={
+                "start_date": start_date,
+                "end_date": end_date,
+            },
+        )
+        await self.session.execute(stmt)
+        await self.session.flush()
+
+    async def _rate_limited_get(
+        self, url: str, params: dict | None = None, max_retries: int = 3
+    ) -> httpx.Response:
+        """HTTP GET with exponential backoff and 429 handling."""
+        for attempt in range(max_retries):
+            try:
+                resp = await self.client.get(url, params=params, follow_redirects=True)
+                if resp.status_code == 429:
+                    retry_after = int(resp.headers.get("Retry-After", 60))
+                    logger.warning("Rate limited, waiting %ds", retry_after)
+                    await asyncio.sleep(retry_after + random.uniform(0, 5))
+                    continue
+                resp.raise_for_status()
+                return resp
+            except httpx.HTTPError:
+                if attempt == max_retries - 1:
+                    raise
+                wait = 2**attempt + random.uniform(0, 1)
+                logger.warning("Request failed, retrying in %.1fs (attempt %d)", wait, attempt + 1)
+                await asyncio.sleep(wait)
+        raise httpx.HTTPError(f"Failed after {max_retries} retries: {url}")
 
     async def _fetch_bills_from_congress_api(self) -> None:
         """Fetch bills from Congress.gov API."""
@@ -115,8 +167,7 @@ class GovInfoIngester(BaseIngester):
             }
 
             try:
-                resp = await self.client.get(url, params=params)
-                resp.raise_for_status()
+                resp = await self._rate_limited_get(url, params=params)
             except httpx.HTTPError as e:
                 logger.error("Congress API request failed at offset %d: %s", offset, e)
                 break
@@ -170,6 +221,15 @@ class GovInfoIngester(BaseIngester):
         status_text = latest_action.get("text", "")
         status = normalize_bill_status(status_text) if status_text else "introduced"
 
+        # Extract introduced date from API response
+        introduced_date_str = bill_data.get("introducedDate")
+        introduced_date = None
+        if introduced_date_str:
+            try:
+                introduced_date = date.fromisoformat(introduced_date_str)
+            except ValueError:
+                pass
+
         # Snapshot current values for change tracking
         old_values = await self._get_old_values(bill_id)
 
@@ -181,6 +241,7 @@ class GovInfoIngester(BaseIngester):
             title=title,
             classification=["bill"] if bill_type in ("hr", "s") else ["resolution"],
             status=status,
+            introduced_date=introduced_date,
             congress_bill_id=congress_bill_id,
             source_urls=[bill_data.get("url", "")],
             last_ingested_at=datetime.now(tz=UTC),
@@ -190,6 +251,7 @@ class GovInfoIngester(BaseIngester):
             set_={
                 "title": title,
                 "status": status,
+                "introduced_date": introduced_date,
                 "last_ingested_at": datetime.now(tz=UTC),
             },
         )
@@ -201,51 +263,54 @@ class GovInfoIngester(BaseIngester):
         return result.rowcount > 0
 
     async def _fetch_bills_from_govinfo_bulk(self) -> None:
-        """Fallback: fetch bill status from GovInfo bulk XML."""
-        # GovInfo BILLSTATUS bulk data endpoint
-        url = f"{GOVINFO_BULK_BASE}/BILLSTATUS/{self.congress}/hr"
-        logger.info("Fetching GovInfo bulk bill status from %s", url)
-
-        try:
-            resp = await self.client.get(url, follow_redirects=True)
-            resp.raise_for_status()
-        except httpx.HTTPError as e:
-            logger.error("GovInfo bulk fetch failed: %s", e)
-            return
-
-        # GovInfo returns an XML sitemap with links to individual bill status XMLs
-        # Parse the sitemap to get individual bill URLs
-        try:
-            root = SafeET.fromstring(resp.text)
-        except SafeET.ParseError as e:
-            logger.error("Failed to parse GovInfo bulk XML: %s", e)
-            return
-
-        # Process each bill status XML link from the sitemap
-        ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+        """Fallback: fetch bill status from GovInfo bulk XML for all bill types."""
         session_id = f"us-{self.congress}"
-        count = 0
+        total_count = 0
 
-        for loc in root.findall(".//sm:loc", ns):
-            bill_url = loc.text
-            if not bill_url or not bill_url.endswith(".xml"):
+        for bill_type in BILL_TYPES:
+            url = f"{GOVINFO_BULK_BASE}/BILLSTATUS/{self.congress}/{bill_type}"
+            logger.info("Fetching GovInfo bulk %s from %s", bill_type, url)
+
+            try:
+                resp = await self._rate_limited_get(url)
+            except httpx.HTTPError as e:
+                logger.warning("GovInfo bulk fetch failed for %s: %s", bill_type, e)
                 continue
 
             try:
-                bill_resp = await self.client.get(bill_url)
-                bill_resp.raise_for_status()
-                await self._parse_bill_status_xml(bill_resp.text, session_id, bill_url)
-                count += 1
-                if count % 50 == 0:
-                    await self.session.commit()
-                    logger.info("Processed %d bill status XMLs", count)
-            except Exception as e:
-                logger.warning("Failed to process %s: %s", bill_url, e)
+                root = SafeET.fromstring(resp.text)
+            except SafeET.ParseError as e:
+                logger.error("Failed to parse GovInfo bulk XML for %s: %s", bill_type, e)
+                continue
 
-        await self.session.commit()
-        logger.info("Completed GovInfo bulk ingestion: %d bills", count)
+            # Process each bill status XML link from the sitemap
+            ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+            count = 0
 
-    async def _parse_bill_status_xml(self, xml_text: str, session_id: str, source_url: str) -> None:
+            for loc in root.findall(".//sm:loc", ns):
+                bill_url = loc.text
+                if not bill_url or not bill_url.endswith(".xml"):
+                    continue
+
+                try:
+                    bill_resp = await self._rate_limited_get(bill_url)
+                    await self._parse_bill_status_xml(bill_resp.text, session_id, bill_url)
+                    count += 1
+                    if count % 50 == 0:
+                        await self.session.commit()
+                        logger.info("Processed %d %s bill status XMLs", count, bill_type)
+                except Exception as e:
+                    logger.warning("Failed to process %s: %s", bill_url, e)
+
+            await self.session.commit()
+            logger.info("Completed %s bulk ingestion: %d bills", bill_type, count)
+            total_count += count
+
+        logger.info("Total GovInfo bulk ingestion: %d bills across all types", total_count)
+
+    async def _parse_bill_status_xml(
+        self, xml_text: str, session_id: str, source_url: str
+    ) -> None:
         """Parse a BILLSTATUS XML document and upsert the bill."""
         try:
             root = SafeET.fromstring(xml_text)
@@ -288,6 +353,20 @@ class GovInfoIngester(BaseIngester):
             latest = actions_data[-1]["text"]
             status = normalize_bill_status(latest)
 
+        # Derive introduced_date from XML element or first action
+        introduced_date = None
+        intro_date_str = bill_el.findtext("introducedDate")
+        if intro_date_str:
+            try:
+                introduced_date = date.fromisoformat(intro_date_str)
+            except ValueError:
+                pass
+        if not introduced_date and actions_data:
+            try:
+                introduced_date = date.fromisoformat(actions_data[0]["date"])
+            except ValueError:
+                pass
+
         # Snapshot current values for change tracking
         old_values = await self._get_old_values(bill_id)
 
@@ -301,6 +380,7 @@ class GovInfoIngester(BaseIngester):
             classification=["bill"] if bill_type in ("hr", "s") else ["resolution"],
             subject=subjects or None,
             status=status,
+            introduced_date=introduced_date,
             congress_bill_id=f"{bill_type}{bill_number}-{self.congress}",
             govinfo_package_id=source_url.split("/")[-1].replace(".xml", ""),
             source_urls=[source_url],
@@ -312,6 +392,7 @@ class GovInfoIngester(BaseIngester):
                 "title": title,
                 "status": status,
                 "subject": subjects or None,
+                "introduced_date": introduced_date,
                 "last_ingested_at": datetime.now(tz=UTC),
             },
         )
@@ -345,6 +426,65 @@ class GovInfoIngester(BaseIngester):
                         action_order=i,
                     )
                 )
+
+        # Extract and upsert sponsors/cosponsors
+        await self._upsert_sponsors_from_xml(bill_el, bill_id)
+
+    async def _upsert_sponsors_from_xml(self, bill_el, bill_id: str) -> None:
+        """Extract sponsors and cosponsors from BILLSTATUS XML and upsert."""
+        # Primary sponsors
+        for sponsor_el in bill_el.findall(".//sponsors/item"):
+            await self._upsert_single_sponsor(sponsor_el, bill_id, "primary")
+
+        # Cosponsors
+        for cosponsor_el in bill_el.findall(".//cosponsors/item"):
+            await self._upsert_single_sponsor(cosponsor_el, bill_id, "cosponsor")
+
+    async def _upsert_single_sponsor(
+        self, el, bill_id: str, classification: str
+    ) -> None:
+        """Upsert a single Person + Sponsorship from an XML element."""
+        bioguide = el.findtext("bioguideId") or ""
+        first_name = el.findtext("firstName") or ""
+        last_name = el.findtext("lastName") or ""
+        full_name = el.findtext("fullName") or f"{first_name} {last_name}".strip()
+        party = el.findtext("party")
+
+        if not full_name:
+            return
+
+        # Use bioguide_id as Person primary key (matching congress_legislators pattern).
+        # Fall back to hash-based ID if bioguide is missing.
+        if bioguide:
+            person_id = bioguide
+        else:
+            person_id = hashlib.sha256(full_name.encode()).hexdigest()[:16]
+
+        # Upsert person
+        stmt = pg_insert(Person).values(
+            id=person_id,
+            name=full_name,
+            sort_name=last_name or full_name,
+            party=party,
+            bioguide_id=bioguide or None,
+        )
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["id"],
+            set_={
+                "name": full_name,
+                "party": party,
+            },
+        )
+        await self.session.execute(stmt)
+
+        # Upsert sponsorship
+        sp_stmt = pg_insert(Sponsorship).values(
+            bill_id=bill_id,
+            person_id=person_id,
+            classification=classification,
+        )
+        sp_stmt = sp_stmt.on_conflict_do_nothing()
+        await self.session.execute(sp_stmt)
 
     async def fetch_bill_text(self, bill: Bill) -> BillText | None:
         """Fetch bill text from GovInfo for a specific bill."""

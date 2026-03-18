@@ -13,6 +13,7 @@ class BillSummary(BaseModel):
     title: str
     status: str | None = None
     status_date: date | None = None
+    introduced_date: date | None = None
     classification: list[str] | None = None
     subject: list[str] | None = None
 
@@ -48,6 +49,7 @@ class BillDetailResponse(BaseModel):
     title: str
     status: str | None = None
     status_date: date | None = None
+    introduced_date: date | None = None
     classification: list[str] | None = None
     subject: list[str] | None = None
     source_urls: list | None = None

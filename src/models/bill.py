@@ -22,6 +22,7 @@ class Bill(Base):
     subject: Mapped[list[str] | None] = mapped_column(ARRAY(String))
     status: Mapped[str | None] = mapped_column(String, index=True)
     status_date: Mapped[date | None] = mapped_column(Date)
+    introduced_date: Mapped[date | None] = mapped_column(Date)
 
     openstates_id: Mapped[str | None] = mapped_column(String)
     legiscan_id: Mapped[int | None] = mapped_column()

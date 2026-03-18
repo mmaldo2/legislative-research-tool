@@ -24,6 +24,7 @@ def _mock_bill(**overrides):
         "title": "Consumer Data Privacy Act",
         "status": "introduced",
         "status_date": date(2025, 1, 15),
+        "introduced_date": date(2025, 1, 15),
         "classification": ["bill"],
         "subject": ["Privacy"],
         "source_urls": ["https://example.com"],
@@ -81,6 +82,21 @@ class TestListBills:
         )
         assert summary.id == "abc123"
         assert summary.classification is None
+        assert summary.introduced_date is None
+
+    def test_bill_summary_with_introduced_date(self):
+        """BillSummary includes introduced_date."""
+        from src.schemas.bill import BillSummary
+
+        summary = BillSummary(
+            id="abc123",
+            jurisdiction_id="us",
+            session_id="us-119",
+            identifier="HR 1234",
+            title="Test Bill",
+            introduced_date=date(2025, 1, 15),
+        )
+        assert summary.introduced_date == date(2025, 1, 15)
 
     def test_bill_detail_schema(self):
         """BillDetailResponse schema validates correctly."""
