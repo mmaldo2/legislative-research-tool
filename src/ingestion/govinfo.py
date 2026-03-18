@@ -542,11 +542,12 @@ class GovInfoIngester(BaseIngester):
     # Per-bill detail enrichment (actions + cosponsors from detail API)
     # ------------------------------------------------------------------
 
-    async def enrich_bills(self, batch_size: int = 50) -> None:
+    async def enrich_bills(self, batch_size: int = 50, concurrency: int = 10) -> None:
         """Fetch per-bill details for bills missing action history.
 
         This is a second pass after the list fetch. Bills that already have
-        actions in bill_actions are skipped (resumability).
+        actions in bill_actions are skipped (resumability). Uses bounded
+        concurrency for HTTP fetches while keeping DB writes sequential.
         """
         if not settings.congress_api_key:
             logger.warning("Cannot enrich without CONGRESS_API_KEY")
@@ -554,12 +555,13 @@ class GovInfoIngester(BaseIngester):
 
         session_id = f"us-{self.congress}"
 
-        # Find bills needing enrichment: bills in this session with no actions
+        # Find bills needing enrichment: bills classified as 'bill' with no actions
         enriched_bill_ids = select(BillAction.bill_id).distinct()
         stmt = (
             select(Bill.id, Bill.congress_bill_id)
             .where(Bill.session_id == session_id)
             .where(Bill.congress_bill_id.is_not(None))
+            .where(Bill.classification.op("@>")(["bill"]))
             .where(~Bill.id.in_(enriched_bill_ids))
         )
         result = await self.session.execute(stmt)
@@ -570,17 +572,42 @@ class GovInfoIngester(BaseIngester):
             logger.info("All bills for Congress %d already enriched", self.congress)
             return
 
-        logger.info("Enriching %d bills for Congress %d", total, self.congress)
+        logger.info(
+            "Enriching %d bills for Congress %d (concurrency=%d)",
+            total, self.congress, concurrency,
+        )
         enriched = 0
+        sem = asyncio.Semaphore(concurrency)
+
+        async def _enrich_one(bill_id: str, congress_bill_id: str) -> dict | None:
+            """Fetch actions + cosponsors for one bill (HTTP only, no DB writes)."""
+            bill_type, bill_number = _parse_bill_type_number(congress_bill_id)
+            if not bill_number:
+                return None
+            async with sem:
+                actions_data = await self._fetch_actions_json(bill_type, bill_number)
+                cosponsors_data = await self._fetch_cosponsors_json(bill_type, bill_number)
+            return {
+                "bill_id": bill_id,
+                "bill_type": bill_type,
+                "bill_number": bill_number,
+                "actions": actions_data,
+                "cosponsors": cosponsors_data,
+            }
 
         for i in range(0, total, batch_size):
             batch = bills_to_enrich[i : i + batch_size]
-            for bill_id, congress_bill_id in batch:
-                bill_type, bill_number = _parse_bill_type_number(congress_bill_id)
-                if not bill_number:
+
+            # Fetch all detail data concurrently (HTTP only)
+            tasks = [_enrich_one(bid, cbid) for bid, cbid in batch]
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+
+            # Write to DB sequentially (shared session)
+            for res in results:
+                if isinstance(res, Exception) or res is None:
                     continue
-                await self._fetch_bill_actions(bill_id, bill_type, bill_number)
-                await self._fetch_bill_cosponsors(bill_id, bill_type, bill_number)
+                self._process_actions_data(res["bill_id"], res["actions"])
+                self._process_cosponsors_data(res["bill_id"], res["cosponsors"])
                 enriched += 1
 
             await self.session.commit()
@@ -591,29 +618,37 @@ class GovInfoIngester(BaseIngester):
             "Enrichment complete: %d bills enriched for Congress %d", enriched, self.congress
         )
 
-    async def _fetch_bill_actions(
-        self, bill_id: str, bill_type: str, bill_number: str
-    ) -> None:
-        """Fetch full action history for a bill and update status."""
+    async def _fetch_actions_json(
+        self, bill_type: str, bill_number: str
+    ) -> list:
+        """Fetch actions JSON from Congress.gov (HTTP only, no DB writes)."""
         url = f"{CONGRESS_API_BASE}/bill/{self.congress}/{bill_type}/{bill_number}/actions"
-        params = {
-            "api_key": settings.congress_api_key,
-            "limit": 250,
-            "format": "json",
-        }
-
+        params = {"api_key": settings.congress_api_key, "limit": 250, "format": "json"}
         try:
             resp = await self._rate_limited_get(url, params=params)
+            return resp.json().get("actions", [])
         except httpx.HTTPError:
             logger.warning("Failed to fetch actions for %s/%s", bill_type, bill_number)
-            return
+            return []
 
-        data = resp.json()
-        actions = data.get("actions", [])
+    async def _fetch_cosponsors_json(
+        self, bill_type: str, bill_number: str
+    ) -> list:
+        """Fetch cosponsors JSON from Congress.gov (HTTP only, no DB writes)."""
+        url = f"{CONGRESS_API_BASE}/bill/{self.congress}/{bill_type}/{bill_number}/cosponsors"
+        params = {"api_key": settings.congress_api_key, "limit": 250, "format": "json"}
+        try:
+            resp = await self._rate_limited_get(url, params=params)
+            return resp.json().get("cosponsors", [])
+        except httpx.HTTPError:
+            logger.warning("Failed to fetch cosponsors for %s/%s", bill_type, bill_number)
+            return []
+
+    def _process_actions_data(self, bill_id: str, actions: list) -> None:
+        """Build action upserts and update bill status from action list (sync, no await)."""
         if not actions:
             return
 
-        # Build action values and track best status
         action_values = []
         best_status = "introduced"
         for i, action in enumerate(actions):
@@ -636,47 +671,26 @@ class GovInfoIngester(BaseIngester):
                 }
             )
 
-            # Track highest-precedence status from all actions
             action_status = normalize_bill_status(action_text)
             if STATUS_PRECEDENCE.get(action_status, 0) > STATUS_PRECEDENCE.get(
                 best_status, 0
             ):
                 best_status = action_status
 
-        # Bulk upsert actions
+        # Queue DB operations (will be flushed on next commit)
         if action_values:
             stmt = pg_insert(BillAction).values(action_values)
             stmt = stmt.on_conflict_do_nothing(
                 index_elements=["bill_id", "action_date", "description"],
             )
-            await self.session.execute(stmt)
+            self.session.sync_session.execute(stmt)
 
-        # Update bill status from full action history
-        await self.session.execute(
+        self.session.sync_session.execute(
             sa_update(Bill).where(Bill.id == bill_id).values(status=best_status)
         )
 
-    async def _fetch_bill_cosponsors(
-        self, bill_id: str, bill_type: str, bill_number: str
-    ) -> None:
-        """Fetch cosponsors from Congress.gov detail endpoint and bulk upsert."""
-        url = (
-            f"{CONGRESS_API_BASE}/bill/{self.congress}/{bill_type}/{bill_number}/cosponsors"
-        )
-        params = {
-            "api_key": settings.congress_api_key,
-            "limit": 250,
-            "format": "json",
-        }
-
-        try:
-            resp = await self._rate_limited_get(url, params=params)
-        except httpx.HTTPError:
-            logger.warning("Failed to fetch cosponsors for %s/%s", bill_type, bill_number)
-            return
-
-        data = resp.json()
-        cosponsors = data.get("cosponsors", [])
+    def _process_cosponsors_data(self, bill_id: str, cosponsors: list) -> None:
+        """Build cosponsor upserts from JSON data (sync, no await)."""
         if not cosponsors:
             return
 
@@ -723,14 +737,14 @@ class GovInfoIngester(BaseIngester):
                     "party": func.coalesce(stmt.excluded.party, Person.party),
                 },
             )
-            await self.session.execute(stmt)
+            self.session.sync_session.execute(stmt)
 
         if sponsorship_values:
             sp_stmt = pg_insert(Sponsorship).values(sponsorship_values)
             sp_stmt = sp_stmt.on_conflict_do_nothing(
                 index_elements=["bill_id", "person_id", "classification"],
             )
-            await self.session.execute(sp_stmt)
+            self.session.sync_session.execute(sp_stmt)
 
     async def fetch_bill_text(self, bill: Bill) -> BillText | None:
         """Fetch bill text from GovInfo for a specific bill."""
