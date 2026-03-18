@@ -1,7 +1,7 @@
 ---
 title: "feat: Autoresearch integration for bill outcome prediction"
 type: feat
-status: active
+status: completed
 date: 2026-03-17
 origin: docs/brainstorms/2026-03-17-autoresearch-integration-brainstorm.md
 ---
