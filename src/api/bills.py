@@ -54,6 +54,7 @@ async def list_bills_endpoint(
             title=b.title,
             status=b.status,
             status_date=b.status_date,
+            introduced_date=b.introduced_date,
             classification=b.classification,
             subject=b.subject,
         )
@@ -134,6 +135,7 @@ async def get_bill_endpoint(
         title=bill.title,
         status=bill.status,
         status_date=bill.status_date,
+        introduced_date=bill.introduced_date,
         classification=bill.classification,
         subject=bill.subject,
         source_urls=bill.source_urls,

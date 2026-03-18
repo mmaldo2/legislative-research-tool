@@ -36,7 +36,7 @@ def upgrade() -> None:
         """
     )
 
-    # Concurrent index for date-range queries
+    # Concurrent indexes
     with op.get_context().autocommit_block():
         op.create_index(
             "ix_bills_introduced_date",
@@ -45,10 +45,25 @@ def upgrade() -> None:
             postgresql_concurrently=True,
             if_not_exists=True,
         )
+        # Unique index for bulk action upserts (on_conflict_do_nothing)
+        op.create_index(
+            "ix_bill_actions_bill_date_desc_unique",
+            "bill_actions",
+            ["bill_id", "action_date", "description"],
+            unique=True,
+            postgresql_concurrently=True,
+            if_not_exists=True,
+        )
 
 
 def downgrade() -> None:
     with op.get_context().autocommit_block():
+        op.drop_index(
+            "ix_bill_actions_bill_date_desc_unique",
+            "bill_actions",
+            postgresql_concurrently=True,
+            if_not_exists=True,
+        )
         op.drop_index(
             "ix_bills_introduced_date",
             "bills",

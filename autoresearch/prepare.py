@@ -56,9 +56,6 @@ POSITIVE_STATUSES = ("passed_lower", "passed_upper", "enrolled", "enacted", "vet
 NEGATIVE_STATUSES = ("introduced", "in_committee", "failed", "withdrawn")
 # "other" is excluded as ambiguous
 
-# Time budget per experiment (seconds) — keeps experiments comparable
-TIME_BUDGET = 120  # 2 minutes
-
 # Experiment logging
 EXPERIMENTS_DIR = Path("autoresearch/experiments")
 
@@ -153,8 +150,10 @@ def load_raw_data() -> pd.DataFrame:
     ORDER BY bf.introduced_date, bf.bill_id;
     """
     conn = get_connection()
-    df = pd.read_sql(query, conn)
-    conn.close()
+    try:
+        df = pd.read_sql(query, conn)
+    finally:
+        conn.close()
     return df
 
 
@@ -165,20 +164,18 @@ def split_data(df: pd.DataFrame) -> tuple:
     Returns (train_df, val_df, test_df).
     """
     df = df.dropna(subset=["introduced_date"])
-    # Convert to string for comparison if needed
-    df["introduced_date_str"] = df["introduced_date"].astype(str)
 
-    train = df[df["introduced_date_str"] <= TRAIN_END].copy()
-    val = df[
-        (df["introduced_date_str"] >= VAL_START) & (df["introduced_date_str"] <= VAL_END)
-    ].copy()
-    test = df[
-        (df["introduced_date_str"] >= TEST_START) & (df["introduced_date_str"] <= TEST_END)
-    ].copy()
+    train_end = pd.Timestamp(TRAIN_END)
+    val_start = pd.Timestamp(VAL_START)
+    val_end = pd.Timestamp(VAL_END)
+    test_start = pd.Timestamp(TEST_START)
+    test_end = pd.Timestamp(TEST_END)
 
-    # Drop helper column
-    for split in (train, val, test):
-        split.drop(columns=["introduced_date_str"], inplace=True)
+    intro = pd.to_datetime(df["introduced_date"])
+
+    train = df[intro <= train_end].copy()
+    val = df[(intro >= val_start) & (intro <= val_end)].copy()
+    test = df[(intro >= test_start) & (intro <= test_end)].copy()
 
     return train, val, test
 

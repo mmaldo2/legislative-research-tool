@@ -36,8 +36,10 @@ async def backfill(start: int, end: int) -> None:
         try:
             async with async_session_factory() as session:
                 ingester = GovInfoIngester(session, congress=congress)
-                await ingester.ingest()
-                await ingester.close()
+                try:
+                    await ingester.ingest()
+                finally:
+                    await ingester.close()
             logger.info("Completed Congress %d successfully", congress)
         except Exception:
             logger.exception("Failed to backfill Congress %d", congress)

@@ -13,7 +13,7 @@ from datetime import UTC, date, datetime
 
 import defusedxml.ElementTree as SafeET
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -83,18 +83,16 @@ class GovInfoIngester(BaseIngester):
             raise
 
     async def _ensure_jurisdiction(self) -> None:
-        """Ensure the 'us' federal jurisdiction exists."""
-        result = await self.session.execute(select(Jurisdiction).where(Jurisdiction.id == "us"))
-        if not result.scalar_one_or_none():
-            self.session.add(
-                Jurisdiction(
-                    id="us",
-                    name="United States",
-                    classification="country",
-                    abbreviation="US",
-                )
-            )
-            await self.session.flush()
+        """Ensure the 'us' federal jurisdiction exists (idempotent upsert)."""
+        stmt = pg_insert(Jurisdiction).values(
+            id="us",
+            name="United States",
+            classification="country",
+            abbreviation="US",
+        )
+        stmt = stmt.on_conflict_do_nothing()
+        await self.session.execute(stmt)
+        await self.session.flush()
 
     async def _ensure_session(self) -> None:
         """Ensure the Congress session exists with start/end dates."""
@@ -112,37 +110,45 @@ class GovInfoIngester(BaseIngester):
             start_date=start_date,
             end_date=end_date,
         )
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["id"],
-            set_={
-                "start_date": start_date,
-                "end_date": end_date,
-            },
-        )
+        # Only overwrite dates when we have values — avoid erasing data from other ingesters
+        if start_date is not None:
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["id"],
+                set_={"start_date": start_date, "end_date": end_date},
+            )
+        else:
+            stmt = stmt.on_conflict_do_nothing()
         await self.session.execute(stmt)
         await self.session.flush()
 
     async def _rate_limited_get(
         self, url: str, params: dict | None = None, max_retries: int = 3
     ) -> httpx.Response:
-        """HTTP GET with exponential backoff and 429 handling."""
-        for attempt in range(max_retries):
+        """HTTP GET with exponential backoff and 429 handling.
+
+        429 responses do NOT count against the retry budget — they signal
+        rate limiting, not failure.
+        """
+        failures = 0
+        while True:
             try:
                 resp = await self.client.get(url, params=params, follow_redirects=True)
                 if resp.status_code == 429:
                     retry_after = int(resp.headers.get("Retry-After", 60))
                     logger.warning("Rate limited, waiting %ds", retry_after)
                     await asyncio.sleep(retry_after + random.uniform(0, 5))
-                    continue
+                    continue  # Do NOT increment failures
                 resp.raise_for_status()
                 return resp
             except httpx.HTTPError:
-                if attempt == max_retries - 1:
+                failures += 1
+                if failures >= max_retries:
                     raise
-                wait = 2**attempt + random.uniform(0, 1)
-                logger.warning("Request failed, retrying in %.1fs (attempt %d)", wait, attempt + 1)
+                wait = 2**failures + random.uniform(0, 1)
+                logger.warning(
+                    "Request failed, retrying in %.1fs (%d/%d)", wait, failures, max_retries
+                )
                 await asyncio.sleep(wait)
-        raise httpx.HTTPError(f"Failed after {max_retries} retries: {url}")
 
     async def _fetch_bills_from_congress_api(self) -> None:
         """Fetch bills from Congress.gov API."""
@@ -246,15 +252,14 @@ class GovInfoIngester(BaseIngester):
             source_urls=[bill_data.get("url", "")],
             last_ingested_at=datetime.now(tz=UTC),
         )
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["id"],
-            set_={
-                "title": title,
-                "status": status,
-                "introduced_date": introduced_date,
-                "last_ingested_at": datetime.now(tz=UTC),
-            },
-        )
+        update_set: dict = {
+            "title": title,
+            "status": status,
+            "last_ingested_at": datetime.now(tz=UTC),
+        }
+        if introduced_date is not None:
+            update_set["introduced_date"] = introduced_date
+        stmt = stmt.on_conflict_do_update(index_elements=["id"], set_=update_set)
         result = await self.session.execute(stmt)
 
         # Track changes
@@ -386,16 +391,15 @@ class GovInfoIngester(BaseIngester):
             source_urls=[source_url],
             last_ingested_at=datetime.now(tz=UTC),
         )
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["id"],
-            set_={
-                "title": title,
-                "status": status,
-                "subject": subjects or None,
-                "introduced_date": introduced_date,
-                "last_ingested_at": datetime.now(tz=UTC),
-            },
-        )
+        update_set: dict = {
+            "title": title,
+            "status": status,
+            "subject": subjects or None,
+            "last_ingested_at": datetime.now(tz=UTC),
+        }
+        if introduced_date is not None:
+            update_set["introduced_date"] = introduced_date
+        stmt = stmt.on_conflict_do_update(index_elements=["id"], set_=update_set)
         await self.session.execute(stmt)
 
         # Track changes
@@ -403,47 +407,74 @@ class GovInfoIngester(BaseIngester):
             bill_id, old_values, {"title": title, "status": status, "subject": subjects}
         )
 
-        # Upsert actions
+        # Bulk upsert actions (1 query instead of N SELECT-before-INSERTs)
+        action_values = []
         for i, action in enumerate(actions_data):
             try:
                 action_date = date.fromisoformat(action["date"])
             except ValueError:
                 continue
-
-            existing = await self.session.execute(
-                select(BillAction).where(
-                    BillAction.bill_id == bill_id,
-                    BillAction.action_date == action_date,
-                    BillAction.description == action["text"],
-                )
+            action_values.append(
+                {
+                    "bill_id": bill_id,
+                    "action_date": action_date,
+                    "description": action["text"],
+                    "action_order": i,
+                }
             )
-            if not existing.scalar_one_or_none():
-                self.session.add(
-                    BillAction(
-                        bill_id=bill_id,
-                        action_date=action_date,
-                        description=action["text"],
-                        action_order=i,
-                    )
-                )
+        if action_values:
+            action_stmt = pg_insert(BillAction).values(action_values)
+            action_stmt = action_stmt.on_conflict_do_nothing(
+                index_elements=["bill_id", "action_date", "description"],
+            )
+            await self.session.execute(action_stmt)
 
-        # Extract and upsert sponsors/cosponsors
+        # Extract and bulk upsert sponsors/cosponsors
         await self._upsert_sponsors_from_xml(bill_el, bill_id)
 
     async def _upsert_sponsors_from_xml(self, bill_el, bill_id: str) -> None:
-        """Extract sponsors and cosponsors from BILLSTATUS XML and upsert."""
-        # Primary sponsors
+        """Extract sponsors and cosponsors from BILLSTATUS XML and bulk upsert."""
+        person_values = []
+        sponsorship_values = []
+
         for sponsor_el in bill_el.findall(".//sponsors/item"):
-            await self._upsert_single_sponsor(sponsor_el, bill_id, "primary")
+            pv, sv = self._extract_sponsor_values(sponsor_el, bill_id, "primary")
+            if pv:
+                person_values.append(pv)
+                sponsorship_values.append(sv)
 
-        # Cosponsors
         for cosponsor_el in bill_el.findall(".//cosponsors/item"):
-            await self._upsert_single_sponsor(cosponsor_el, bill_id, "cosponsor")
+            pv, sv = self._extract_sponsor_values(cosponsor_el, bill_id, "cosponsor")
+            if pv:
+                person_values.append(pv)
+                sponsorship_values.append(sv)
 
-    async def _upsert_single_sponsor(
-        self, el, bill_id: str, classification: str
-    ) -> None:
-        """Upsert a single Person + Sponsorship from an XML element."""
+        # Bulk upsert persons (1 query for all sponsors of this bill)
+        # Use COALESCE to avoid overwriting existing party with NULL
+        if person_values:
+            stmt = pg_insert(Person).values(person_values)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["id"],
+                set_={
+                    "name": stmt.excluded.name,
+                    "party": func.coalesce(stmt.excluded.party, Person.party),
+                },
+            )
+            await self.session.execute(stmt)
+
+        # Bulk insert sponsorships (1 query for all sponsors of this bill)
+        if sponsorship_values:
+            sp_stmt = pg_insert(Sponsorship).values(sponsorship_values)
+            sp_stmt = sp_stmt.on_conflict_do_nothing(
+                index_elements=["bill_id", "person_id", "classification"],
+            )
+            await self.session.execute(sp_stmt)
+
+    @staticmethod
+    def _extract_sponsor_values(
+        el, bill_id: str, classification: str
+    ) -> tuple[dict | None, dict | None]:
+        """Extract Person + Sponsorship values from an XML element."""
         bioguide = el.findtext("bioguideId") or ""
         first_name = el.findtext("firstName") or ""
         last_name = el.findtext("lastName") or ""
@@ -451,7 +482,7 @@ class GovInfoIngester(BaseIngester):
         party = el.findtext("party")
 
         if not full_name:
-            return
+            return None, None
 
         # Use bioguide_id as Person primary key (matching congress_legislators pattern).
         # Fall back to hash-based ID if bioguide is missing.
@@ -460,31 +491,19 @@ class GovInfoIngester(BaseIngester):
         else:
             person_id = hashlib.sha256(full_name.encode()).hexdigest()[:16]
 
-        # Upsert person
-        stmt = pg_insert(Person).values(
-            id=person_id,
-            name=full_name,
-            sort_name=last_name or full_name,
-            party=party,
-            bioguide_id=bioguide or None,
-        )
-        stmt = stmt.on_conflict_do_update(
-            index_elements=["id"],
-            set_={
-                "name": full_name,
-                "party": party,
-            },
-        )
-        await self.session.execute(stmt)
-
-        # Upsert sponsorship
-        sp_stmt = pg_insert(Sponsorship).values(
-            bill_id=bill_id,
-            person_id=person_id,
-            classification=classification,
-        )
-        sp_stmt = sp_stmt.on_conflict_do_nothing()
-        await self.session.execute(sp_stmt)
+        person_dict = {
+            "id": person_id,
+            "name": full_name,
+            "sort_name": last_name or full_name,
+            "party": party,
+            "bioguide_id": bioguide or None,
+        }
+        sponsorship_dict = {
+            "bill_id": bill_id,
+            "person_id": person_id,
+            "classification": classification,
+        }
+        return person_dict, sponsorship_dict
 
     async def fetch_bill_text(self, bill: Bill) -> BillText | None:
         """Fetch bill text from GovInfo for a specific bill."""
