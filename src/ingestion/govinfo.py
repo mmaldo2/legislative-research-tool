@@ -401,18 +401,21 @@ class GovInfoIngester(BaseIngester):
 
                 for xml_name in xml_names:
                     try:
-                        xml_text = zf.read(xml_name).decode("utf-8")
-                        source_url = f"{url}#{xml_name}"
-                        await self._parse_bill_status_xml(xml_text, session_id, source_url)
+                        async with self.session.begin_nested():
+                            xml_text = zf.read(xml_name).decode("utf-8")
+                            source_url = f"{url}#{xml_name}"
+                            await self._parse_bill_status_xml(
+                                xml_text, session_id, source_url
+                            )
                         count += 1
                         if count % 100 == 0:
                             await self.session.commit()
                             logger.info(
-                                "Processed %d/%d %s XMLs", count, len(xml_names), bill_type
+                                "Processed %d/%d %s XMLs",
+                                count, len(xml_names), bill_type,
                             )
                     except Exception as e:
                         logger.warning("Failed to parse %s: %s", xml_name, e)
-                        await self.session.rollback()
 
                 await self.session.commit()
                 logger.info("Completed %s: %d bills from ZIP", bill_type, count)
@@ -569,10 +572,18 @@ class GovInfoIngester(BaseIngester):
                 person_values.append(pv)
                 sponsorship_values.append(sv)
 
+        # Deduplicate persons by ID (same legislator can appear as sponsor + cosponsor)
+        seen_ids: set[str] = set()
+        unique_person_values = []
+        for pv in person_values:
+            if pv["id"] not in seen_ids:
+                seen_ids.add(pv["id"])
+                unique_person_values.append(pv)
+
         # Bulk upsert persons (1 query for all sponsors of this bill)
         # Use COALESCE to avoid overwriting existing party with NULL
-        if person_values:
-            stmt = pg_insert(Person).values(person_values)
+        if unique_person_values:
+            stmt = pg_insert(Person).values(unique_person_values)
             stmt = stmt.on_conflict_do_update(
                 index_elements=["id"],
                 set_={
