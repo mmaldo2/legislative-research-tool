@@ -8,8 +8,8 @@ Revision ID: 002
 
 from alembic import op
 
-revision = "002"
-down_revision = "001"
+revision = "002_rename_ingestion_run_fields"
+down_revision = "001_add_filter_indexes"
 branch_labels = None
 depends_on = None
 
