@@ -4,7 +4,12 @@ from datetime import date
 
 import defusedxml.ElementTree as SafeET
 
-from src.ingestion.govinfo import BILL_TYPES, CONGRESS_DATES
+from src.ingestion.govinfo import (
+    BILL_TYPES,
+    CONGRESS_DATES,
+    STATUS_PRECEDENCE,
+    _parse_bill_type_number,
+)
 from src.ingestion.normalizer import normalize_bill_status, normalize_identifier
 
 
@@ -118,3 +123,59 @@ class TestCongressDates:
         assert "hconres" in BILL_TYPES
         assert "sconres" in BILL_TYPES
         assert len(BILL_TYPES) == 8
+
+
+class TestStatusPrecedence:
+    """Test status precedence for action-based status determination."""
+
+    def test_enacted_is_highest(self):
+        assert STATUS_PRECEDENCE["enacted"] >= max(STATUS_PRECEDENCE.values())
+
+    def test_introduced_is_lowest(self):
+        assert STATUS_PRECEDENCE["introduced"] <= min(STATUS_PRECEDENCE.values())
+
+    def test_passed_lower_before_passed_upper(self):
+        assert STATUS_PRECEDENCE["passed_lower"] < STATUS_PRECEDENCE["passed_upper"]
+
+    def test_enrolled_before_enacted(self):
+        assert STATUS_PRECEDENCE["enrolled"] < STATUS_PRECEDENCE["enacted"]
+
+    def test_all_canonical_statuses_covered(self):
+        """Every status from normalize_bill_status has a precedence."""
+        canonical = {
+            "introduced", "in_committee", "passed_lower", "passed_upper",
+            "enrolled", "enacted", "vetoed", "failed", "withdrawn", "other",
+        }
+        for status in canonical:
+            assert status in STATUS_PRECEDENCE, f"Missing: {status}"
+
+    def test_best_status_from_action_list(self):
+        """Simulate scanning actions to find best status."""
+        action_texts = [
+            "Introduced in House",
+            "Referred to the Committee on Energy and Commerce",
+            "Passed House by voice vote",
+            "Received in the Senate",
+        ]
+        best = "introduced"
+        for text in action_texts:
+            s = normalize_bill_status(text)
+            if STATUS_PRECEDENCE.get(s, 0) > STATUS_PRECEDENCE.get(best, 0):
+                best = s
+        assert best == "passed_lower"
+
+
+class TestParseBillTypeNumber:
+    """Test parsing congress_bill_id into type and number."""
+
+    def test_hr_bill(self):
+        assert _parse_bill_type_number("hr1234-118") == ("hr", "1234")
+
+    def test_senate_bill(self):
+        assert _parse_bill_type_number("s567-117") == ("s", "567")
+
+    def test_joint_resolution(self):
+        assert _parse_bill_type_number("hjres42-118") == ("hjres", "42")
+
+    def test_concurrent_resolution(self):
+        assert _parse_bill_type_number("sconres10-110") == ("sconres", "10")

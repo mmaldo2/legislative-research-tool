@@ -13,7 +13,8 @@ from datetime import UTC, date, datetime
 
 import defusedxml.ElementTree as SafeET
 import httpx
-from sqlalchemy import func
+from sqlalchemy import func, select
+from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,6 +62,32 @@ CONGRESS_DATES: dict[int, tuple[str, str]] = {
 }
 
 
+# Status precedence for determining best status from full action history.
+# Higher value = more advanced in the legislative process.
+STATUS_PRECEDENCE: dict[str, int] = {
+    "introduced": 0,
+    "other": 0,
+    "in_committee": 1,
+    "failed": 1,
+    "withdrawn": 1,
+    "passed_lower": 2,
+    "passed_upper": 3,
+    "enrolled": 4,
+    "enacted": 5,
+    "vetoed": 5,
+}
+
+
+def _parse_bill_type_number(congress_bill_id: str) -> tuple[str, str]:
+    """Parse bill type and number from congress_bill_id (e.g., 'hr1234-118' -> ('hr', '1234'))."""
+    stem = congress_bill_id.rsplit("-", 1)[0]  # "hr1234"
+    # Split at the boundary between letters and digits
+    match = re.match(r"^([a-z]+)(\d+)$", stem)
+    if match:
+        return match.group(1), match.group(2)
+    return stem, ""
+
+
 class GovInfoIngester(BaseIngester):
     source_name = "govinfo"
 
@@ -69,13 +96,19 @@ class GovInfoIngester(BaseIngester):
         self.congress = congress
         self.client = httpx.AsyncClient(timeout=60.0)
 
-    async def ingest(self) -> None:
-        """Ingest federal bills from Congress.gov API + GovInfo."""
+    async def ingest(self, enrich: bool = True) -> None:
+        """Ingest federal bills from Congress.gov API + GovInfo.
+
+        If enrich=True (default), also fetches per-bill details (actions,
+        cosponsors) for bills missing action history.
+        """
         await self.start_run("full")
         try:
             await self._ensure_jurisdiction()
             await self._ensure_session()
             await self._fetch_bills_from_congress_api()
+            if enrich:
+                await self.enrich_bills()
             await self.finish_run("completed")
         except Exception as e:
             logger.error("GovInfo ingestion failed: %s", e)
@@ -504,6 +537,200 @@ class GovInfoIngester(BaseIngester):
             "classification": classification,
         }
         return person_dict, sponsorship_dict
+
+    # ------------------------------------------------------------------
+    # Per-bill detail enrichment (actions + cosponsors from detail API)
+    # ------------------------------------------------------------------
+
+    async def enrich_bills(self, batch_size: int = 50) -> None:
+        """Fetch per-bill details for bills missing action history.
+
+        This is a second pass after the list fetch. Bills that already have
+        actions in bill_actions are skipped (resumability).
+        """
+        if not settings.congress_api_key:
+            logger.warning("Cannot enrich without CONGRESS_API_KEY")
+            return
+
+        session_id = f"us-{self.congress}"
+
+        # Find bills needing enrichment: bills in this session with no actions
+        enriched_bill_ids = select(BillAction.bill_id).distinct()
+        stmt = (
+            select(Bill.id, Bill.congress_bill_id)
+            .where(Bill.session_id == session_id)
+            .where(Bill.congress_bill_id.is_not(None))
+            .where(~Bill.id.in_(enriched_bill_ids))
+        )
+        result = await self.session.execute(stmt)
+        bills_to_enrich = result.all()
+
+        total = len(bills_to_enrich)
+        if total == 0:
+            logger.info("All bills for Congress %d already enriched", self.congress)
+            return
+
+        logger.info("Enriching %d bills for Congress %d", total, self.congress)
+        enriched = 0
+
+        for i in range(0, total, batch_size):
+            batch = bills_to_enrich[i : i + batch_size]
+            for bill_id, congress_bill_id in batch:
+                bill_type, bill_number = _parse_bill_type_number(congress_bill_id)
+                if not bill_number:
+                    continue
+                await self._fetch_bill_actions(bill_id, bill_type, bill_number)
+                await self._fetch_bill_cosponsors(bill_id, bill_type, bill_number)
+                enriched += 1
+
+            await self.session.commit()
+            done = min(i + batch_size, total)
+            logger.info("Enriched %d/%d bills", done, total)
+
+        logger.info(
+            "Enrichment complete: %d bills enriched for Congress %d", enriched, self.congress
+        )
+
+    async def _fetch_bill_actions(
+        self, bill_id: str, bill_type: str, bill_number: str
+    ) -> None:
+        """Fetch full action history for a bill and update status."""
+        url = f"{CONGRESS_API_BASE}/bill/{self.congress}/{bill_type}/{bill_number}/actions"
+        params = {
+            "api_key": settings.congress_api_key,
+            "limit": 250,
+            "format": "json",
+        }
+
+        try:
+            resp = await self._rate_limited_get(url, params=params)
+        except httpx.HTTPError:
+            logger.warning("Failed to fetch actions for %s/%s", bill_type, bill_number)
+            return
+
+        data = resp.json()
+        actions = data.get("actions", [])
+        if not actions:
+            return
+
+        # Build action values and track best status
+        action_values = []
+        best_status = "introduced"
+        for i, action in enumerate(actions):
+            action_date_str = action.get("actionDate")
+            action_text = action.get("text", "")
+            if not action_date_str or not action_text:
+                continue
+            try:
+                action_date = date.fromisoformat(action_date_str)
+            except ValueError:
+                continue
+
+            action_values.append(
+                {
+                    "bill_id": bill_id,
+                    "action_date": action_date,
+                    "description": action_text,
+                    "action_order": i,
+                    "chamber": action.get("sourceSystem", {}).get("name", ""),
+                }
+            )
+
+            # Track highest-precedence status from all actions
+            action_status = normalize_bill_status(action_text)
+            if STATUS_PRECEDENCE.get(action_status, 0) > STATUS_PRECEDENCE.get(
+                best_status, 0
+            ):
+                best_status = action_status
+
+        # Bulk upsert actions
+        if action_values:
+            stmt = pg_insert(BillAction).values(action_values)
+            stmt = stmt.on_conflict_do_nothing(
+                index_elements=["bill_id", "action_date", "description"],
+            )
+            await self.session.execute(stmt)
+
+        # Update bill status from full action history
+        await self.session.execute(
+            sa_update(Bill).where(Bill.id == bill_id).values(status=best_status)
+        )
+
+    async def _fetch_bill_cosponsors(
+        self, bill_id: str, bill_type: str, bill_number: str
+    ) -> None:
+        """Fetch cosponsors from Congress.gov detail endpoint and bulk upsert."""
+        url = (
+            f"{CONGRESS_API_BASE}/bill/{self.congress}/{bill_type}/{bill_number}/cosponsors"
+        )
+        params = {
+            "api_key": settings.congress_api_key,
+            "limit": 250,
+            "format": "json",
+        }
+
+        try:
+            resp = await self._rate_limited_get(url, params=params)
+        except httpx.HTTPError:
+            logger.warning("Failed to fetch cosponsors for %s/%s", bill_type, bill_number)
+            return
+
+        data = resp.json()
+        cosponsors = data.get("cosponsors", [])
+        if not cosponsors:
+            return
+
+        person_values = []
+        sponsorship_values = []
+
+        for cosponsor in cosponsors:
+            bioguide = cosponsor.get("bioguideId", "")
+            first_name = cosponsor.get("firstName", "")
+            last_name = cosponsor.get("lastName", "")
+            full_name = cosponsor.get("fullName", "") or f"{first_name} {last_name}".strip()
+            party = cosponsor.get("party")
+
+            if not full_name:
+                continue
+
+            person_id = bioguide if bioguide else hashlib.sha256(
+                full_name.encode()
+            ).hexdigest()[:16]
+
+            person_values.append(
+                {
+                    "id": person_id,
+                    "name": full_name,
+                    "sort_name": last_name or full_name,
+                    "party": party,
+                    "bioguide_id": bioguide or None,
+                }
+            )
+            sponsorship_values.append(
+                {
+                    "bill_id": bill_id,
+                    "person_id": person_id,
+                    "classification": "cosponsor",
+                }
+            )
+
+        if person_values:
+            stmt = pg_insert(Person).values(person_values)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["id"],
+                set_={
+                    "name": stmt.excluded.name,
+                    "party": func.coalesce(stmt.excluded.party, Person.party),
+                },
+            )
+            await self.session.execute(stmt)
+
+        if sponsorship_values:
+            sp_stmt = pg_insert(Sponsorship).values(sponsorship_values)
+            sp_stmt = sp_stmt.on_conflict_do_nothing(
+                index_elements=["bill_id", "person_id", "classification"],
+            )
+            await self.session.execute(sp_stmt)
 
     async def fetch_bill_text(self, bill: Bill) -> BillText | None:
         """Fetch bill text from GovInfo for a specific bill."""

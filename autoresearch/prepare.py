@@ -109,7 +109,7 @@ def load_raw_data() -> pd.DataFrame:
           AND b.introduced_date IS NOT NULL
           AND b.status IS NOT NULL
           AND b.status != 'other'
-          AND b.classification @> ARRAY['bill']
+          AND b.classification @> ARRAY['bill']::varchar[]
     ),
     sponsor_features AS (
         SELECT
