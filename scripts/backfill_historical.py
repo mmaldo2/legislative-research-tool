@@ -28,7 +28,9 @@ async def backfill(start: int, end: int) -> None:
     """Run GovInfo ingestion for each congress in the range."""
     for congress in range(start, end + 1):
         logger.info("=" * 60)
-        logger.info("Starting backfill for Congress %d (%d of %d)", congress, congress - start + 1, end - start + 1)
+        progress = congress - start + 1
+        total = end - start + 1
+        logger.info("Starting backfill for Congress %d (%d of %d)", congress, progress, total)
         logger.info("=" * 60)
 
         try:
@@ -47,8 +49,12 @@ async def backfill(start: int, end: int) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Backfill historical federal bills")
-    parser.add_argument("--start", type=int, default=110, help="First congress to backfill (default: 110)")
-    parser.add_argument("--end", type=int, default=118, help="Last congress to backfill (default: 118)")
+    parser.add_argument(
+        "--start", type=int, default=110, help="First congress to backfill (default: 110)"
+    )
+    parser.add_argument(
+        "--end", type=int, default=118, help="Last congress to backfill (default: 118)"
+    )
     args = parser.parse_args()
 
     if args.start > args.end:
