@@ -472,11 +472,12 @@ class GovInfoIngester(BaseIngester):
                     }
                 )
 
-        # Determine status from latest action
+        # Determine status by scanning ALL actions for highest-precedence status
         status = "introduced"
-        if actions_data:
-            latest = actions_data[-1]["text"]
-            status = normalize_bill_status(latest)
+        for action in actions_data:
+            action_status = normalize_bill_status(action["text"])
+            if STATUS_PRECEDENCE.get(action_status, 0) > STATUS_PRECEDENCE.get(status, 0):
+                status = action_status
 
         # Derive introduced_date from XML element or first action
         introduced_date = None
