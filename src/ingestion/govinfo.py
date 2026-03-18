@@ -407,9 +407,12 @@ class GovInfoIngester(BaseIngester):
                         count += 1
                         if count % 100 == 0:
                             await self.session.commit()
-                            logger.info("Processed %d/%d %s XMLs", count, len(xml_names), bill_type)
+                            logger.info(
+                                "Processed %d/%d %s XMLs", count, len(xml_names), bill_type
+                            )
                     except Exception as e:
                         logger.warning("Failed to parse %s: %s", xml_name, e)
+                        await self.session.rollback()
 
                 await self.session.commit()
                 logger.info("Completed %s: %d bills from ZIP", bill_type, count)
