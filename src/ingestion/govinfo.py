@@ -292,7 +292,10 @@ class GovInfoIngester(BaseIngester):
         }
         if introduced_date is not None:
             update_set["introduced_date"] = introduced_date
-        stmt = stmt.on_conflict_do_update(index_elements=["id"], set_=update_set)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["jurisdiction_id", "session_id", "identifier"],
+            set_=update_set,
+        )
         result = await self.session.execute(stmt)
 
         # Track changes
@@ -432,7 +435,10 @@ class GovInfoIngester(BaseIngester):
         }
         if introduced_date is not None:
             update_set["introduced_date"] = introduced_date
-        stmt = stmt.on_conflict_do_update(index_elements=["id"], set_=update_set)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=["jurisdiction_id", "session_id", "identifier"],
+            set_=update_set,
+        )
         await self.session.execute(stmt)
 
         # Track changes
