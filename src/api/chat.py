@@ -89,6 +89,7 @@ async def _tool_search_bills(
                 "jurisdiction_id": bill.jurisdiction_id,
                 "status": bill.status,
                 "status_date": (str(bill.status_date) if bill.status_date else None),
+                "introduced_date": (str(bill.introduced_date) if bill.introduced_date else None),
                 "score": round(score, 4),
             }
         )
@@ -156,6 +157,7 @@ async def _tool_get_bill_detail(
         "jurisdiction_id": bill.jurisdiction_id,
         "status": bill.status,
         "status_date": str(bill.status_date) if bill.status_date else None,
+        "introduced_date": str(bill.introduced_date) if bill.introduced_date else None,
         "classification": bill.classification,
         "subject": bill.subject,
         "ai_summary": ai_summary,
