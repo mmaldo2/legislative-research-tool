@@ -602,12 +602,12 @@ class GovInfoIngester(BaseIngester):
             tasks = [_enrich_one(bid, cbid) for bid, cbid in batch]
             results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # Write to DB sequentially (shared session)
+            # Write to DB sequentially (shared session, requires await)
             for res in results:
                 if isinstance(res, Exception) or res is None:
                     continue
-                self._process_actions_data(res["bill_id"], res["actions"])
-                self._process_cosponsors_data(res["bill_id"], res["cosponsors"])
+                await self._process_actions_data(res["bill_id"], res["actions"])
+                await self._process_cosponsors_data(res["bill_id"], res["cosponsors"])
                 enriched += 1
 
             await self.session.commit()
@@ -644,8 +644,8 @@ class GovInfoIngester(BaseIngester):
             logger.warning("Failed to fetch cosponsors for %s/%s", bill_type, bill_number)
             return []
 
-    def _process_actions_data(self, bill_id: str, actions: list) -> None:
-        """Build action upserts and update bill status from action list (sync, no await)."""
+    async def _process_actions_data(self, bill_id: str, actions: list) -> None:
+        """Upsert actions and update bill status from action list."""
         if not actions:
             return
 
@@ -677,20 +677,19 @@ class GovInfoIngester(BaseIngester):
             ):
                 best_status = action_status
 
-        # Queue DB operations (will be flushed on next commit)
         if action_values:
             stmt = pg_insert(BillAction).values(action_values)
             stmt = stmt.on_conflict_do_nothing(
                 index_elements=["bill_id", "action_date", "description"],
             )
-            self.session.sync_session.execute(stmt)
+            await self.session.execute(stmt)
 
-        self.session.sync_session.execute(
+        await self.session.execute(
             sa_update(Bill).where(Bill.id == bill_id).values(status=best_status)
         )
 
-    def _process_cosponsors_data(self, bill_id: str, cosponsors: list) -> None:
-        """Build cosponsor upserts from JSON data (sync, no await)."""
+    async def _process_cosponsors_data(self, bill_id: str, cosponsors: list) -> None:
+        """Upsert cosponsor Person + Sponsorship records from JSON data."""
         if not cosponsors:
             return
 
@@ -737,14 +736,14 @@ class GovInfoIngester(BaseIngester):
                     "party": func.coalesce(stmt.excluded.party, Person.party),
                 },
             )
-            self.session.sync_session.execute(stmt)
+            await self.session.execute(stmt)
 
         if sponsorship_values:
             sp_stmt = pg_insert(Sponsorship).values(sponsorship_values)
             sp_stmt = sp_stmt.on_conflict_do_nothing(
                 index_elements=["bill_id", "person_id", "classification"],
             )
-            self.session.sync_session.execute(sp_stmt)
+            await self.session.execute(sp_stmt)
 
     async def fetch_bill_text(self, bill: Bill) -> BillText | None:
         """Fetch bill text from GovInfo for a specific bill."""
