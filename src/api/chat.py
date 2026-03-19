@@ -348,6 +348,21 @@ async def _tool_analyze_patterns(
     return json.dumps(output.model_dump())
 
 
+async def _tool_predict_bill_passage(
+    arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
+) -> str:
+    from src.prediction.service import is_model_loaded, predict_bill
+
+    if not is_model_loaded():
+        return json.dumps({"error": "Prediction model not currently loaded."})
+
+    bill_id = arguments.get("bill_id", "")
+    result = await predict_bill(db, bill_id)
+    if result is None:
+        return json.dumps({"error": f"Bill '{bill_id}' not found."})
+    return json.dumps(result)
+
+
 async def _tool_search_govinfo(
     arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
 ) -> str:
@@ -383,6 +398,7 @@ _TOOL_HANDLERS: dict[str, _ToolHandler] = {
     "analyze_version_diff": _tool_analyze_version_diff,
     "analyze_constitutional": _tool_analyze_constitutional,
     "analyze_patterns": _tool_analyze_patterns,
+    "predict_bill_passage": _tool_predict_bill_passage,
     "search_govinfo": _tool_search_govinfo,
     "get_govinfo_document": _tool_get_govinfo_document,
 }

@@ -23,6 +23,11 @@ severity-rated concerns with relevant Supreme Court precedents.
 - analyze_patterns: Detect cross-jurisdictional legislative patterns and model legislation by \
 comparing a bill against similar bills from other states. Identifies shared frameworks, common \
 provisions, and potential source organizations.
+- predict_bill_passage: Get the ML-predicted probability that a bill will clear committee based \
+on its current legislative activity, sponsors, and session timing. Returns a probability score, \
+key contributing features, and the historical base rate. Use this when users ask about a bill's \
+chances of passing or want a quantitative assessment. This is a statistical model prediction, \
+distinct from qualitative legislative analysis.
 - search_govinfo: Search the GovInfo API for official federal government documents including \
 bills, committee reports, hearings, Federal Register notices, and public laws. Returns document \
 metadata and download links from the U.S. Government Publishing Office.

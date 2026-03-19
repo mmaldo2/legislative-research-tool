@@ -1,5 +1,5 @@
 ---
-status: pending
+status: complete
 priority: p2
 issue_id: "124"
 tags: [code-review, prediction, agent-native, chat]
@@ -32,13 +32,14 @@ The chat agent has no tool to access bill predictions. Users can get predictions
 
 ## Acceptance Criteria
 
-- [ ] `predict_bill_passage` tool defined in tools.py
-- [ ] Handler registered in chat.py `_TOOL_HANDLERS`
-- [ ] System prompt describes the prediction tool and when to use it
-- [ ] Agent can answer "what's the probability this bill passes?"
+- [x] `predict_bill_passage` tool defined in tools.py
+- [x] Handler registered in chat.py `_TOOL_HANDLERS`
+- [x] System prompt describes the prediction tool and when to use it
+- [x] Agent can answer "what's the probability this bill passes?"
 
 ## Work Log
 
 | Date | Action | Notes |
 |------|--------|-------|
 | 2026-03-18 | Created | Agent-native reviewer — planned as next work item |
+| 2026-03-18 | Completed | Added tool schema, handler, system prompt entry |

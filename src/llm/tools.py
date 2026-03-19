@@ -160,6 +160,27 @@ RESEARCH_TOOLS = [
         },
     },
     {
+        "name": "predict_bill_passage",
+        "description": (
+            "Get the ML-predicted probability that a bill will clear committee, based on "
+            "its current legislative activity (actions, sponsors, session timing). Returns "
+            "a calibrated probability score, the top contributing features with their impact "
+            "direction, the model version, and the historical base rate for comparison. "
+            "Use this when users ask about a bill's chances of passing, want a quantitative "
+            "assessment, or ask for a prediction."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "bill_id": {
+                    "type": "string",
+                    "description": "The bill ID to predict passage for.",
+                },
+            },
+            "required": ["bill_id"],
+        },
+    },
+    {
         "name": "search_govinfo",
         "description": (
             "Search the GovInfo API for federal government documents including bills, "
