@@ -1,5 +1,7 @@
 """Pydantic schemas for bill outcome prediction responses."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 from src.schemas.common import MetaResponse
@@ -10,7 +12,7 @@ class PredictionFactor(BaseModel):
 
     feature: str
     value: float
-    impact: str  # "positive" or "negative"
+    impact: Literal["positive", "negative"]
 
 
 class PredictionResponse(BaseModel):

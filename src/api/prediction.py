@@ -1,17 +1,14 @@
 """Bill outcome prediction endpoint."""
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.deps import get_session
+from src.api.deps import get_session, limiter
 from src.prediction.schemas import PredictionFactor, PredictionResponse
 from src.prediction.service import is_model_loaded, predict_bill
 from src.schemas.common import MetaResponse
 
 router = APIRouter()
-limiter = Limiter(key_func=get_remote_address)
 
 
 @router.get("/bills/{bill_id}/prediction", response_model=PredictionResponse)
