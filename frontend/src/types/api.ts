@@ -336,6 +336,23 @@ export interface PredictionOutput {
   summary: string;
 }
 
+// --- ML Prediction (GET /bills/{id}/prediction) ---
+
+export interface MLPredictionFactor {
+  feature: string;
+  value: number;
+  impact: "positive" | "negative";
+}
+
+export interface MLPredictionResponse {
+  bill_id: string;
+  committee_passage_probability: number;
+  model_version: string;
+  key_factors: MLPredictionFactor[];
+  base_rate: number;
+  meta: MetaResponse;
+}
+
 // --- Reports ---
 
 export interface ReportSection {

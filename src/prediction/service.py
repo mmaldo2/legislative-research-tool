@@ -4,9 +4,12 @@ Loads the promoted stacking ensemble model and scores individual bills
 based on their current features (actions, sponsors, session timing).
 """
 
+import hashlib
 import json
 import logging
+import math
 import pickle
+import re
 from pathlib import Path
 
 import lightgbm as lgb
@@ -26,6 +29,50 @@ _meta_scaler = None
 _metadata: dict = {}
 _model_loaded = False
 
+# Canonical feature names — must match autoresearch/train.py build_features() exactly
+FEATURE_NAMES = (
+    "cosponsor_count",
+    "log_cosponsor_count",
+    "bipartisan_cosponsor_count",
+    "action_count",
+    "log_action_count",
+    "days_active",
+    "actions_per_day",
+    "session_position",
+    "days_remaining",
+    "congress_number",
+    "is_house_bill",
+    "is_senate_bill",
+    "title_length",
+    "title_word_count",
+    "passage_keyword_count",
+    "title_has_authoriz",
+    "early_bill_x_actions",
+    "action_x_cosponsor",
+)
+
+
+def _verify_hash(path: Path, expected_hash: str) -> bool:
+    """Verify SHA-256 hash of a file against expected value."""
+    sha = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha.update(chunk)
+    actual = sha.hexdigest()
+    if actual != expected_hash:
+        logger.error("Hash mismatch for %s: expected %s, got %s", path, expected_hash, actual)
+        return False
+    return True
+
+
+def _load_pickle_verified(path: Path, hashes: dict) -> object:
+    """Load a pickle file after verifying its SHA-256 hash."""
+    expected = hashes.get(path.name)
+    if expected and not _verify_hash(path, expected):
+        raise ValueError(f"Integrity check failed for {path.name}")
+    with open(path, "rb") as f:
+        return pickle.load(f)  # noqa: S301
+
 
 def _load_models() -> bool:
     """Load model artifacts from disk. Returns True if successful."""
@@ -40,6 +87,8 @@ def _load_models() -> bool:
         with open(metadata_path) as f:
             _metadata = json.load(f)
 
+        file_hashes = _metadata.get("file_hashes", {})
+
         # Load LightGBM fold models
         lgbm_dir = MODELS_DIR / "lgbm_folds"
         _lgbm_models = []
@@ -47,18 +96,25 @@ def _load_models() -> bool:
             model = lgb.Booster(model_file=str(lgbm_dir / f"fold_{i}.txt"))
             _lgbm_models.append(model)
 
-        # Load RandomForest fold models
+        # Load RandomForest fold models (with hash verification)
         rf_dir = MODELS_DIR / "rf_folds"
         _rf_models = []
         for i in range(_metadata.get("n_folds", 7)):
-            with open(rf_dir / f"fold_{i}.pkl", "rb") as f:
-                _rf_models.append(pickle.load(f))  # noqa: S301
+            _rf_models.append(_load_pickle_verified(rf_dir / f"fold_{i}.pkl", file_hashes))
 
-        # Load meta-learner and scaler
-        with open(MODELS_DIR / "meta_lr.pkl", "rb") as f:
-            _meta_lr = pickle.load(f)  # noqa: S301
-        with open(MODELS_DIR / "meta_scaler.pkl", "rb") as f:
-            _meta_scaler = pickle.load(f)  # noqa: S301
+        # Load meta-learner and scaler (with hash verification)
+        _meta_lr = _load_pickle_verified(MODELS_DIR / "meta_lr.pkl", file_hashes)
+        _meta_scaler = _load_pickle_verified(MODELS_DIR / "meta_scaler.pkl", file_hashes)
+
+        # Validate feature names match expected set
+        expected_features = _metadata.get("feature_names", [])
+        if expected_features and expected_features != list(FEATURE_NAMES):
+            logger.error(
+                "Feature name mismatch: model expects %s, service has %s",
+                expected_features,
+                list(FEATURE_NAMES),
+            )
+            return False
 
         _model_loaded = True
         logger.info(
@@ -176,8 +232,6 @@ async def predict_bill(session: AsyncSession, bill_id: str) -> dict | None:
 
 def _build_single_bill_features(row) -> tuple[np.ndarray, list[str]]:
     """Build the 18-feature vector for a single bill from a DB row."""
-    import math
-
     cosponsor_count = float(row["cosponsor_count"])
     bipartisan_count = float(row["bipartisan_cosponsor_count"])
     action_count = float(row["action_count"])
@@ -206,18 +260,14 @@ def _build_single_bill_features(row) -> tuple[np.ndarray, list[str]]:
 
     actions_per_day = action_count / max(days_active, 1)
 
-    # Congress number from session_id
+    # Congress number from session_id — must match train.py regex
     session_id = row["session_id"] or ""
-    try:
-        congress_number = float(session_id.split("-")[1]) if "-" in session_id else 0
-    except (IndexError, ValueError):
-        congress_number = 0
+    m = re.search(r"us-(\d+)", session_id)
+    congress_number = float(m.group(1)) if m else 0.0
 
     # Bill type
     identifier = (row["identifier"] or "").upper()
     is_house_bill = 1.0 if identifier.startswith("HR") else 0.0
-    import re
-
     is_senate_bill = 1.0 if re.match(r"^S\d", identifier) else 0.0
 
     # Title features
@@ -237,7 +287,7 @@ def _build_single_bill_features(row) -> tuple[np.ndarray, list[str]]:
     early_bill_x_actions = (1 - session_position) * log_action_count
     action_x_cosponsor = log_action_count * log_cosponsor_count
 
-    # Build vector in same order as train.py
+    # Build vector in same order as FEATURE_NAMES constant
     feature_values = [
         cosponsor_count,
         log_cosponsor_count,
@@ -259,28 +309,7 @@ def _build_single_bill_features(row) -> tuple[np.ndarray, list[str]]:
         action_x_cosponsor,
     ]
 
-    feature_names = [
-        "cosponsor_count",
-        "log_cosponsor_count",
-        "bipartisan_cosponsor_count",
-        "action_count",
-        "log_action_count",
-        "days_active",
-        "actions_per_day",
-        "session_position",
-        "days_remaining",
-        "congress_number",
-        "is_house_bill",
-        "is_senate_bill",
-        "title_length",
-        "title_word_count",
-        "passage_keyword_count",
-        "title_has_authoriz",
-        "early_bill_x_actions",
-        "action_x_cosponsor",
-    ]
-
-    return np.array([feature_values], dtype=np.float32), feature_names
+    return np.array([feature_values], dtype=np.float32), list(FEATURE_NAMES)
 
 
 def _predict(features: np.ndarray, feature_names: list[str]) -> tuple[float, list]:
@@ -289,11 +318,11 @@ def _predict(features: np.ndarray, feature_names: list[str]) -> tuple[float, lis
     lgbm_preds = np.mean([m.predict(features)[0] for m in _lgbm_models])
     rf_preds = np.mean([m.predict_proba(features)[0, 1] for m in _rf_models])
 
-    # Meta-feature indices from metadata
-    idx = _metadata.get("meta_feature_indices", {})
-    action_idx = idx.get("log_action_count", 4)
-    cosponsor_idx = idx.get("log_cosponsor_count", 1)
-    interact_idx = idx.get("early_bill_x_actions", 16)
+    # Meta-feature indices from metadata (fail loudly if missing)
+    idx = _metadata["meta_feature_indices"]
+    action_idx = idx["log_action_count"]
+    cosponsor_idx = idx["log_cosponsor_count"]
+    interact_idx = idx["early_bill_x_actions"]
 
     # Layer 2: Meta-learner
     meta = np.array(
@@ -309,16 +338,15 @@ def _predict(features: np.ndarray, feature_names: list[str]) -> tuple[float, lis
     meta_scaled = _meta_scaler.transform(meta)
     probability = _meta_lr.predict_proba(meta_scaled)[0, 1]
 
-    # Feature contributions (approximate via feature values * direction)
+    # Feature contributions via LightGBM SHAP (pred_contrib=True), averaged across folds.
+    # Each fold returns shape (1, n_features+1) where last column is the base value.
+    lgbm_contribs = np.mean(
+        [m.predict(features, pred_contrib=True)[0, :-1] for m in _lgbm_models],
+        axis=0,
+    )
+
     contributions = []
     for i, fname in enumerate(feature_names):
-        val = features[0, i]
-        # Positive contribution if feature value is above average and correlated with passage
-        contrib = val * (1 if fname in (
-            "action_count", "log_action_count", "cosponsor_count",
-            "bipartisan_cosponsor_count", "days_active", "early_bill_x_actions",
-            "passage_keyword_count", "title_has_authoriz",
-        ) else -0.1)
-        contributions.append((fname, val, contrib))
+        contributions.append((fname, features[0, i], float(lgbm_contribs[i])))
 
     return probability, contributions

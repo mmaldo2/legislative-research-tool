@@ -20,6 +20,7 @@ import type {
   HealthResponse,
   JurisdictionListResponse,
   JurisdictionStatsResponse,
+  MLPredictionResponse,
   PatternDetectionOutput,
   PersonListResponse,
   PersonResponse,
@@ -346,6 +347,15 @@ export async function predictOutcome(
     body: JSON.stringify({ bill_id: billId }),
     signal,
   });
+}
+
+// --- ML Prediction (fast, model-based) ---
+
+export async function getBillPrediction(
+  billId: string,
+  signal?: AbortSignal,
+): Promise<MLPredictionResponse> {
+  return fetchApi<MLPredictionResponse>(`/bills/${billId}/prediction`, { signal });
 }
 
 // --- Reports ---

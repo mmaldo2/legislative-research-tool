@@ -7,6 +7,7 @@ on all available training data and saves artifacts to src/prediction/models/.
 Usage: cd autoresearch && python promote.py
 """
 
+import hashlib
 import json
 import pickle
 from datetime import datetime
@@ -22,7 +23,7 @@ from sklearn.preprocessing import StandardScaler
 from prepare import evaluate, load_raw_data, split_data
 from train import build_features
 
-MODELS_DIR = Path("../src/prediction/models")
+MODELS_DIR = Path(__file__).resolve().parent.parent / "src" / "prediction" / "models"
 N_FOLDS = 7
 
 
@@ -33,7 +34,9 @@ def promote():
     train_df, val_df, test_df = split_data(df)
 
     # Train on train+val combined for production
-    combined_df = __import__("pandas").concat([train_df, val_df])
+    import pandas as pd
+
+    combined_df = pd.concat([train_df, val_df])
     X, y, feature_names = build_features(combined_df)
     print(f"Training on {len(X)} bills, {y.sum():.0f} positives ({y.mean()*100:.1f}%)")
 
@@ -145,27 +148,38 @@ def promote():
     # ---- Save artifacts ----
     print(f"\nSaving to {MODELS_DIR}/...")
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    file_hashes: dict[str, str] = {}
 
-    # LightGBM models
+    def _sha256(path: Path) -> str:
+        sha = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(8192), b""):
+                sha.update(chunk)
+        return sha.hexdigest()
+
+    # LightGBM models (text format — no hash needed for security)
     lgbm_dir = MODELS_DIR / "lgbm_folds"
     lgbm_dir.mkdir(exist_ok=True)
     for i, model in enumerate(lgbm_models):
         model.save_model(str(lgbm_dir / f"fold_{i}.txt"))
 
-    # RandomForest models
+    # RandomForest models (pickle — compute integrity hashes)
     rf_dir = MODELS_DIR / "rf_folds"
     rf_dir.mkdir(exist_ok=True)
     for i, model in enumerate(rf_models):
-        with open(rf_dir / f"fold_{i}.pkl", "wb") as f:
+        pkl_path = rf_dir / f"fold_{i}.pkl"
+        with open(pkl_path, "wb") as f:
             pickle.dump(model, f)
+        file_hashes[pkl_path.name] = _sha256(pkl_path)
 
-    # Meta-learner + scaler
-    with open(MODELS_DIR / "meta_lr.pkl", "wb") as f:
-        pickle.dump(lr, f)
-    with open(MODELS_DIR / "meta_scaler.pkl", "wb") as f:
-        pickle.dump(scaler, f)
+    # Meta-learner + scaler (pickle — compute integrity hashes)
+    for name, obj in [("meta_lr.pkl", lr), ("meta_scaler.pkl", scaler)]:
+        pkl_path = MODELS_DIR / name
+        with open(pkl_path, "wb") as f:
+            pickle.dump(obj, f)
+        file_hashes[name] = _sha256(pkl_path)
 
-    # Metadata
+    # Metadata (includes file hashes for integrity verification on load)
     metadata = {
         "model_version": datetime.now().strftime("%Y-%m-%d"),
         "training_date": datetime.now().isoformat(),
@@ -180,6 +194,7 @@ def promote():
         "positive_rate": float(y.mean()),
         "test_auroc": test_metrics.get("auroc"),
         "test_brier": test_metrics.get("brier_score"),
+        "file_hashes": file_hashes,
     }
     with open(MODELS_DIR / "metadata.json", "w") as f:
         json.dump(metadata, f, indent=2)
