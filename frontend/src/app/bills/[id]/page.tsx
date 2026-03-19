@@ -17,6 +17,7 @@ import { ConstitutionalTab } from "./constitutional-tab";
 import { PatternsTab } from "./patterns-tab";
 import { DiffusionTab } from "./diffusion-tab";
 import { PredictionTab } from "./prediction-tab";
+import { MLPredictionBadge } from "./ml-prediction-badge";
 import { HearingsTab } from "./hearings-tab";
 import { SaveToCollection } from "@/components/save-to-collection";
 
@@ -71,6 +72,7 @@ export default async function BillDetailPage({
               as of {bill.status_date}
             </span>
           )}
+          <MLPredictionBadge billId={id} />
         </div>
         <div className="flex items-start gap-3">
           <h1 className="flex-1 text-2xl font-bold leading-tight">{bill.title}</h1>
