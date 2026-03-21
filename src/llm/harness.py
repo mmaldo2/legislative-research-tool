@@ -22,6 +22,9 @@ from src.llm.prompts import (
     compare_v1,
     constitutional_v1,
     pattern_detect_v1,
+    policy_outline_v1,
+    policy_rewrite_v1,
+    policy_section_draft_v1,
     predict_v1,
     report_v1,
     summarize_v1,
@@ -39,6 +42,11 @@ from src.schemas.analysis import (
     VersionDiffOutput,
 )
 from src.schemas.compare import BillComparisonOutput
+from src.schemas.policy_workspace import (
+    PolicyOutlineOutput,
+    PolicyRewriteOutput,
+    PolicySectionDraftOutput,
+)
 from src.schemas.trend import TrendResponse, TrendSummaryResponse, TrendTopicResponse
 
 logger = logging.getLogger(__name__)
@@ -530,6 +538,147 @@ class LLMHarness:
             skip_store=True,
         )
 
+    async def generate_policy_outline(
+        self,
+        workspace_id: str,
+        workspace_title: str,
+        target_jurisdiction: str,
+        drafting_template: str,
+        goal_prompt: str | None,
+        precedents_text: str,
+        precedent_count: int,
+    ) -> PolicyOutlineOutput:
+        """Generate a structured policy outline for a drafting workspace."""
+        return await self._run_analysis(
+            bill_id=f"policy-workspace:{workspace_id}",
+            analysis_type="policy_outline",
+            prompt_version=policy_outline_v1.PROMPT_VERSION,
+            model=settings.summary_model,
+            c_hash=self.content_hash(
+                (
+                    f"{workspace_id}:{target_jurisdiction}:{drafting_template}:"
+                    f"{goal_prompt or ''}:{precedents_text[:10000]}"
+                ),
+                policy_outline_v1.PROMPT_VERSION,
+            ),
+            system_prompt=policy_outline_v1.SYSTEM_PROMPT,
+            user_prompt=policy_outline_v1.USER_PROMPT_TEMPLATE.format(
+                workspace_title=workspace_title,
+                target_jurisdiction=target_jurisdiction,
+                drafting_template=drafting_template,
+                goal_prompt=goal_prompt or "None provided",
+                precedent_count=precedent_count,
+                precedents_text=precedents_text[:MAX_SINGLE_TEXT_CHARS],
+            ),
+            max_tokens=4096,
+            output_type=PolicyOutlineOutput,
+            fallback_fn=lambda text: PolicyOutlineOutput(
+                sections=[],
+                drafting_notes=[text or "Unable to generate a policy outline."],
+                confidence=0.0,
+            ),
+            cost_label="policy_outline",
+            skip_store=True,
+        )
+
+    async def draft_policy_section(
+        self,
+        workspace_id: str,
+        section_id: str,
+        workspace_title: str,
+        target_jurisdiction: str,
+        drafting_template: str,
+        goal_prompt: str | None,
+        section_heading: str,
+        section_purpose: str,
+        other_sections_summary: str,
+        precedents_text: str,
+        instruction_text: str | None,
+    ) -> PolicySectionDraftOutput:
+        """Draft full statutory text for a single section."""
+        extra_instruction = (
+            f"Additional instruction: {instruction_text}" if instruction_text else ""
+        )
+        return await self._run_analysis(
+            bill_id=f"policy-workspace:{workspace_id}",
+            analysis_type="policy_section_draft",
+            prompt_version=policy_section_draft_v1.PROMPT_VERSION,
+            model=settings.summary_model,
+            c_hash=self.content_hash(
+                (
+                    f"{workspace_id}:{section_id}:{section_heading}:"
+                    f"{instruction_text or ''}:{precedents_text[:5000]}"
+                ),
+                policy_section_draft_v1.PROMPT_VERSION,
+            ),
+            system_prompt=policy_section_draft_v1.SYSTEM_PROMPT,
+            user_prompt=policy_section_draft_v1.USER_PROMPT_TEMPLATE.format(
+                workspace_title=workspace_title,
+                target_jurisdiction=target_jurisdiction,
+                drafting_template=drafting_template,
+                goal_prompt=goal_prompt or "None provided",
+                section_heading=section_heading,
+                section_purpose=section_purpose,
+                other_sections_summary=other_sections_summary or "None",
+                precedents_text=precedents_text[:MAX_SINGLE_TEXT_CHARS],
+                instruction_text=extra_instruction,
+            ),
+            max_tokens=4096,
+            output_type=PolicySectionDraftOutput,
+            fallback_fn=lambda text: PolicySectionDraftOutput(
+                content_markdown=text or "Unable to draft this section.",
+            ),
+            cost_label="policy_section_draft",
+            skip_store=True,
+        )
+
+    async def rewrite_policy_section(
+        self,
+        workspace_id: str,
+        section_id: str,
+        action_type: str,
+        workspace_title: str,
+        target_jurisdiction: str,
+        section_heading: str,
+        current_text: str,
+        selected_text: str | None,
+        instruction_text: str | None,
+        precedents_text: str,
+    ) -> PolicyRewriteOutput:
+        """Rewrite, tighten, or harmonize a section or selection."""
+        selected_block = f"Selected text to revise:\n{selected_text}" if selected_text else ""
+        return await self._run_analysis(
+            bill_id=f"policy-workspace:{workspace_id}",
+            analysis_type="policy_rewrite",
+            prompt_version=policy_rewrite_v1.PROMPT_VERSION,
+            model=settings.summary_model,
+            c_hash=self.content_hash(
+                (
+                    f"{workspace_id}:{section_id}:{action_type}:"
+                    f"{instruction_text or ''}:{current_text[:5000]}"
+                ),
+                policy_rewrite_v1.PROMPT_VERSION,
+            ),
+            system_prompt=policy_rewrite_v1.SYSTEM_PROMPT,
+            user_prompt=policy_rewrite_v1.USER_PROMPT_TEMPLATE.format(
+                action_type=action_type,
+                workspace_title=workspace_title,
+                target_jurisdiction=target_jurisdiction,
+                section_heading=section_heading,
+                current_text=current_text[:MAX_SINGLE_TEXT_CHARS],
+                selected_text_block=selected_block,
+                instruction_text=instruction_text or "Apply the requested change.",
+                precedents_text=precedents_text[:MAX_PAIRED_TEXT_CHARS],
+            ),
+            max_tokens=4096,
+            output_type=PolicyRewriteOutput,
+            fallback_fn=lambda text: PolicyRewriteOutput(
+                content_markdown=text or "Unable to revise this section.",
+            ),
+            cost_label="policy_rewrite",
+            skip_store=True,
+        )
+
     async def generate_trend_narrative(
         self,
         bills_data: TrendResponse,
@@ -548,12 +697,10 @@ class LLMHarness:
             return val[:100].replace("\n", " ").replace("\r", " ")
 
         bills_text = "\n".join(
-            f"  {p.period} | {_safe_dim(p.dimension)}: {p.count}"
-            for p in bills_data.data[:50]
+            f"  {p.period} | {_safe_dim(p.dimension)}: {p.count}" for p in bills_data.data[:50]
         )
         actions_text = "\n".join(
-            f"  {p.period} | {_safe_dim(p.dimension)}: {p.count}"
-            for p in actions_data.data[:50]
+            f"  {p.period} | {_safe_dim(p.dimension)}: {p.count}" for p in actions_data.data[:50]
         )
         topics_text = "\n".join(
             f"  {p.period} | {_safe_dim(p.dimension)}: {p.count} ({p.share_pct}%)"

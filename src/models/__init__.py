@@ -14,6 +14,13 @@ from src.models.ingestion_run import IngestionRun
 from src.models.jurisdiction import Jurisdiction
 from src.models.organization import Organization
 from src.models.person import Person
+from src.models.policy_workspace import (
+    PolicyGeneration,
+    PolicySection,
+    PolicySectionRevision,
+    PolicyWorkspace,
+    PolicyWorkspacePrecedent,
+)
 from src.models.regulatory_document import RegulatoryDocument
 from src.models.saved_search import SavedSearch
 from src.models.session import LegislativeSession
@@ -33,6 +40,11 @@ __all__ = [
     "BillText",
     "BillAction",
     "Person",
+    "PolicyWorkspace",
+    "PolicyWorkspacePrecedent",
+    "PolicySection",
+    "PolicyGeneration",
+    "PolicySectionRevision",
     "Sponsorship",
     "VoteEvent",
     "VoteRecord",

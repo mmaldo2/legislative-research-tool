@@ -456,6 +456,101 @@ export interface CollectionListResponse {
   meta: MetaResponse;
 }
 
+// --- Policy Workspaces ---
+
+export interface PolicySectionResponse {
+  id: string;
+  section_key: string;
+  heading: string;
+  purpose: string | null;
+  position: number;
+  content_markdown: string;
+  status: string;
+  provenance: PolicySectionSourceResponse[];
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface PolicySectionSourceResponse {
+  bill_id: string;
+  identifier: string;
+  title: string;
+  jurisdiction_id: string;
+  note: string | null;
+}
+
+export interface PolicyWorkspacePrecedentResponse {
+  id: number;
+  bill_id: string;
+  position: number;
+  added_at: string | null;
+  identifier: string;
+  title: string;
+  jurisdiction_id: string;
+  status: string | null;
+}
+
+export interface PolicyWorkspaceResponse {
+  id: string;
+  title: string;
+  target_jurisdiction_id: string;
+  drafting_template: string;
+  goal_prompt: string | null;
+  status: string;
+  precedent_count: number;
+  section_count: number;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface PolicyWorkspaceDetailResponse {
+  id: string;
+  title: string;
+  target_jurisdiction_id: string;
+  drafting_template: string;
+  goal_prompt: string | null;
+  status: string;
+  precedents: PolicyWorkspacePrecedentResponse[];
+  sections: PolicySectionResponse[];
+  outline_drafting_notes: string[];
+  outline_confidence: number | null;
+  outline_generated_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+export interface PolicyWorkspaceListResponse {
+  data: PolicyWorkspaceResponse[];
+  meta: MetaResponse;
+}
+
+export interface PolicyGenerationResponse {
+  id: string;
+  workspace_id: string;
+  section_id: string | null;
+  action_type: string;
+  instruction_text: string | null;
+  selected_text: string | null;
+  output_markdown: string;
+  rationale: string;
+  provenance: PolicySectionSourceResponse[];
+  accepted: boolean;
+  created_at: string | null;
+}
+
+export interface PolicyRevisionResponse {
+  id: string;
+  section_id: string;
+  generation_id: string | null;
+  change_source: string;
+  content_markdown: string;
+  created_at: string | null;
+}
+
+export interface PolicyHistoryResponse {
+  revisions: PolicyRevisionResponse[];
+}
+
 // --- Chat ---
 
 export interface ToolCallInfo {

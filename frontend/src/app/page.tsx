@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Search, Building2, Users, Scale } from "lucide-react";
+import { Search, Building2, Users, Scale, FilePenLine } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -13,28 +13,28 @@ export default function HomePage() {
           Legislative Research Tool
         </h1>
         <p className="mt-4 max-w-2xl text-lg text-muted-foreground">
-          AI-native legislative research platform covering federal and 50-state
-          legislation. Semantic search, structured summaries, and
-          cross-jurisdiction analysis for policy researchers.
+          AI-native legislative research and drafting platform covering federal and 50-state
+          legislation. Search, analyze, and turn precedent bills into jurisdiction-aware model
+          legislation inside Composer.
         </p>
         <div className="mt-8 flex gap-3">
           <Button asChild size="lg">
-            <Link href="/search">
-              <Search className="mr-2 h-4 w-4" />
-              Search Bills
+            <Link href="/composer">
+              <FilePenLine className="mr-2 h-4 w-4" />
+              Open Composer
             </Link>
           </Button>
           <Button asChild variant="outline" size="lg">
-            <Link href="/jurisdictions">
-              <Building2 className="mr-2 h-4 w-4" />
-              Browse Jurisdictions
+            <Link href="/search">
+              <Search className="mr-2 h-4 w-4" />
+              Search Bills
             </Link>
           </Button>
         </div>
       </div>
 
       {/* Feature cards */}
-      <div className="mt-20 grid gap-6 sm:grid-cols-3">
+      <div className="mt-20 grid gap-6 sm:grid-cols-2 xl:grid-cols-4">
         <Card>
           <CardHeader>
             <Search className="mb-2 h-8 w-8 text-primary" />
@@ -42,6 +42,16 @@ export default function HomePage() {
             <CardDescription>
               Keyword + semantic search powered by BM25 and Voyage-law-2
               embeddings with Reciprocal Rank Fusion.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader>
+            <FilePenLine className="mb-2 h-8 w-8 text-primary" />
+            <CardTitle>Policy Composer</CardTitle>
+            <CardDescription>
+              Build jurisdiction-aware drafting workspaces, collect precedent bills, and prepare
+              outline-driven model legislation in one place.
             </CardDescription>
           </CardHeader>
         </Card>

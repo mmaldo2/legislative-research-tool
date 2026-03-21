@@ -36,7 +36,7 @@ pr: "https://github.com/mmaldo2/legislative-research-tool/pull/3"
 related_issues:
   - "PR #2: P1 critical security fixes (7 findings)"
   - "PR #1: Phase 0 foundation"
-  - "todos/016-021: P3 nice-to-have findings (pending)"
+  - "todos/archive/016-021: historical P3 nice-to-have findings"
 ---
 
 # Resolution of 8 P2 Code Review Findings
@@ -261,4 +261,4 @@ To prevent recurrence of these patterns:
 - **PR #2**: P1 critical security fixes (authentication, CORS, rate limiting, SQL injection, race conditions)
 - **PR #1**: Phase 0 foundation (models, ingestion, LLM harness)
 - **Plan**: `docs/plans/2026-02-28-feat-ai-native-legislative-research-tool-mvp-plan.md`
-- **Remaining**: 6 P3 nice-to-have findings in `todos/016-021` (dead code, scheduler boilerplate, field reuse, upsert bug, f-strings in logging, duplicate get_session)
+- **Historical**: 6 P3 nice-to-have findings archived under `todos/archive/016-021` (dead code, scheduler boilerplate, field reuse, upsert bug, f-strings in logging, duplicate get_session)
