@@ -2,7 +2,7 @@
 date: 2026-03-21
 topic: Cursor for Public Policy — Composer V1 + Strategic Direction
 scope-mode: selective-expand
-status: approved
+status: completed
 ---
 
 # Scope: Cursor for Public Policy
