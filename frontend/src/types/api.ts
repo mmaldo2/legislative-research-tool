@@ -524,6 +524,33 @@ export interface PolicyWorkspaceListResponse {
   meta: MetaResponse;
 }
 
+export interface PolicyGenerationResponse {
+  id: string;
+  workspace_id: string;
+  section_id: string | null;
+  action_type: string;
+  instruction_text: string | null;
+  selected_text: string | null;
+  output_markdown: string;
+  rationale: string;
+  provenance: PolicySectionSourceResponse[];
+  accepted: boolean;
+  created_at: string | null;
+}
+
+export interface PolicyRevisionResponse {
+  id: string;
+  section_id: string;
+  generation_id: string | null;
+  change_source: string;
+  content_markdown: string;
+  created_at: string | null;
+}
+
+export interface PolicyHistoryResponse {
+  revisions: PolicyRevisionResponse[];
+}
+
 // --- Chat ---
 
 export interface ToolCallInfo {

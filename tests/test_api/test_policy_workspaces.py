@@ -425,3 +425,169 @@ class TestPolicyWorkspaceEndpoints:
         app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="free")
         response = client.get("/api/v1/policy-workspaces", headers={"X-Client-Id": "client-1"})
         assert response.status_code == 403
+
+    def test_compose_section_returns_pending_generation(self, client):
+        mock_session = AsyncMock()
+        app.dependency_overrides[get_session] = _override_session(mock_session)
+        app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="pro")
+        app.dependency_overrides[get_llm_harness] = lambda: AsyncMock()
+
+        gen = SimpleNamespace(
+            id="gen-1",
+            workspace_id="workspace123",
+            section_id="section-1",
+            action_type="draft_section",
+            instruction_text=None,
+            selected_text=None,
+            output_payload={
+                "content_markdown": "Section 1. Definitions.\n(a) ...",
+                "rationale": "Based on precedent AB 101.",
+            },
+            provenance={
+                "precedent_bill_ids": ["bill-1"],
+                "sources": [
+                    {
+                        "bill_id": "bill-1",
+                        "identifier": "AB 101",
+                        "title": "Privacy Baseline Act",
+                        "jurisdiction_id": "us-ca",
+                        "note": "Definition section used as foundation.",
+                    }
+                ],
+            },
+            accepted_revision_id=None,
+            created_at=datetime(2026, 3, 20),
+        )
+
+        with patch(
+            "src.api.policy_workspaces.compose_section",
+            new_callable=AsyncMock,
+        ) as mock_compose:
+            mock_compose.return_value = gen
+            response = client.post(
+                "/api/v1/policy-workspaces/workspace123/sections/section-1/compose",
+                headers={"X-Client-Id": "client-1"},
+                json={"action_type": "draft_section"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == "gen-1"
+        assert data["action_type"] == "draft_section"
+        assert data["output_markdown"] == "Section 1. Definitions.\n(a) ..."
+        assert data["accepted"] is False
+        assert data["provenance"][0]["identifier"] == "AB 101"
+
+    def test_compose_invalid_action_returns_400(self, client):
+        mock_session = AsyncMock()
+        app.dependency_overrides[get_session] = _override_session(mock_session)
+        app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="pro")
+        app.dependency_overrides[get_llm_harness] = lambda: AsyncMock()
+
+        with patch(
+            "src.api.policy_workspaces.compose_section",
+            new_callable=AsyncMock,
+        ) as mock_compose:
+            mock_compose.side_effect = ValueError("Invalid action type: bogus")
+            response = client.post(
+                "/api/v1/policy-workspaces/workspace123/sections/section-1/compose",
+                headers={"X-Client-Id": "client-1"},
+                json={"action_type": "bogus"},
+            )
+
+        assert response.status_code == 400
+
+    def test_accept_generation_returns_updated_section(self, client):
+        mock_session = AsyncMock()
+        app.dependency_overrides[get_session] = _override_session(mock_session)
+        app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="pro")
+
+        section = _mock_section(
+            status="drafted",
+            content_markdown="Section 1. Definitions.\n(a) ...",
+        )
+        workspace = _mock_workspace(
+            status="drafting",
+            sections=[section],
+            generations=[_mock_generation()],
+        )
+
+        with (
+            patch(
+                "src.api.policy_workspaces.accept_generation",
+                new_callable=AsyncMock,
+            ) as mock_accept,
+            patch(
+                "src.api.policy_workspaces.get_workspace_detail",
+                new_callable=AsyncMock,
+            ) as mock_detail,
+        ):
+            mock_accept.return_value = SimpleNamespace(
+                id="section-1",
+                section_key="definitions",
+                heading="Definitions",
+                purpose="Define key terms.",
+                position=0,
+                content_markdown="Section 1. Definitions.\n(a) ...",
+                status="drafted",
+                created_at=datetime(2026, 3, 20),
+                updated_at=datetime(2026, 3, 20),
+            )
+            mock_detail.return_value = workspace
+
+            response = client.post(
+                "/api/v1/policy-workspaces/workspace123/generations/gen-1/accept",
+                headers={"X-Client-Id": "client-1"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "drafted"
+
+    def test_accept_already_accepted_returns_400(self, client):
+        mock_session = AsyncMock()
+        app.dependency_overrides[get_session] = _override_session(mock_session)
+        app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="pro")
+
+        with patch(
+            "src.api.policy_workspaces.accept_generation",
+            new_callable=AsyncMock,
+        ) as mock_accept:
+            mock_accept.side_effect = ValueError("Generation already accepted")
+            response = client.post(
+                "/api/v1/policy-workspaces/workspace123/generations/gen-1/accept",
+                headers={"X-Client-Id": "client-1"},
+            )
+
+        assert response.status_code == 400
+        assert "already accepted" in response.json()["detail"]
+
+    def test_history_returns_revisions(self, client):
+        mock_session = AsyncMock()
+        app.dependency_overrides[get_session] = _override_session(mock_session)
+        app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="pro")
+
+        rev = SimpleNamespace(
+            id="rev-1",
+            section_id="section-1",
+            generation_id="gen-1",
+            change_source="ai",
+            content_markdown="Section 1. Definitions.\n(a) ...",
+            created_at=datetime(2026, 3, 20),
+        )
+
+        with patch(
+            "src.api.policy_workspaces.get_section_history",
+            new_callable=AsyncMock,
+        ) as mock_history:
+            mock_history.return_value = [rev]
+            response = client.get(
+                "/api/v1/policy-workspaces/workspace123/history?section_id=section-1",
+                headers={"X-Client-Id": "client-1"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["revisions"]) == 1
+        assert data["revisions"][0]["change_source"] == "ai"
+        assert data["revisions"][0]["generation_id"] == "gen-1"

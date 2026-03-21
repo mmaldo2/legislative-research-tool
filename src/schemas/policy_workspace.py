@@ -110,3 +110,57 @@ class PolicyWorkspaceDetailResponse(BaseModel):
 class PolicyWorkspaceListResponse(BaseModel):
     data: list[PolicyWorkspaceResponse]
     meta: MetaResponse
+
+
+# --- Compose action schemas ---
+
+COMPOSE_ACTION_TYPES = frozenset(
+    ["draft_section", "rewrite_selection", "tighten_definition", "harmonize_with_precedent"]
+)
+
+
+class PolicyComposeRequest(BaseModel):
+    action_type: str = Field(..., min_length=1, max_length=50)
+    instruction_text: str | None = Field(None, max_length=5000)
+    selected_text: str | None = Field(None, max_length=10000)
+
+
+class PolicySectionDraftOutput(BaseModel):
+    content_markdown: str = Field(..., min_length=1)
+    rationale: str = Field(default="")
+    source_bill_ids: list[str] = Field(default_factory=list, max_length=5)
+    source_notes: list[str] = Field(default_factory=list, max_length=5)
+
+
+class PolicyRewriteOutput(BaseModel):
+    content_markdown: str = Field(..., min_length=1)
+    rationale: str = Field(default="")
+    source_bill_ids: list[str] = Field(default_factory=list, max_length=5)
+    source_notes: list[str] = Field(default_factory=list, max_length=5)
+
+
+class PolicyGenerationResponse(BaseModel):
+    id: str
+    workspace_id: str
+    section_id: str | None = None
+    action_type: str
+    instruction_text: str | None = None
+    selected_text: str | None = None
+    output_markdown: str
+    rationale: str = ""
+    provenance: list[PolicySectionSourceResponse] = Field(default_factory=list)
+    accepted: bool = False
+    created_at: datetime | None = None
+
+
+class PolicyRevisionResponse(BaseModel):
+    id: str
+    section_id: str
+    generation_id: str | None = None
+    change_source: str
+    content_markdown: str
+    created_at: datetime | None = None
+
+
+class PolicyHistoryResponse(BaseModel):
+    revisions: list[PolicyRevisionResponse] = Field(default_factory=list)

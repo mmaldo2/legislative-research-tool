@@ -10,7 +10,12 @@ from src.llm.harness import LLMHarness
 from src.models.policy_workspace import PolicyWorkspace
 from src.schemas.common import MetaResponse
 from src.schemas.policy_workspace import (
+    PolicyComposeRequest,
+    PolicyGenerationResponse,
+    PolicyHistoryResponse,
+    PolicyRevisionResponse,
     PolicySectionResponse,
+    PolicySectionSourceResponse,
     PolicySectionUpdate,
     PolicyWorkspaceCreate,
     PolicyWorkspaceDetailResponse,
@@ -21,8 +26,12 @@ from src.schemas.policy_workspace import (
     PolicyWorkspaceUpdate,
 )
 from src.services.policy_composer_service import (
+    ComposeError,
     OutlineGenerationError,
+    accept_generation,
+    compose_section,
     generate_outline_for_workspace,
+    get_section_history,
     update_workspace_section,
 )
 from src.services.policy_workspace_service import (
@@ -46,9 +55,7 @@ def get_client_id(x_client_id: str | None = Header(None)) -> str:
 
 def _latest_outline_generation(workspace: PolicyWorkspace):
     outline_generations = [
-        generation
-        for generation in workspace.generations
-        if generation.action_type == "outline"
+        generation for generation in workspace.generations if generation.action_type == "outline"
     ]
     if not outline_generations:
         return None
@@ -427,3 +434,130 @@ async def patch_policy_workspace_section(
     if section is None:
         raise HTTPException(status_code=404, detail="Policy section not found")
     return section
+
+
+def _build_generation_response(generation) -> PolicyGenerationResponse:
+    output = generation.output_payload or {}
+    prov = generation.provenance or {}
+    sources = [PolicySectionSourceResponse(**s) for s in prov.get("sources", [])]
+    return PolicyGenerationResponse(
+        id=generation.id,
+        workspace_id=generation.workspace_id,
+        section_id=generation.section_id,
+        action_type=generation.action_type,
+        instruction_text=generation.instruction_text,
+        selected_text=generation.selected_text,
+        output_markdown=output.get("content_markdown", ""),
+        rationale=output.get("rationale", ""),
+        provenance=sources,
+        accepted=generation.accepted_revision_id is not None,
+        created_at=generation.created_at,
+    )
+
+
+@router.post(
+    "/policy-workspaces/{workspace_id}/sections/{section_id}/compose",
+    response_model=PolicyGenerationResponse,
+)
+@limiter.limit("5/minute")
+async def compose_policy_section(
+    request: Request,
+    workspace_id: str,
+    section_id: str,
+    body: PolicyComposeRequest,
+    client_id: str = Depends(get_client_id),
+    db: AsyncSession = Depends(get_session),
+    harness: LLMHarness = Depends(get_llm_harness),
+) -> PolicyGenerationResponse:
+    try:
+        generation = await compose_section(
+            db,
+            harness=harness,
+            workspace_id=workspace_id,
+            section_id=section_id,
+            client_id=client_id,
+            action_type=body.action_type,
+            instruction_text=body.instruction_text,
+            selected_text=body.selected_text,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except (ValueError, ComposeError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return _build_generation_response(generation)
+
+
+@router.post(
+    "/policy-workspaces/{workspace_id}/generations/{generation_id}/accept",
+    response_model=PolicySectionResponse,
+)
+@limiter.limit("10/minute")
+async def accept_policy_generation(
+    request: Request,
+    workspace_id: str,
+    generation_id: str,
+    client_id: str = Depends(get_client_id),
+    db: AsyncSession = Depends(get_session),
+) -> PolicySectionResponse:
+    try:
+        section = await accept_generation(
+            db,
+            workspace_id=workspace_id,
+            generation_id=generation_id,
+            client_id=client_id,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    workspace = await _get_workspace_or_error(
+        db, workspace_id=workspace_id, client_id=client_id, load_detail=True
+    )
+    detail = _build_workspace_detail_response(workspace)
+    section_resp = next((s for s in detail.sections if s.id == section.id), None)
+    if section_resp is None:
+        raise HTTPException(status_code=404, detail="Section not found after accept")
+    return section_resp
+
+
+@router.get(
+    "/policy-workspaces/{workspace_id}/history",
+    response_model=PolicyHistoryResponse,
+)
+async def get_policy_workspace_history(
+    workspace_id: str,
+    section_id: str | None = Query(None),
+    client_id: str = Depends(get_client_id),
+    db: AsyncSession = Depends(get_session),
+) -> PolicyHistoryResponse:
+    try:
+        revisions = await get_section_history(
+            db,
+            workspace_id=workspace_id,
+            client_id=client_id,
+            section_id=section_id,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return PolicyHistoryResponse(
+        revisions=[
+            PolicyRevisionResponse(
+                id=rev.id,
+                section_id=rev.section_id,
+                generation_id=rev.generation_id,
+                change_source=rev.change_source,
+                content_markdown=rev.content_markdown,
+                created_at=rev.created_at,
+            )
+            for rev in revisions
+        ]
+    )

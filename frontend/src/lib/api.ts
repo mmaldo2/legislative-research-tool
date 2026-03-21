@@ -22,6 +22,8 @@ import type {
   JurisdictionStatsResponse,
   MLPredictionResponse,
   PatternDetectionOutput,
+  PolicyGenerationResponse,
+  PolicyHistoryResponse,
   PolicySectionResponse,
   PolicyWorkspaceDetailResponse,
   PolicyWorkspaceListResponse,
@@ -592,6 +594,52 @@ export async function updatePolicyWorkspaceSection(
     {
       method: "PATCH",
       body: JSON.stringify(params),
+      headers: clientHeaders(),
+    },
+  );
+}
+
+export async function composePolicySection(
+  workspaceId: string,
+  sectionId: string,
+  params: {
+    action_type: string;
+    instruction_text?: string | null;
+    selected_text?: string | null;
+  },
+): Promise<PolicyGenerationResponse> {
+  return fetchApi<PolicyGenerationResponse>(
+    `/policy-workspaces/${encodeURIComponent(workspaceId)}/sections/${encodeURIComponent(sectionId)}/compose`,
+    {
+      method: "POST",
+      body: JSON.stringify(params),
+      headers: clientHeaders(),
+    },
+  );
+}
+
+export async function acceptPolicyGeneration(
+  workspaceId: string,
+  generationId: string,
+): Promise<PolicySectionResponse> {
+  return fetchApi<PolicySectionResponse>(
+    `/policy-workspaces/${encodeURIComponent(workspaceId)}/generations/${encodeURIComponent(generationId)}/accept`,
+    {
+      method: "POST",
+      headers: clientHeaders(),
+    },
+  );
+}
+
+export async function getPolicyWorkspaceHistory(
+  workspaceId: string,
+  sectionId?: string,
+): Promise<PolicyHistoryResponse> {
+  const params: Record<string, string> = {};
+  if (sectionId) params.section_id = sectionId;
+  return fetchApi<PolicyHistoryResponse>(
+    `/policy-workspaces/${encodeURIComponent(workspaceId)}/history${qs(params)}`,
+    {
       headers: clientHeaders(),
     },
   );

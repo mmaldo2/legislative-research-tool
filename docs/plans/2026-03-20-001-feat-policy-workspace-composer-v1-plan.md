@@ -414,11 +414,11 @@ Parity implications:
 - [x] R2. The default v1 flow starts from selected precedent bills.
 - [x] R3. Workspace creation requires target jurisdiction and drafting template before outline generation.
 - [x] R4. Outline generation happens before any full-text section drafting.
-- [ ] R5. The dominant editor interaction is inline compose actions, not generic chat or passive autocomplete.
-- [ ] R6. Full-text drafting is section-by-section and only on explicit user request.
-- [ ] R7. Bounded drafting/research actions are available from the workspace and require user review before acceptance.
+- [x] R5. The dominant editor interaction is inline compose actions, not generic chat or passive autocomplete.
+- [x] R6. Full-text drafting is section-by-section and only on explicit user request.
+- [x] R7. Bounded drafting/research actions are available from the workspace and require user review before acceptance.
 - [x] R8. Outline and section generations include visible provenance linking back to bills and analyses.
-- [ ] R9. Accepted AI outputs create durable revision history and support comparison against previous text.
+- [x] R9. Accepted AI outputs create durable revision history and support comparison against previous text.
 - [x] R10. Existing research platform capabilities remain usable as substrate and are not displaced by the composer launch.
 
 ### Non-Functional Requirements

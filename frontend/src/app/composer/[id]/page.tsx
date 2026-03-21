@@ -6,9 +6,12 @@ import { notFound } from "next/navigation";
 import {
   ApiError,
   RateLimitError,
+  acceptPolicyGeneration,
   addPolicyWorkspacePrecedent,
+  composePolicySection,
   generatePolicyWorkspaceOutline,
   getPolicyWorkspace,
+  getPolicyWorkspaceHistory,
   listJurisdictions,
   removePolicyWorkspacePrecedent,
   searchBills,
@@ -16,13 +19,17 @@ import {
   updatePolicyWorkspaceSection,
 } from "@/lib/api";
 import {
+  COMPOSE_ACTION_OPTIONS,
   COMPOSER_TEMPLATE_OPTIONS,
+  formatComposeAction,
   formatComposerStatus,
   formatComposerTemplate,
 } from "@/lib/composer";
 import { formatJurisdiction, formatStatus, statusVariant } from "@/lib/format";
 import type {
   JurisdictionResponse,
+  PolicyGenerationResponse,
+  PolicyRevisionResponse,
   PolicyWorkspaceDetailResponse,
   SearchResult,
 } from "@/types/api";
@@ -37,7 +44,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ArrowLeft, Plus, Save, Search, Trash2, WandSparkles } from "lucide-react";
+import {
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Plus,
+  Save,
+  Search,
+  Trash2,
+  WandSparkles,
+  X,
+} from "lucide-react";
 import { ApiErrorBanner } from "@/components/api-error";
 
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -76,6 +95,11 @@ export default function ComposerDetailPage({
   const [searchExecuted, setSearchExecuted] = useState(false);
   const [generatingOutline, setGeneratingOutline] = useState(false);
   const [savingSectionId, setSavingSectionId] = useState<string | null>(null);
+  const [composingId, setComposingId] = useState<string | null>(null);
+  const [pendingGeneration, setPendingGeneration] = useState<PolicyGenerationResponse | null>(null);
+  const [acceptingId, setAcceptingId] = useState<string | null>(null);
+  const [sectionHistory, setSectionHistory] = useState<Record<string, PolicyRevisionResponse[]>>({});
+  const [expandedHistory, setExpandedHistory] = useState<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
 
@@ -250,6 +274,60 @@ export default function ComposerDetailPage({
       setError(getErrorMessage(err, "Failed to update outline section."));
     } finally {
       setSavingSectionId(null);
+    }
+  }
+
+  async function handleCompose(sectionId: string, actionType: string) {
+    setComposingId(sectionId);
+    setPendingGeneration(null);
+    try {
+      const gen = await composePolicySection(id, sectionId, {
+        action_type: actionType,
+      });
+      setPendingGeneration(gen);
+      setError(null);
+    } catch (err) {
+      console.error("Failed to compose section:", err);
+      setError(getErrorMessage(err, "Failed to compose section."));
+    } finally {
+      setComposingId(null);
+    }
+  }
+
+  async function handleAccept(generationId: string) {
+    if (!workspace) return;
+    setAcceptingId(generationId);
+    try {
+      await acceptPolicyGeneration(workspace.id, generationId);
+      setPendingGeneration(null);
+      await load();
+      setError(null);
+    } catch (err) {
+      console.error("Failed to accept generation:", err);
+      setError(getErrorMessage(err, "Failed to accept generation."));
+    } finally {
+      setAcceptingId(null);
+    }
+  }
+
+  function handleRejectGeneration() {
+    setPendingGeneration(null);
+  }
+
+  async function toggleHistory(sectionId: string) {
+    const next = new Set(expandedHistory);
+    if (next.has(sectionId)) {
+      next.delete(sectionId);
+      setExpandedHistory(next);
+      return;
+    }
+    try {
+      const data = await getPolicyWorkspaceHistory(id, sectionId);
+      setSectionHistory((prev) => ({ ...prev, [sectionId]: data.revisions }));
+      next.add(sectionId);
+      setExpandedHistory(next);
+    } catch (err) {
+      console.error("Failed to load history:", err);
     }
   }
 
@@ -573,8 +651,8 @@ export default function ComposerDetailPage({
                       disabled={
                         savingSectionId === section.id ||
                         !sectionDrafts[section.id] ||
-                        sectionDrafts[section.id].heading.trim() === section.heading &&
-                          sectionDrafts[section.id].purpose === (section.purpose ?? "")
+                        (sectionDrafts[section.id].heading.trim() === section.heading &&
+                          sectionDrafts[section.id].purpose === (section.purpose ?? ""))
                       }
                     >
                       <Save className="mr-1.5 h-4 w-4" />
@@ -605,9 +683,101 @@ export default function ComposerDetailPage({
                           },
                         }))
                       }
-                      className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      placeholder="Section purpose"
+                      className="min-h-16 w-full rounded-md border bg-background px-3 py-2 text-sm"
                     />
                   </div>
+
+                  {/* Drafted content */}
+                  {section.content_markdown && (
+                    <div className="mt-4 rounded-md border bg-muted/30 p-3">
+                      <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                        Current Draft
+                      </p>
+                      <div className="whitespace-pre-wrap text-sm">
+                        {section.content_markdown}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Compose actions */}
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {COMPOSE_ACTION_OPTIONS.map((action) => {
+                      const needsContent =
+                        action.value !== "draft_section" && !section.content_markdown;
+                      return (
+                        <Button
+                          key={action.value}
+                          size="sm"
+                          variant="outline"
+                          disabled={composingId === section.id || needsContent}
+                          onClick={() => void handleCompose(section.id, action.value)}
+                        >
+                          <WandSparkles className="mr-1.5 h-3 w-3" />
+                          {composingId === section.id ? "Composing..." : action.label}
+                        </Button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Pending generation */}
+                  {pendingGeneration && pendingGeneration.section_id === section.id && (
+                    <div className="mt-4 rounded-md border border-primary/30 bg-primary/5 p-4">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex flex-wrap gap-2">
+                          <Badge variant="outline">
+                            {formatComposeAction(pendingGeneration.action_type)}
+                          </Badge>
+                          <Badge variant="secondary">Pending Review</Badge>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => void handleAccept(pendingGeneration.id)}
+                            disabled={acceptingId === pendingGeneration.id}
+                          >
+                            <Check className="mr-1.5 h-3 w-3" />
+                            {acceptingId === pendingGeneration.id ? "Accepting..." : "Accept"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={handleRejectGeneration}
+                          >
+                            <X className="mr-1.5 h-3 w-3" />
+                            Reject
+                          </Button>
+                        </div>
+                      </div>
+                      {pendingGeneration.rationale && (
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          {pendingGeneration.rationale}
+                        </p>
+                      )}
+                      <div className="mt-3 whitespace-pre-wrap rounded-md border bg-background p-3 text-sm">
+                        {pendingGeneration.output_markdown}
+                      </div>
+                      {pendingGeneration.provenance.length > 0 && (
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {pendingGeneration.provenance.map((source) => (
+                            <div
+                              key={source.bill_id}
+                              className="rounded-md border px-2 py-1 text-xs"
+                            >
+                              {source.identifier}
+                              {source.note && (
+                                <span className="ml-1 text-muted-foreground">
+                                  — {source.note}
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Provenance */}
                   {section.provenance.length > 0 && (
                     <div className="mt-4 space-y-2">
                       <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
@@ -636,6 +806,47 @@ export default function ComposerDetailPage({
                       </div>
                     </div>
                   )}
+
+                  {/* History toggle */}
+                  <div className="mt-4">
+                    <button
+                      type="button"
+                      className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                      onClick={() => void toggleHistory(section.id)}
+                    >
+                      {expandedHistory.has(section.id) ? (
+                        <ChevronDown className="h-3 w-3" />
+                      ) : (
+                        <ChevronRight className="h-3 w-3" />
+                      )}
+                      <Clock className="h-3 w-3" />
+                      Revision History
+                    </button>
+                    {expandedHistory.has(section.id) && (
+                      <div className="mt-2 space-y-2">
+                        {(sectionHistory[section.id] ?? []).length === 0 ? (
+                          <p className="text-xs text-muted-foreground">No revisions yet.</p>
+                        ) : (
+                          (sectionHistory[section.id] ?? []).map((rev) => (
+                            <div key={rev.id} className="rounded-md border p-2 text-xs">
+                              <div className="flex items-center gap-2">
+                                <Badge variant="outline">{rev.change_source}</Badge>
+                                {rev.created_at && (
+                                  <span className="text-muted-foreground">
+                                    {new Date(rev.created_at).toLocaleString()}
+                                  </span>
+                                )}
+                              </div>
+                              <p className="mt-1 line-clamp-3 text-muted-foreground">
+                                {rev.content_markdown.slice(0, 200)}
+                                {rev.content_markdown.length > 200 ? "..." : ""}
+                              </p>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>
