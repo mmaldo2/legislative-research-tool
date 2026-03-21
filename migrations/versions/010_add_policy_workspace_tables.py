@@ -5,8 +5,8 @@ Revises: 009_add_bills_classification_gin_index
 Create Date: 2026-03-20
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers
@@ -129,7 +129,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["workspace_id"], ["policy_workspaces.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_policy_generations_workspace_id"), "policy_generations", ["workspace_id"])
+    op.create_index(
+        op.f("ix_policy_generations_workspace_id"), "policy_generations", ["workspace_id"]
+    )
     op.create_index(op.f("ix_policy_generations_section_id"), "policy_generations", ["section_id"])
 
     op.create_table(
@@ -160,10 +162,28 @@ def upgrade() -> None:
         ["generation_id"],
     )
 
+    # Add FK after both tables exist (circular reference: generations <-> revisions)
+    op.create_foreign_key(
+        "fk_policy_generations_accepted_revision_id",
+        "policy_generations",
+        "policy_section_revisions",
+        ["accepted_revision_id"],
+        ["id"],
+        ondelete="SET NULL",
+    )
+
 
 def downgrade() -> None:
-    op.drop_index(op.f("ix_policy_section_revisions_generation_id"), table_name="policy_section_revisions")
-    op.drop_index(op.f("ix_policy_section_revisions_section_id"), table_name="policy_section_revisions")
+    op.drop_constraint(
+        "fk_policy_generations_accepted_revision_id", "policy_generations", type_="foreignkey"
+    )
+
+    op.drop_index(
+        op.f("ix_policy_section_revisions_generation_id"), table_name="policy_section_revisions"
+    )
+    op.drop_index(
+        op.f("ix_policy_section_revisions_section_id"), table_name="policy_section_revisions"
+    )
     op.drop_table("policy_section_revisions")
 
     op.drop_index(op.f("ix_policy_generations_section_id"), table_name="policy_generations")
@@ -173,7 +193,9 @@ def downgrade() -> None:
     op.drop_index(op.f("ix_policy_sections_workspace_id"), table_name="policy_sections")
     op.drop_table("policy_sections")
 
-    op.drop_index(op.f("ix_policy_workspace_precedents_bill_id"), table_name="policy_workspace_precedents")
+    op.drop_index(
+        op.f("ix_policy_workspace_precedents_bill_id"), table_name="policy_workspace_precedents"
+    )
     op.drop_index(
         op.f("ix_policy_workspace_precedents_workspace_id"),
         table_name="policy_workspace_precedents",

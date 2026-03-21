@@ -97,7 +97,8 @@ class PolicySection(Base):
     workspace: Mapped["PolicyWorkspace"] = relationship(back_populates="sections")
     generations: Mapped[list["PolicyGeneration"]] = relationship(
         back_populates="section",
-        cascade="all, delete-orphan",
+        cascade="save-update, merge",
+        passive_deletes=True,
         order_by="PolicyGeneration.created_at",
     )
     revisions: Mapped[list["PolicySectionRevision"]] = relationship(
@@ -126,7 +127,10 @@ class PolicyGeneration(Base):
     selected_text: Mapped[str | None] = mapped_column(Text)
     output_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
     provenance: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False, default=dict)
-    accepted_revision_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    accepted_revision_id: Mapped[str | None] = mapped_column(
+        ForeignKey("policy_section_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
