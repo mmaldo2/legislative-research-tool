@@ -645,6 +645,10 @@ export async function getPolicyWorkspaceHistory(
   );
 }
 
+export function getPolicyWorkspaceExportUrl(workspaceId: string): string {
+  return `${API_BASE}/policy-workspaces/${encodeURIComponent(workspaceId)}/export`;
+}
+
 // --- Chat ---
 
 export async function sendChatMessage(

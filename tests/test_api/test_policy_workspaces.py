@@ -591,3 +591,25 @@ class TestPolicyWorkspaceEndpoints:
         assert len(data["revisions"]) == 1
         assert data["revisions"][0]["change_source"] == "ai"
         assert data["revisions"][0]["generation_id"] == "gen-1"
+
+    def test_export_returns_markdown(self, client):
+        mock_session = AsyncMock()
+        app.dependency_overrides[get_session] = _override_session(mock_session)
+        app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="pro")
+
+        with patch(
+            "src.api.policy_workspaces.export_workspace_markdown",
+            new_callable=AsyncMock,
+        ) as mock_export:
+            mock_export.return_value = (
+                "# Privacy Model Act\n\n## Section 1. Definitions\n\nSample text."
+            )
+            response = client.get(
+                "/api/v1/policy-workspaces/workspace123/export",
+                headers={"X-Client-Id": "client-1"},
+            )
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("text/markdown")
+        assert "# Privacy Model Act" in response.text
+        assert "Section 1. Definitions" in response.text

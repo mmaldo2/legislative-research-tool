@@ -493,3 +493,43 @@ async def get_section_history(
 
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+
+async def export_workspace_markdown(
+    session: AsyncSession,
+    *,
+    workspace_id: str,
+    client_id: str,
+) -> str:
+    """Render a workspace draft as a single markdown document."""
+    workspace = await get_workspace_for_composer(
+        session, workspace_id=workspace_id, client_id=client_id
+    )
+    if workspace is None:
+        raise LookupError("Policy workspace not found")
+
+    lines: list[str] = []
+    lines.append(f"# {workspace.title}")
+    lines.append("")
+    lines.append(f"**Target Jurisdiction:** {workspace.target_jurisdiction_id}")
+    lines.append(f"**Drafting Template:** {workspace.drafting_template}")
+    if workspace.goal_prompt:
+        lines.append(f"**Policy Goal:** {workspace.goal_prompt}")
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+
+    sections = sorted(workspace.sections, key=lambda s: s.position)
+    for section in sections:
+        lines.append(f"## Section {section.position + 1}. {section.heading}")
+        lines.append("")
+        if section.purpose:
+            lines.append(f"*{section.purpose}*")
+            lines.append("")
+        if section.content_markdown:
+            lines.append(section.content_markdown)
+        else:
+            lines.append("*(Not yet drafted)*")
+        lines.append("")
+
+    return "\n".join(lines)

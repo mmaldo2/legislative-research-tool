@@ -3,6 +3,7 @@
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import PlainTextResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_llm_harness, get_session, limiter
@@ -30,6 +31,7 @@ from src.services.policy_composer_service import (
     OutlineGenerationError,
     accept_generation,
     compose_section,
+    export_workspace_markdown,
     generate_outline_for_workspace,
     get_section_history,
     update_workspace_section,
@@ -560,4 +562,29 @@ async def get_policy_workspace_history(
             )
             for rev in revisions
         ]
+    )
+
+
+@router.get(
+    "/policy-workspaces/{workspace_id}/export",
+    response_class=PlainTextResponse,
+)
+async def export_policy_workspace(
+    workspace_id: str,
+    client_id: str = Depends(get_client_id),
+    db: AsyncSession = Depends(get_session),
+) -> PlainTextResponse:
+    try:
+        markdown = await export_workspace_markdown(
+            db, workspace_id=workspace_id, client_id=client_id
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    return PlainTextResponse(
+        content=markdown,
+        media_type="text/markdown",
+        headers={"Content-Disposition": f'attachment; filename="{workspace_id}.md"'},
     )

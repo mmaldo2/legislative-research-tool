@@ -11,6 +11,7 @@ import {
   composePolicySection,
   generatePolicyWorkspaceOutline,
   getPolicyWorkspace,
+  getPolicyWorkspaceExportUrl,
   getPolicyWorkspaceHistory,
   listJurisdictions,
   removePolicyWorkspacePrecedent,
@@ -50,6 +51,7 @@ import {
   ChevronDown,
   ChevronRight,
   Clock,
+  Download,
   Plus,
   Save,
   Search,
@@ -100,6 +102,10 @@ export default function ComposerDetailPage({
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [sectionHistory, setSectionHistory] = useState<Record<string, PolicyRevisionResponse[]>>({});
   const [expandedHistory, setExpandedHistory] = useState<Set<string>>(new Set());
+  const [researchQuery, setResearchQuery] = useState("");
+  const [researchResults, setResearchResults] = useState<SearchResult[]>([]);
+  const [researching, setResearching] = useState(false);
+  const [researchOpen, setResearchOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
 
@@ -277,6 +283,24 @@ export default function ComposerDetailPage({
     }
   }
 
+  async function handleResearch() {
+    const query = researchQuery.trim();
+    if (!query || !workspace) return;
+    setResearching(true);
+    try {
+      const data = await searchBills({
+        q: query,
+        jurisdiction: workspace.target_jurisdiction_id,
+        per_page: 8,
+      });
+      setResearchResults(data.data);
+    } catch (err) {
+      console.error("Failed to search:", err);
+    } finally {
+      setResearching(false);
+    }
+  }
+
   async function handleCompose(sectionId: string, actionType: string) {
     setComposingId(sectionId);
     setPendingGeneration(null);
@@ -388,6 +412,16 @@ export default function ComposerDetailPage({
         </div>
         {workspace.goal_prompt && (
           <p className="mt-3 text-sm text-muted-foreground">{workspace.goal_prompt}</p>
+        )}
+        {workspace.sections.length > 0 && (
+          <div className="mt-3">
+            <Button variant="outline" size="sm" asChild>
+              <a href={getPolicyWorkspaceExportUrl(workspace.id)} download>
+                <Download className="mr-1.5 h-4 w-4" />
+                Export Markdown
+              </a>
+            </Button>
+          </div>
         )}
       </div>
 
@@ -592,6 +626,79 @@ export default function ComposerDetailPage({
           )}
         </CardHeader>
       </Card>
+
+      {hasOutline && (
+        <Card className="mb-6">
+          <CardHeader className="space-y-3">
+            <button
+              type="button"
+              className="flex items-center gap-2 text-left"
+              onClick={() => setResearchOpen(!researchOpen)}
+            >
+              {researchOpen ? (
+                <ChevronDown className="h-4 w-4" />
+              ) : (
+                <ChevronRight className="h-4 w-4" />
+              )}
+              <CardTitle className="text-lg">Research</CardTitle>
+              <span className="text-sm text-muted-foreground">
+                Search legislation in {formatJurisdiction(workspace.target_jurisdiction_id)}
+              </span>
+            </button>
+            {researchOpen && (
+              <>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="Search for definitions, clauses, enforcement language..."
+                    value={researchQuery}
+                    onChange={(e) => setResearchQuery(e.target.value)}
+                    onKeyDown={(e) => e.key === "Enter" && void handleResearch()}
+                  />
+                  <Button
+                    onClick={handleResearch}
+                    disabled={researching || !researchQuery.trim()}
+                  >
+                    <Search className="mr-1.5 h-4 w-4" />
+                    {researching ? "Searching..." : "Search"}
+                  </Button>
+                </div>
+                {researchResults.length > 0 && (
+                  <div className="space-y-2">
+                    {researchResults.map((result) => (
+                      <div key={result.bill_id} className="rounded-md border p-3 text-sm">
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <Link
+                              href={`/bills/${encodeURIComponent(result.bill_id)}`}
+                              className="font-medium hover:underline"
+                            >
+                              {result.identifier}
+                            </Link>
+                            <span className="ml-2 text-muted-foreground">
+                              {formatJurisdiction(result.jurisdiction_id)}
+                            </span>
+                          </div>
+                          {result.score !== undefined && (
+                            <Badge variant="outline" className="text-xs">
+                              {(result.score * 100).toFixed(0)}% match
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="mt-1 text-muted-foreground">{result.title}</p>
+                        {result.snippet && (
+                          <p className="mt-2 rounded bg-muted/30 px-2 py-1 text-xs text-muted-foreground">
+                            {result.snippet}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </CardHeader>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>
