@@ -1,0 +1,302 @@
+"""Service layer for composer outline generation and section editing."""
+
+import re
+from datetime import UTC, datetime
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
+
+from src.llm.harness import LLMHarness
+from src.models.bill import Bill
+from src.models.bill_text import texts_without_markup
+from src.models.policy_workspace import (
+    PolicyGeneration,
+    PolicySection,
+    PolicyWorkspace,
+    PolicyWorkspacePrecedent,
+)
+from src.schemas.policy_workspace import PolicyOutlineOutput
+from src.services.bill_service import extract_bill_text
+
+MAX_PRECEDENT_TEXT_CHARS = 4000
+
+
+class OutlineGenerationError(RuntimeError):
+    """Raised when the model returns an outline that fails domain validation."""
+
+
+def _normalize_section_key(raw_key: str) -> str:
+    """Convert a model-provided key into a stable slug."""
+    slug = re.sub(r"[^a-z0-9]+", "_", raw_key.lower()).strip("_")
+    return slug or "section"
+
+
+def _latest_summary_text(bill: Bill) -> str | None:
+    summaries = [
+        analysis
+        for analysis in bill.analyses
+        if analysis.analysis_type == "summary" and analysis.result
+    ]
+    if not summaries:
+        return None
+
+    latest = max(
+        summaries,
+        key=lambda analysis: analysis.created_at or datetime.min.replace(tzinfo=UTC),
+    )
+    summary = latest.result.get("plain_english_summary")
+    if not summary:
+        return None
+    return str(summary)
+
+
+async def get_workspace_for_composer(
+    session: AsyncSession,
+    *,
+    workspace_id: str,
+    client_id: str,
+) -> PolicyWorkspace | None:
+    stmt = (
+        select(PolicyWorkspace)
+        .where(PolicyWorkspace.id == workspace_id)
+        .options(
+            selectinload(PolicyWorkspace.precedents).selectinload(PolicyWorkspacePrecedent.bill),
+            selectinload(PolicyWorkspace.sections),
+            selectinload(PolicyWorkspace.generations),
+        )
+    )
+    result = await session.execute(stmt)
+    workspace = result.scalar_one_or_none()
+    if workspace is None:
+        return None
+    if workspace.client_id != client_id:
+        raise PermissionError("Not authorized to access this policy workspace")
+    return workspace
+
+
+async def _load_precedent_bills(
+    session: AsyncSession,
+    *,
+    workspace: PolicyWorkspace,
+) -> dict[str, Bill]:
+    bill_ids = [precedent.bill_id for precedent in workspace.precedents]
+    result = await session.execute(
+        select(Bill)
+        .where(Bill.id.in_(bill_ids))
+        .options(
+            texts_without_markup(Bill.texts),
+            selectinload(Bill.analyses),
+        )
+    )
+    bills = result.scalars().all()
+    return {bill.id: bill for bill in bills}
+
+
+def _format_precedent_context(workspace: PolicyWorkspace, bill_map: dict[str, Bill]) -> str:
+    parts: list[str] = []
+
+    for precedent in workspace.precedents:
+        bill = bill_map.get(precedent.bill_id)
+        if bill is None:
+            continue
+
+        subjects = ", ".join(bill.subject) if bill.subject else "None"
+        summary = _latest_summary_text(bill) or "No AI summary available."
+        bill_text = extract_bill_text(bill)[:MAX_PRECEDENT_TEXT_CHARS]
+        parts.append(
+            f"Bill ID: {bill.id}\n"
+            f"Identifier: {bill.identifier}\n"
+            f"Jurisdiction: {bill.jurisdiction_id}\n"
+            f"Title: {bill.title}\n"
+            f"Status: {bill.status or 'unknown'}\n"
+            f"Subjects: {subjects}\n"
+            f"Summary: {summary}\n"
+            f"Text Excerpt:\n{bill_text}\n"
+        )
+
+    return "\n---\n".join(parts)
+
+
+def _unique_section_key(base_key: str, used_keys: set[str]) -> str:
+    if base_key not in used_keys:
+        used_keys.add(base_key)
+        return base_key
+
+    suffix = 2
+    while f"{base_key}_{suffix}" in used_keys:
+        suffix += 1
+    section_key = f"{base_key}_{suffix}"
+    used_keys.add(section_key)
+    return section_key
+
+
+def _enrich_outline_payload(
+    outline: PolicyOutlineOutput,
+    *,
+    bill_map: dict[str, Bill],
+) -> dict:
+    if not outline.sections:
+        raise OutlineGenerationError("Outline generation returned no sections")
+
+    used_keys: set[str] = set()
+    sections_payload: list[dict] = []
+
+    for section in outline.sections:
+        section_key = _unique_section_key(
+            _normalize_section_key(section.section_key or section.heading),
+            used_keys,
+        )
+        invalid_ids = [bill_id for bill_id in section.source_bill_ids if bill_id not in bill_map]
+        if invalid_ids:
+            raise OutlineGenerationError(
+                f"Outline section '{section.heading}' cited unknown precedent IDs: "
+                f"{', '.join(invalid_ids)}"
+            )
+
+        sources = []
+        for index, bill_id in enumerate(section.source_bill_ids):
+            bill = bill_map[bill_id]
+            note = section.source_notes[index] if index < len(section.source_notes) else None
+            sources.append(
+                {
+                    "bill_id": bill.id,
+                    "identifier": bill.identifier,
+                    "title": bill.title,
+                    "jurisdiction_id": bill.jurisdiction_id,
+                    "note": note,
+                }
+            )
+
+        sections_payload.append(
+            {
+                "section_key": section_key,
+                "heading": section.heading,
+                "purpose": section.purpose,
+                "sources": sources,
+            }
+        )
+
+    return {
+        "sections": sections_payload,
+        "drafting_notes": outline.drafting_notes,
+        "confidence": outline.confidence,
+    }
+
+
+async def generate_outline_for_workspace(
+    session: AsyncSession,
+    *,
+    harness: LLMHarness,
+    workspace_id: str,
+    client_id: str,
+) -> PolicyWorkspace | None:
+    workspace = await get_workspace_for_composer(
+        session,
+        workspace_id=workspace_id,
+        client_id=client_id,
+    )
+    if workspace is None:
+        return None
+    if not workspace.precedents:
+        raise ValueError("Add at least one precedent bill before generating an outline")
+    if workspace.sections:
+        raise ValueError("Outline already exists for this workspace")
+    if not workspace.target_jurisdiction_id or not workspace.drafting_template:
+        raise ValueError("Target jurisdiction and drafting template are required")
+
+    bill_map = await _load_precedent_bills(session, workspace=workspace)
+    if len(bill_map) != len(workspace.precedents):
+        raise LookupError("One or more precedent bills could not be loaded")
+
+    outline = await harness.generate_policy_outline(
+        workspace_id=workspace.id,
+        workspace_title=workspace.title,
+        target_jurisdiction=workspace.target_jurisdiction_id,
+        drafting_template=workspace.drafting_template,
+        goal_prompt=workspace.goal_prompt,
+        precedents_text=_format_precedent_context(workspace, bill_map),
+        precedent_count=len(workspace.precedents),
+    )
+    outline_payload = _enrich_outline_payload(outline, bill_map=bill_map)
+
+    generation = PolicyGeneration(
+        workspace_id=workspace.id,
+        action_type="outline",
+        output_payload=outline_payload,
+        provenance={"precedent_bill_ids": list(bill_map.keys())},
+    )
+    session.add(generation)
+
+    for position, section_payload in enumerate(outline_payload["sections"]):
+        session.add(
+            PolicySection(
+                workspace_id=workspace.id,
+                section_key=section_payload["section_key"],
+                heading=section_payload["heading"],
+                purpose=section_payload["purpose"],
+                position=position,
+                content_markdown="",
+                status="outlined",
+            )
+        )
+
+    workspace.status = "outline_ready"
+    workspace.updated_at = datetime.now(UTC)
+
+    await session.commit()
+    return await get_workspace_for_composer(
+        session,
+        workspace_id=workspace.id,
+        client_id=client_id,
+    )
+
+
+async def update_workspace_section(
+    session: AsyncSession,
+    *,
+    workspace_id: str,
+    section_id: str,
+    client_id: str,
+    heading: str | None = None,
+    update_heading: bool = False,
+    purpose: str | None = None,
+    update_purpose: bool = False,
+) -> PolicyWorkspace | None:
+    workspace = await get_workspace_for_composer(
+        session,
+        workspace_id=workspace_id,
+        client_id=client_id,
+    )
+    if workspace is None:
+        return None
+
+    section = next(
+        (candidate for candidate in workspace.sections if candidate.id == section_id),
+        None,
+    )
+    if section is None:
+        raise LookupError("Policy section not found")
+
+    changed = False
+    if update_heading:
+        if not heading:
+            raise ValueError("Section heading cannot be empty")
+        if heading != section.heading:
+            section.heading = heading
+            changed = True
+    if update_purpose and purpose != section.purpose:
+        section.purpose = purpose
+        changed = True
+
+    if changed:
+        section.status = "edited" if section.status == "outlined" else section.status
+        section.updated_at = datetime.now(UTC)
+        workspace.updated_at = datetime.now(UTC)
+        await session.commit()
+
+    return await get_workspace_for_composer(
+        session,
+        workspace_id=workspace_id,
+        client_id=client_id,
+    )

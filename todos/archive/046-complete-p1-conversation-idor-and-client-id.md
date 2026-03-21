@@ -60,4 +60,4 @@ The conversation endpoints have no ownership enforcement — any authenticated A
 ## Resources
 
 - PR: #8
-- Related: todos/001-complete-p1-no-authentication-on-api.md
+- Related: todos/archive/001-complete-p1-no-authentication-on-api.md

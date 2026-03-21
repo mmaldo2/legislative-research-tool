@@ -22,6 +22,11 @@ import type {
   JurisdictionStatsResponse,
   MLPredictionResponse,
   PatternDetectionOutput,
+  PolicySectionResponse,
+  PolicyWorkspaceDetailResponse,
+  PolicyWorkspaceListResponse,
+  PolicyWorkspacePrecedentResponse,
+  PolicyWorkspaceResponse,
   PersonListResponse,
   PersonResponse,
   PersonStatsResponse,
@@ -110,7 +115,18 @@ async function fetchApi<T>(path: string, init?: FetchApiOptions): Promise<T> {
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new ApiError(res.status, body || res.statusText);
+    let message = body || res.statusText;
+    if (body) {
+      try {
+        const parsed = JSON.parse(body) as { detail?: unknown };
+        if (typeof parsed.detail === "string" && parsed.detail.trim()) {
+          message = parsed.detail;
+        }
+      } catch {
+        // Keep the raw body when the response is not JSON.
+      }
+    }
+    throw new ApiError(res.status, message);
   }
 
   if (res.status === 204) {
@@ -462,6 +478,120 @@ export async function updateCollectionItemNotes(
     {
       method: "PATCH",
       body: JSON.stringify({ notes }),
+      headers: clientHeaders(),
+    },
+  );
+}
+
+// --- Policy Workspaces ---
+
+export async function listPolicyWorkspaces(params: {
+  page?: number;
+  per_page?: number;
+} = {}): Promise<PolicyWorkspaceListResponse> {
+  return fetchApi<PolicyWorkspaceListResponse>(`/policy-workspaces${qs(params)}`, {
+    headers: clientHeaders(),
+    revalidate: false,
+  });
+}
+
+export async function getPolicyWorkspace(id: string): Promise<PolicyWorkspaceDetailResponse> {
+  return fetchApi<PolicyWorkspaceDetailResponse>(`/policy-workspaces/${encodeURIComponent(id)}`, {
+    headers: clientHeaders(),
+    revalidate: false,
+  });
+}
+
+export async function createPolicyWorkspace(params: {
+  title: string;
+  target_jurisdiction_id: string;
+  drafting_template: string;
+  goal_prompt?: string;
+}): Promise<PolicyWorkspaceResponse> {
+  return fetchApi<PolicyWorkspaceResponse>("/policy-workspaces", {
+    method: "POST",
+    body: JSON.stringify(params),
+    headers: clientHeaders(),
+  });
+}
+
+export async function updatePolicyWorkspace(
+  id: string,
+  params: {
+    title?: string;
+    target_jurisdiction_id?: string;
+    drafting_template?: string;
+    goal_prompt?: string | null;
+    status?: string;
+  },
+): Promise<PolicyWorkspaceResponse> {
+  return fetchApi<PolicyWorkspaceResponse>(`/policy-workspaces/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: JSON.stringify(params),
+    headers: clientHeaders(),
+  });
+}
+
+export async function deletePolicyWorkspace(id: string): Promise<void> {
+  await fetchApi<void>(`/policy-workspaces/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    headers: clientHeaders(),
+  });
+}
+
+export async function addPolicyWorkspacePrecedent(
+  workspaceId: string,
+  billId: string,
+  position?: number,
+): Promise<PolicyWorkspacePrecedentResponse> {
+  return fetchApi<PolicyWorkspacePrecedentResponse>(
+    `/policy-workspaces/${encodeURIComponent(workspaceId)}/precedents`,
+    {
+      method: "POST",
+      body: JSON.stringify({ bill_id: billId, position }),
+      headers: clientHeaders(),
+    },
+  );
+}
+
+export async function removePolicyWorkspacePrecedent(
+  workspaceId: string,
+  billId: string,
+): Promise<void> {
+  await fetchApi<void>(
+    `/policy-workspaces/${encodeURIComponent(workspaceId)}/precedents/${encodeURIComponent(billId)}`,
+    {
+      method: "DELETE",
+      headers: clientHeaders(),
+    },
+  );
+}
+
+export async function generatePolicyWorkspaceOutline(
+  workspaceId: string,
+): Promise<PolicyWorkspaceDetailResponse> {
+  return fetchApi<PolicyWorkspaceDetailResponse>(
+    `/policy-workspaces/${encodeURIComponent(workspaceId)}/outline/generate`,
+    {
+      method: "POST",
+      headers: clientHeaders(),
+    },
+  );
+}
+
+export async function updatePolicyWorkspaceSection(
+  workspaceId: string,
+  sectionId: string,
+  params: {
+    heading?: string;
+    purpose?: string | null;
+  },
+): Promise<PolicySectionResponse> {
+  return fetchApi<PolicySectionResponse>(
+    `/policy-workspaces/${encodeURIComponent(workspaceId)}/sections/${encodeURIComponent(sectionId)}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(params),
       headers: clientHeaders(),
     },
   );

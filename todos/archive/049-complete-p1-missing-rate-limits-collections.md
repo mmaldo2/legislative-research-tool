@@ -46,4 +46,4 @@ None of the 7 collection endpoints have rate limiting, unlike chat (30/min), com
 ## Resources
 
 - PR: #8
-- Related: todos/003-complete-p1-no-rate-limiting.md
+- Related: todos/archive/003-complete-p1-no-rate-limiting.md

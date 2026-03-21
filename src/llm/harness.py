@@ -22,6 +22,7 @@ from src.llm.prompts import (
     compare_v1,
     constitutional_v1,
     pattern_detect_v1,
+    policy_outline_v1,
     predict_v1,
     report_v1,
     summarize_v1,
@@ -39,6 +40,7 @@ from src.schemas.analysis import (
     VersionDiffOutput,
 )
 from src.schemas.compare import BillComparisonOutput
+from src.schemas.policy_workspace import PolicyOutlineOutput
 from src.schemas.trend import TrendResponse, TrendSummaryResponse, TrendTopicResponse
 
 logger = logging.getLogger(__name__)
@@ -527,6 +529,49 @@ class LLMHarness:
                 confidence=0.3,
             ),
             cost_label="generate_report",
+            skip_store=True,
+        )
+
+    async def generate_policy_outline(
+        self,
+        workspace_id: str,
+        workspace_title: str,
+        target_jurisdiction: str,
+        drafting_template: str,
+        goal_prompt: str | None,
+        precedents_text: str,
+        precedent_count: int,
+    ) -> PolicyOutlineOutput:
+        """Generate a structured policy outline for a drafting workspace."""
+        return await self._run_analysis(
+            bill_id=f"policy-workspace:{workspace_id}",
+            analysis_type="policy_outline",
+            prompt_version=policy_outline_v1.PROMPT_VERSION,
+            model=settings.summary_model,
+            c_hash=self.content_hash(
+                (
+                    f"{workspace_id}:{target_jurisdiction}:{drafting_template}:"
+                    f"{goal_prompt or ''}:{precedents_text[:10000]}"
+                ),
+                policy_outline_v1.PROMPT_VERSION,
+            ),
+            system_prompt=policy_outline_v1.SYSTEM_PROMPT,
+            user_prompt=policy_outline_v1.USER_PROMPT_TEMPLATE.format(
+                workspace_title=workspace_title,
+                target_jurisdiction=target_jurisdiction,
+                drafting_template=drafting_template,
+                goal_prompt=goal_prompt or "None provided",
+                precedent_count=precedent_count,
+                precedents_text=precedents_text[:MAX_SINGLE_TEXT_CHARS],
+            ),
+            max_tokens=4096,
+            output_type=PolicyOutlineOutput,
+            fallback_fn=lambda text: PolicyOutlineOutput(
+                sections=[],
+                drafting_notes=[text or "Unable to generate a policy outline."],
+                confidence=0.0,
+            ),
+            cost_label="policy_outline",
             skip_store=True,
         )
 
