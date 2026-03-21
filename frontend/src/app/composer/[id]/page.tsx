@@ -530,7 +530,7 @@ export default function ComposerDetailPage({
             <div className="space-y-3">
               {searchResults.map((result) => (
                 <Card key={result.bill_id}>
-                  <CardHeader className="flex-row items-start justify-between gap-4">
+                  <CardHeader className="flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                     <div className="flex-1">
                       <Link
                         href={`/bills/${encodeURIComponent(result.bill_id)}`}
@@ -590,7 +590,7 @@ export default function ComposerDetailPage({
             <div className="space-y-3">
               {workspace.precedents.map((precedent) => (
                 <Card key={precedent.id}>
-                  <CardHeader className="flex-row items-center justify-between gap-4">
+                  <CardHeader className="flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="flex-1">
                       <Link
                         href={`/bills/${encodeURIComponent(precedent.bill_id)}`}
@@ -830,7 +830,7 @@ export default function ComposerDetailPage({
                   {/* Pending generation */}
                   {pendingGeneration && pendingGeneration.section_id === section.id && (
                     <div className="mt-4 rounded-md border border-primary/30 bg-primary/5 p-4">
-                      <div className="flex items-center justify-between gap-2">
+                      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex flex-wrap gap-2">
                           <Badge variant="outline">
                             {formatComposeAction(pendingGeneration.action_type)}

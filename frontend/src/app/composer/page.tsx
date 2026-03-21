@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
   createPolicyWorkspace,
@@ -26,7 +26,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { FilePenLine, Plus, Trash2 } from "lucide-react";
+import { FilePenLine, Plus, Search, Trash2 } from "lucide-react";
 
 export default function ComposerPage() {
   const [workspaces, setWorkspaces] = useState<PolicyWorkspaceResponse[]>([]);
@@ -37,9 +37,27 @@ export default function ComposerPage() {
     COMPOSER_TEMPLATE_OPTIONS[0].value,
   );
   const [goalPrompt, setGoalPrompt] = useState("");
+  const [filterQuery, setFilterQuery] = useState("");
+  const [filterStatus, setFilterStatus] = useState("all");
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const filteredWorkspaces = useMemo(() => {
+    let result = workspaces;
+    const q = filterQuery.trim().toLowerCase();
+    if (q) {
+      result = result.filter(
+        (w) =>
+          w.title.toLowerCase().includes(q) ||
+          w.target_jurisdiction_id.toLowerCase().includes(q),
+      );
+    }
+    if (filterStatus !== "all") {
+      result = result.filter((w) => w.status === filterStatus);
+    }
+    return result;
+  }, [workspaces, filterQuery, filterStatus]);
 
   async function load() {
     try {
@@ -184,9 +202,39 @@ export default function ComposerPage() {
         </div>
       ) : (
         <div className="space-y-3">
-          {workspaces.map((workspace) => (
+          {workspaces.length > 1 && (
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <div className="relative flex-1">
+                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  placeholder="Filter by title or jurisdiction..."
+                  value={filterQuery}
+                  onChange={(e) => setFilterQuery(e.target.value)}
+                  className="pl-9"
+                />
+              </div>
+              <Select value={filterStatus} onValueChange={setFilterStatus}>
+                <SelectTrigger className="w-full sm:w-40">
+                  <SelectValue placeholder="Status" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All statuses</SelectItem>
+                  <SelectItem value="setup">Setup</SelectItem>
+                  <SelectItem value="outline_ready">Outline Ready</SelectItem>
+                  <SelectItem value="drafting">Drafting</SelectItem>
+                  <SelectItem value="archived">Archived</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
+          {filteredWorkspaces.length === 0 ? (
+            <p className="py-4 text-center text-sm text-muted-foreground">
+              No workspaces match your filter.
+            </p>
+          ) : null}
+          {filteredWorkspaces.map((workspace) => (
             <Card key={workspace.id} className="transition-colors hover:bg-accent/50">
-              <CardHeader className="flex-row items-center justify-between gap-4">
+              <CardHeader className="flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <Link href={`/composer/${workspace.id}`} className="flex-1">
                   <CardTitle className="text-base">{workspace.title}</CardTitle>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
