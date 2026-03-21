@@ -8,6 +8,7 @@ import {
   RateLimitError,
   acceptPolicyGeneration,
   addPolicyWorkspacePrecedent,
+  clientHeaders,
   composePolicySection,
   generatePolicyWorkspaceOutline,
   getPolicyWorkspace,
@@ -283,6 +284,29 @@ export default function ComposerDetailPage({
     }
   }
 
+  async function handleExport() {
+    if (!workspace) return;
+    try {
+      const res = await fetch(getPolicyWorkspaceExportUrl(workspace.id), {
+        headers: clientHeaders(),
+      });
+      if (!res.ok) {
+        setError("Failed to export workspace.");
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${workspace.title.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}.md`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error("Failed to export:", err);
+      setError(getErrorMessage(err, "Failed to export workspace."));
+    }
+  }
+
   async function handleResearch() {
     const query = researchQuery.trim();
     if (!query || !workspace) return;
@@ -294,8 +318,10 @@ export default function ComposerDetailPage({
         per_page: 8,
       });
       setResearchResults(data.data);
+      setError(null);
     } catch (err) {
       console.error("Failed to search:", err);
+      setError(getErrorMessage(err, "Failed to search legislation."));
     } finally {
       setResearching(false);
     }
@@ -415,11 +441,13 @@ export default function ComposerDetailPage({
         )}
         {workspace.sections.length > 0 && (
           <div className="mt-3">
-            <Button variant="outline" size="sm" asChild>
-              <a href={getPolicyWorkspaceExportUrl(workspace.id)} download>
-                <Download className="mr-1.5 h-4 w-4" />
-                Export Markdown
-              </a>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleExport()}
+            >
+              <Download className="mr-1.5 h-4 w-4" />
+              Export Markdown
             </Button>
           </div>
         )}

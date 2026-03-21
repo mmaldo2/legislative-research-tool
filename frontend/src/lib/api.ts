@@ -409,7 +409,7 @@ function getClientId(): string {
   return id;
 }
 
-function clientHeaders(): Record<string, string> {
+export function clientHeaders(): Record<string, string> {
   return { "X-Client-Id": getClientId() };
 }
 
