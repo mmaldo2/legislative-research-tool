@@ -4,6 +4,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://legis:legis_dev@localhost:5432/legis"
     anthropic_api_key: str = ""
+    anthropic_auth_token: str = ""  # OAuth token (subscription auth via claude login)
     voyage_api_key: str = ""
     congress_api_key: str = ""
     openstates_api_key: str = ""

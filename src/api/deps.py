@@ -1,5 +1,6 @@
 """FastAPI dependency injection."""
 
+import logging
 import secrets
 import uuid
 from collections.abc import AsyncGenerator
@@ -14,6 +15,8 @@ from src.config import settings
 from src.database import async_session_factory
 from src.llm.harness import LLMHarness
 from src.services.auth_service import AuthContext, hash_api_key, verify_api_key
+
+logger = logging.getLogger(__name__)
 
 
 def _get_key_func():
@@ -37,11 +40,25 @@ _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 _anthropic_client: anthropic.AsyncAnthropic | None = None
 
 
-def get_anthropic_client() -> anthropic.AsyncAnthropic:
-    """Return a shared Anthropic client (created once, reused across requests)."""
+def get_anthropic_client():
+    """Return a shared LLM client (created once, reused across requests).
+
+    Auth priority:
+    1. ANTHROPIC_API_KEY — standard API key (production)
+    2. Claude Agent SDK — routes through Claude subscription (local dev/demo)
+    """
     global _anthropic_client
     if _anthropic_client is None:
-        _anthropic_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        if settings.anthropic_api_key:
+            _anthropic_client = anthropic.AsyncAnthropic(
+                api_key=settings.anthropic_api_key,
+            )
+        else:
+            # Use Claude Agent SDK adapter (subscription auth via `claude login`)
+            from src.llm.claude_sdk_adapter import ClaudeSDKClient
+
+            logger.info("No ANTHROPIC_API_KEY set — using Claude Agent SDK (subscription auth)")
+            _anthropic_client = ClaudeSDKClient()
     return _anthropic_client
 
 
