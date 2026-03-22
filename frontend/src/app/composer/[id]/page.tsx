@@ -65,6 +65,7 @@ import {
 } from "lucide-react";
 import { ApiErrorBanner } from "@/components/api-error";
 import { ChatPanel } from "@/components/chat-panel";
+import { RevisionDiff } from "@/components/revision-diff";
 
 function getErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError || error instanceof RateLimitError) {
@@ -973,26 +974,48 @@ export default function ComposerDetailPage({
                       Revision History
                     </button>
                     {expandedHistory.has(section.id) && (
-                      <div className="mt-2 space-y-2">
+                      <div className="mt-2 space-y-3">
                         {(sectionHistory[section.id] ?? []).length === 0 ? (
                           <p className="text-xs text-muted-foreground">No revisions yet.</p>
                         ) : (
-                          (sectionHistory[section.id] ?? []).map((rev) => (
-                            <div key={rev.id} className="rounded-md border p-2 text-xs">
-                              <div className="flex items-center gap-2">
-                                <Badge variant="outline">{rev.change_source}</Badge>
-                                {rev.created_at && (
-                                  <span className="text-muted-foreground">
-                                    {new Date(rev.created_at).toLocaleString()}
-                                  </span>
+                          (sectionHistory[section.id] ?? []).map((rev, idx) => {
+                            const revisions = sectionHistory[section.id] ?? [];
+                            const prevRev = idx < revisions.length - 1 ? revisions[idx + 1] : null;
+                            const revLabel = rev.created_at
+                              ? new Date(rev.created_at).toLocaleString()
+                              : `Revision ${revisions.length - idx}`;
+                            const prevLabel = prevRev?.created_at
+                              ? new Date(prevRev.created_at).toLocaleString()
+                              : "Initial";
+
+                            return (
+                              <div key={rev.id} className="rounded-md border p-2">
+                                {prevRev ? (
+                                  <RevisionDiff
+                                    oldText={prevRev.content_markdown}
+                                    newText={rev.content_markdown}
+                                    oldLabel={prevLabel}
+                                    newLabel={revLabel}
+                                    changeSource={rev.change_source}
+                                  />
+                                ) : (
+                                  <div className="space-y-1">
+                                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                      <span>{revLabel}</span>
+                                      <Badge variant="outline" className="text-[10px] py-0">
+                                        {rev.change_source}
+                                      </Badge>
+                                      <span className="italic">Initial revision</span>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground line-clamp-3">
+                                      {rev.content_markdown.slice(0, 200)}
+                                      {rev.content_markdown.length > 200 ? "..." : ""}
+                                    </p>
+                                  </div>
                                 )}
                               </div>
-                              <p className="mt-1 line-clamp-3 text-muted-foreground">
-                                {rev.content_markdown.slice(0, 200)}
-                                {rev.content_markdown.length > 200 ? "..." : ""}
-                              </p>
-                            </div>
-                          ))
+                            );
+                          })
                         )}
                       </div>
                     )}

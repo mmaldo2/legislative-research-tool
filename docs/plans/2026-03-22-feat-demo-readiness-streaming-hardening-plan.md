@@ -300,7 +300,7 @@ Close P1 security items so due diligence questions have clean answers.
 
 Reshape the user-facing story and add the revision diff feature.
 
-- [ ] **4.1** Redesign landing page (`frontend/src/app/page.tsx`)
+- [x] **4.1** Redesign landing page (`frontend/src/app/page.tsx`)
   - Change headline from "Legislative Research Tool" to emphasize IDE/drafting identity
   - Subtitle: "Draft model legislation grounded in real legislative data, AI analysis, and ML-powered predictions across 50 states and Congress"
   - Reorder feature cards: lead with Composer, then Research Assistant, then Prediction, then Search
@@ -308,7 +308,7 @@ Reshape the user-facing story and add the revision diff feature.
   - Secondary CTA: "Explore Research" -> `/search`
   - Add a visual element showing the composer workflow
 
-- [ ] **4.2** Add visual revision diff to composer
+- [x] **4.2** Add visual revision diff to composer
   - Install `diff-match-patch` package in frontend
   - Create `frontend/src/components/revision-diff.tsx` component
     - Props: `oldText: string`, `newText: string`, `oldLabel: string`, `newLabel: string`

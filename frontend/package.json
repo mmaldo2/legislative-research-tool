@@ -10,9 +10,11 @@
     "generate:types": "openapi-typescript http://localhost:8000/openapi.json -o src/types/api.generated.ts"
   },
   "dependencies": {
+    "@types/diff-match-patch": "^1.0.36",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
+    "diff-match-patch": "^1.0.5",
     "lucide-react": "^0.575.0",
     "next": "16.1.6",
     "radix-ui": "^1.4.3",
