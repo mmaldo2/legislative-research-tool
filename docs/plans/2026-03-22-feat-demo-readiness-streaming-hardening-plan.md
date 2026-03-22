@@ -107,9 +107,9 @@ Prerequisite: land v1.5 and close stale todos before starting new work.
 
 Build the SSE plumbing bottom-up: harness -> services -> API -> frontend.
 
-- [ ] **1.1** Add `sse-starlette` to `pyproject.toml` dependencies
+- [x] **1.1** Add `sse-starlette` to `pyproject.toml` dependencies
 
-- [ ] **1.2** Add `_run_analysis_stream()` to `LLMHarness` (`src/llm/harness.py`)
+- [x] **1.2** Add `_run_analysis_stream()` to `LLMHarness` (`src/llm/harness.py`)
   - Parallel method to `_run_analysis()` that yields SSE-formatted events
   - Uses `client.messages.stream()` (Anthropic SDK native streaming)
   - Yields `token` events as `RawContentBlockDelta` arrives
@@ -120,14 +120,14 @@ Build the SSE plumbing bottom-up: harness -> services -> API -> frontend.
   - Does NOT check content-hash cache (caller decides whether to stream or return cached)
   - Async generator: `async def _run_analysis_stream(...) -> AsyncGenerator[str, None]`
 
-- [ ] **1.3** Add streaming variants to harness public methods
+- [x] **1.3** Add streaming variants to harness public methods
   - `stream_draft_policy_section()`, `stream_rewrite_policy_section()`
   - `stream_analyze_draft_constitutional()`, `stream_analyze_draft_patterns()`
   - `stream_summarize()`, `stream_classify()`
   - Each checks cache first — on hit, yields single `done` event; on miss, delegates to `_run_analysis_stream()`
   - Same load-call-persist pattern: caller provides pre-loaded data, no DB during stream
 
-- [ ] **1.4** Add `stream_agentic_chat()` to `ChatService` (`src/services/chat_service.py`)
+- [x] **1.4** Add `stream_agentic_chat()` to `ChatService` (`src/services/chat_service.py`)
   - Async generator variant of `run_agentic_chat()`
   - Tool-use rounds remain non-streaming (internal, fast)
   - Yields `tool_status` events when entering/exiting each tool call

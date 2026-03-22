@@ -7,7 +7,7 @@ Content-hash caching prevents re-processing unchanged bills.
 import hashlib
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from typing import TypeVar
 
 import anthropic
@@ -206,6 +206,108 @@ class LLMHarness:
             )
 
         return output
+
+    # ------------------------------------------------------------------
+    # Streaming support
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _sse_event(event_type: str, data: dict) -> str:
+        """Format an SSE event string."""
+        return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+
+    async def _run_analysis_stream(
+        self,
+        *,
+        model: str,
+        system_prompt: str,
+        user_prompt: str,
+        max_tokens: int,
+        output_type: type[T],
+        fallback_fn: Callable[[str], T],
+        cost_label: str,
+    ) -> AsyncGenerator[str, None]:
+        """Stream an analysis, yielding SSE events.
+
+        Unlike _run_analysis, this does NOT check cache or store results — the
+        caller is responsible for those phases (load-call-persist pattern).
+
+        Yields:
+            SSE-formatted strings: 'event: token' during generation,
+            'event: done' with the full parsed result on completion,
+            'event: error' if something goes wrong.
+        """
+        accumulated_text = ""
+
+        try:
+            async with self.client.messages.stream(
+                model=model,
+                max_tokens=max_tokens,
+                system=system_prompt,
+                messages=[{"role": "user", "content": user_prompt}],
+            ) as stream:
+                async for event in stream:
+                    if event.type == "content_block_delta":
+                        delta_text = event.delta.text
+                        accumulated_text += delta_text
+                        yield self._sse_event("token", {"text": delta_text})
+
+                # Get final message for usage tracking
+                final_message = await stream.get_final_message()
+
+        except anthropic.RateLimitError as e:
+            yield self._sse_event("error", {
+                "message": "Rate limit exceeded. Please try again shortly.",
+                "retryable": True,
+                "error_type": "rate_limit",
+                "detail": str(e),
+            })
+            return
+        except anthropic.APIConnectionError as e:
+            yield self._sse_event("error", {
+                "message": "Connection to AI service failed.",
+                "retryable": True,
+                "error_type": "timeout",
+                "detail": str(e),
+            })
+            return
+        except anthropic.BadRequestError as e:
+            yield self._sse_event("error", {
+                "message": "Request was rejected by the AI service.",
+                "retryable": False,
+                "error_type": "content_policy",
+                "detail": str(e),
+            })
+            return
+        except anthropic.APIStatusError as e:
+            yield self._sse_event("error", {
+                "message": "AI service encountered an error.",
+                "retryable": True,
+                "error_type": "server",
+                "detail": str(e),
+            })
+            return
+
+        # Parse the accumulated text into the structured output
+        try:
+            result_data = json.loads(accumulated_text)
+            output = output_type(**result_data)
+        except (json.JSONDecodeError, ValueError):
+            output = fallback_fn(accumulated_text)
+
+        # Track costs
+        tokens_in = final_message.usage.input_tokens
+        tokens_out = final_message.usage.output_tokens
+        self.cost_tracker.record(model, tokens_in, tokens_out, cost_label)
+
+        # Yield the final structured result
+        yield self._sse_event("done", {
+            "metadata": output.model_dump(),
+            "usage": {
+                "input_tokens": tokens_in,
+                "output_tokens": tokens_out,
+            },
+        })
 
     # ------------------------------------------------------------------
     # Public analysis methods — thin wrappers around _run_analysis
@@ -838,3 +940,275 @@ class LLMHarness:
         result.period_covered = period_covered
         result.bills_analyzed = total_bills
         return result
+
+    # ------------------------------------------------------------------
+    # Streaming public methods — cache-aware wrappers around _run_analysis_stream
+    # ------------------------------------------------------------------
+
+    async def _cached_or_stream(
+        self,
+        *,
+        bill_id: str,
+        analysis_type: str,
+        prompt_version: str,
+        c_hash: str,
+        output_type: type[T],
+        skip_store: bool,
+        stream_kwargs: dict,
+    ) -> AsyncGenerator[str, None]:
+        """Check cache; on hit yield instant done event, on miss stream from LLM."""
+        if not skip_store:
+            cached = await self._check_cache(bill_id, analysis_type, prompt_version, c_hash)
+            if cached:
+                output = output_type(**cached)
+                yield self._sse_event("done", {"metadata": output.model_dump(), "cached": True})
+                return
+
+        async for event in self._run_analysis_stream(**stream_kwargs):
+            yield event
+
+    async def stream_summarize(
+        self,
+        bill_id: str,
+        bill_text: str,
+        identifier: str = "",
+        jurisdiction: str = "",
+        title: str = "",
+    ) -> AsyncGenerator[str, None]:
+        """Stream a bill summary."""
+        c_hash = self.content_hash(bill_text, summarize_v1.PROMPT_VERSION)
+        async for event in self._cached_or_stream(
+            bill_id=bill_id,
+            analysis_type="summary",
+            prompt_version=summarize_v1.PROMPT_VERSION,
+            c_hash=c_hash,
+            output_type=BillSummaryOutput,
+            skip_store=False,
+            stream_kwargs={
+                "model": settings.summary_model,
+                "system_prompt": summarize_v1.SYSTEM_PROMPT,
+                "user_prompt": summarize_v1.USER_PROMPT_TEMPLATE.format(
+                    identifier=identifier,
+                    jurisdiction=jurisdiction,
+                    title=title,
+                    bill_text=bill_text[:MAX_SINGLE_TEXT_CHARS],
+                ),
+                "max_tokens": 2048,
+                "output_type": BillSummaryOutput,
+                "fallback_fn": lambda text: BillSummaryOutput(
+                    plain_english_summary=text or "Analysis unavailable.",
+                    key_provisions=[],
+                    affected_populations=[],
+                    changes_to_existing_law=[],
+                    confidence=0.5,
+                ),
+                "cost_label": "summarize",
+            },
+        ):
+            yield event
+
+    async def stream_draft_policy_section(
+        self,
+        workspace_id: str,
+        section_id: str,
+        workspace_title: str,
+        target_jurisdiction: str,
+        drafting_template: str,
+        goal_prompt: str | None,
+        section_heading: str,
+        section_purpose: str,
+        other_sections_summary: str,
+        precedents_text: str,
+        instruction_text: str | None,
+    ) -> AsyncGenerator[str, None]:
+        """Stream a policy section draft."""
+        extra_instruction = (
+            f"Additional instruction: {instruction_text}" if instruction_text else ""
+        )
+        c_hash = self.content_hash(
+            (
+                f"{workspace_id}:{section_id}:{section_heading}:"
+                f"{instruction_text or ''}:{precedents_text[:5000]}"
+            ),
+            policy_section_draft_v1.PROMPT_VERSION,
+        )
+        async for event in self._cached_or_stream(
+            bill_id=f"policy-workspace:{workspace_id}",
+            analysis_type="policy_section_draft",
+            prompt_version=policy_section_draft_v1.PROMPT_VERSION,
+            c_hash=c_hash,
+            output_type=PolicySectionDraftOutput,
+            skip_store=True,
+            stream_kwargs={
+                "model": settings.summary_model,
+                "system_prompt": policy_section_draft_v1.SYSTEM_PROMPT,
+                "user_prompt": policy_section_draft_v1.USER_PROMPT_TEMPLATE.format(
+                    workspace_title=workspace_title,
+                    target_jurisdiction=target_jurisdiction,
+                    drafting_template=drafting_template,
+                    goal_prompt=goal_prompt or "None provided",
+                    section_heading=section_heading,
+                    section_purpose=section_purpose,
+                    other_sections_summary=other_sections_summary or "None",
+                    precedents_text=precedents_text[:MAX_SINGLE_TEXT_CHARS],
+                    instruction_text=extra_instruction,
+                ),
+                "max_tokens": 4096,
+                "output_type": PolicySectionDraftOutput,
+                "fallback_fn": lambda text: PolicySectionDraftOutput(
+                    content_markdown=text or "Unable to draft this section.",
+                ),
+                "cost_label": "policy_section_draft",
+            },
+        ):
+            yield event
+
+    async def stream_rewrite_policy_section(
+        self,
+        workspace_id: str,
+        section_id: str,
+        action_type: str,
+        workspace_title: str,
+        target_jurisdiction: str,
+        section_heading: str,
+        current_text: str,
+        selected_text: str | None,
+        instruction_text: str | None,
+        precedents_text: str,
+    ) -> AsyncGenerator[str, None]:
+        """Stream a policy section rewrite."""
+        selected_block = f"Selected text to revise:\n{selected_text}" if selected_text else ""
+        c_hash = self.content_hash(
+            (
+                f"{workspace_id}:{section_id}:{action_type}:"
+                f"{instruction_text or ''}:{current_text[:5000]}"
+            ),
+            policy_rewrite_v1.PROMPT_VERSION,
+        )
+        async for event in self._cached_or_stream(
+            bill_id=f"policy-workspace:{workspace_id}",
+            analysis_type="policy_rewrite",
+            prompt_version=policy_rewrite_v1.PROMPT_VERSION,
+            c_hash=c_hash,
+            output_type=PolicyRewriteOutput,
+            skip_store=True,
+            stream_kwargs={
+                "model": settings.summary_model,
+                "system_prompt": policy_rewrite_v1.SYSTEM_PROMPT,
+                "user_prompt": policy_rewrite_v1.USER_PROMPT_TEMPLATE.format(
+                    action_type=action_type,
+                    workspace_title=workspace_title,
+                    target_jurisdiction=target_jurisdiction,
+                    section_heading=section_heading,
+                    current_text=current_text[:MAX_SINGLE_TEXT_CHARS],
+                    selected_text_block=selected_block,
+                    instruction_text=instruction_text or "Apply the requested change.",
+                    precedents_text=precedents_text[:MAX_PAIRED_TEXT_CHARS],
+                ),
+                "max_tokens": 4096,
+                "output_type": PolicyRewriteOutput,
+                "fallback_fn": lambda text: PolicyRewriteOutput(
+                    content_markdown=text or "Unable to revise this section.",
+                ),
+                "cost_label": "policy_rewrite",
+            },
+        ):
+            yield event
+
+    async def stream_analyze_draft_constitutional(
+        self,
+        workspace_id: str,
+        section_id: str,
+        draft_text: str,
+        section_heading: str,
+        jurisdiction: str,
+        goal_prompt: str | None,
+    ) -> AsyncGenerator[str, None]:
+        """Stream a constitutional analysis of user-drafted text."""
+        c_hash = self.content_hash(
+            f"{workspace_id}:{section_id}:{draft_text[:5000]}",
+            draft_analysis_v1.PROMPT_VERSION + ":constitutional",
+        )
+        async for event in self._cached_or_stream(
+            bill_id=f"draft:{workspace_id}:{section_id}",
+            analysis_type="draft_constitutional",
+            prompt_version=draft_analysis_v1.PROMPT_VERSION,
+            c_hash=c_hash,
+            output_type=ConstitutionalAnalysisOutput,
+            skip_store=True,
+            stream_kwargs={
+                "model": settings.summary_model,
+                "system_prompt": draft_analysis_v1.CONSTITUTIONAL_SYSTEM_PROMPT,
+                "user_prompt": (
+                    draft_analysis_v1.CONSTITUTIONAL_USER_TEMPLATE.replace(
+                        "{section_heading}", section_heading
+                    )
+                    .replace("{jurisdiction}", jurisdiction)
+                    .replace("{goal_prompt}", goal_prompt or "Not specified")
+                    .replace("{draft_text}", draft_text[:MAX_SINGLE_TEXT_CHARS])
+                ),
+                "max_tokens": 4096,
+                "output_type": ConstitutionalAnalysisOutput,
+                "fallback_fn": lambda text: ConstitutionalAnalysisOutput(
+                    concerns=[],
+                    preemption_issues=[],
+                    has_severability_clause=False,
+                    overall_risk_level="unknown",
+                    summary=text or "Unable to analyze this draft.",
+                    confidence=0.0,
+                ),
+                "cost_label": "draft_constitutional",
+            },
+        ):
+            yield event
+
+    async def stream_analyze_draft_patterns(
+        self,
+        workspace_id: str,
+        section_id: str,
+        draft_text: str,
+        section_heading: str,
+        jurisdiction: str,
+        goal_prompt: str | None,
+        precedent_context: str,
+    ) -> AsyncGenerator[str, None]:
+        """Stream a pattern analysis of user-drafted text."""
+        c_hash = self.content_hash(
+            f"{workspace_id}:{section_id}:{draft_text[:5000]}",
+            draft_analysis_v1.PROMPT_VERSION + ":patterns",
+        )
+        async for event in self._cached_or_stream(
+            bill_id=f"draft:{workspace_id}:{section_id}",
+            analysis_type="draft_patterns",
+            prompt_version=draft_analysis_v1.PROMPT_VERSION,
+            c_hash=c_hash,
+            output_type=PatternDetectionOutput,
+            skip_store=True,
+            stream_kwargs={
+                "model": settings.summary_model,
+                "system_prompt": draft_analysis_v1.PATTERNS_SYSTEM_PROMPT,
+                "user_prompt": (
+                    draft_analysis_v1.PATTERNS_USER_TEMPLATE.replace(
+                        "{section_heading}", section_heading
+                    )
+                    .replace("{jurisdiction}", jurisdiction)
+                    .replace("{goal_prompt}", goal_prompt or "Not specified")
+                    .replace("{draft_text}", draft_text[:MAX_SINGLE_TEXT_CHARS])
+                    .replace("{precedent_context}", precedent_context[:MAX_PAIRED_TEXT_CHARS])
+                ),
+                "max_tokens": 4096,
+                "output_type": PatternDetectionOutput,
+                "fallback_fn": lambda text: PatternDetectionOutput(
+                    pattern_type="unknown",
+                    common_framework="",
+                    bills_analyzed=[],
+                    shared_provisions=[],
+                    key_variations=[],
+                    model_legislation_confidence=0.0,
+                    summary=text or "Unable to analyze patterns.",
+                    confidence=0.0,
+                ),
+                "cost_label": "draft_patterns",
+            },
+        ):
+            yield event

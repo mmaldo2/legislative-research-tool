@@ -21,6 +21,7 @@ dependencies = [
     "slowapi>=0.1.9",
     "cachetools>=5.5.0",
     "cryptography>=44.0.0",
+    "sse-starlette>=2.1.0",
 ]
 
 [project.optional-dependencies]

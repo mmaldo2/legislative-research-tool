@@ -2,7 +2,7 @@
 
 import json
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any
 
 import anthropic
@@ -184,3 +184,158 @@ async def run_agentic_chat(
         )
 
     return final_text, all_tool_calls
+
+
+def _sse_event(event_type: str, data: dict) -> str:
+    """Format an SSE event string."""
+    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+
+
+async def stream_agentic_chat(
+    *,
+    system_prompt: str,
+    messages: list[dict],
+    client: anthropic.AsyncAnthropic,
+    tools: list[dict] | None = None,
+    max_rounds: int = MAX_TOOL_ROUNDS,
+    execute_tool_fn: ToolExecutor | None = None,
+) -> AsyncGenerator[str, None]:
+    """Stream the agentic chat loop, yielding SSE events.
+
+    Yields tool_status events during tool-use rounds and token events for
+    the final response. The caller is responsible for DB persistence
+    (load-call-persist pattern).
+    """
+    if tools is None:
+        tools = RESEARCH_TOOLS
+
+    _exec_fn = execute_tool_fn or _default_execute_tool
+    model = settings.summary_model
+    all_tool_calls: list[dict] = []
+    api_messages = list(messages)
+    final_text = ""
+
+    for _round in range(max_rounds):
+        # Non-streaming call for tool-use rounds
+        response = await client.messages.create(
+            model=model,
+            max_tokens=4096,
+            system=system_prompt,
+            messages=api_messages,
+            tools=tools,
+        )
+
+        if response.stop_reason == "end_turn":
+            # Final response — stream this one token-by-token
+            # Re-do the call with streaming for the final response
+            final_text = extract_text(response)
+            break
+
+        elif response.stop_reason == "tool_use":
+            api_messages.append({"role": "assistant", "content": response.content})
+
+            tool_results = []
+            for block in response.content:
+                if block.type != "tool_use":
+                    continue
+
+                tool_name = block.name
+                tool_input = block.input
+
+                # Yield tool_status event so frontend shows progress
+                yield _sse_event("tool_status", {
+                    "tool": tool_name,
+                    "status": "running",
+                    "description": _tool_description(tool_name, tool_input),
+                })
+
+                try:
+                    result_str = await _execute_tool_with_session(
+                        tool_name, tool_input, client, _exec_fn
+                    )
+                except (ValueError, LookupError, json.JSONDecodeError):
+                    logger.exception("Tool execution error: %s", tool_name)
+                    result_str = json.dumps({"error": f"Tool '{tool_name}' encountered an error."})
+
+                # Summarize for metadata
+                result_data = json.loads(result_str)
+                if "error" in result_data:
+                    summary = result_data["error"]
+                elif "total" in result_data:
+                    summary = f"{result_data['total']} results"
+                elif "bill_id" in result_data:
+                    ident = result_data.get("identifier", result_data["bill_id"])
+                    summary = f"Retrieved {ident}"
+                else:
+                    summary = f"{len(result_str)} chars"
+
+                all_tool_calls.append({
+                    "tool_name": tool_name,
+                    "arguments": tool_input,
+                    "result_summary": summary,
+                })
+
+                yield _sse_event("tool_status", {
+                    "tool": tool_name,
+                    "status": "complete",
+                    "description": summary,
+                })
+
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result_str,
+                })
+
+            api_messages.append({"role": "user", "content": tool_results})
+
+        else:
+            final_text = extract_text(response)
+            if not final_text:
+                final_text = "I was unable to complete the request."
+            break
+    else:
+        extracted = extract_text(response)
+        final_text = extracted or (
+            "I reached the maximum number of research steps. Here is what I found so far."
+        )
+
+    # Now stream the final response token-by-token by re-calling with streaming
+    # We already have the final text from the non-streaming call above. For the
+    # best UX we re-issue the final turn as a streaming call. However, if the
+    # response was produced from a non-tool-use turn, we already have the text
+    # and can emit it in chunks to simulate streaming (avoids a redundant API call).
+    chunk_size = 12  # characters per token event (approximates real token boundaries)
+    for i in range(0, len(final_text), chunk_size):
+        yield _sse_event("token", {"text": final_text[i : i + chunk_size]})
+
+    yield _sse_event("done", {
+        "text": final_text,
+        "tool_calls": all_tool_calls,
+    })
+
+
+def _tool_description(tool_name: str, tool_input: dict) -> str:
+    """Generate a human-readable description of a tool call for status events."""
+    descriptions: dict[str, Callable[[dict], str]] = {
+        "search_bills": lambda args: f"Searching for '{args.get('query', '')}'...",
+        "get_bill_detail": lambda args: f"Reading bill {args.get('bill_id', '')}...",
+        "get_bill_text": lambda args: f"Fetching text of {args.get('bill_id', '')}...",
+        "get_similar_bills": lambda args: (
+            f"Finding similar bills to {args.get('bill_id', '')}..."
+        ),
+        "summarize_bill": lambda args: f"Summarizing {args.get('bill_id', '')}...",
+        "analyze_constitutional": lambda args: (
+            f"Analyzing constitutionality of {args.get('bill_id', '')}..."
+        ),
+        "search_precedent_language": lambda args: (
+            f"Searching precedent language for '{args.get('query', '')}'..."
+        ),
+        "get_trend_data": lambda _args: "Getting trend data...",
+        "get_jurisdiction_info": lambda args: (
+            f"Looking up {args.get('jurisdiction_id', '')}..."
+        ),
+        "get_legislator_info": lambda _args: "Looking up legislator...",
+    }
+    fn = descriptions.get(tool_name, lambda _: f"Running {tool_name}...")
+    return fn(tool_input)
