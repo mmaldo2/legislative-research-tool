@@ -27,7 +27,7 @@ from src.models.policy_workspace import (
 )
 
 WORKSPACE_TITLE = "Model Data Privacy Act"
-DEMO_CLIENT_ID = "demo-user-001"
+DEMO_CLIENT_ID = "anonymous"
 
 
 def _id() -> str:
