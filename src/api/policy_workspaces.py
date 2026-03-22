@@ -1,5 +1,6 @@
 """Policy workspace composer CRUD endpoints."""
 
+import json
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -9,6 +10,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sse_starlette.sse import EventSourceResponse
 
 from src.api.deps import get_anthropic_client, get_llm_harness, get_session, limiter
 from src.database import async_session_factory
@@ -789,6 +791,168 @@ async def workspace_chat(
             created_at=assistant_msg.created_at,
         ),
     )
+
+
+@router.post("/policy-workspaces/{workspace_id}/chat/stream")
+@limiter.limit("30/minute")
+async def workspace_chat_stream(
+    request: Request,
+    workspace_id: str,
+    body: ChatRequest,
+    client_id: str = Depends(get_client_id),
+    db: AsyncSession = Depends(get_session),
+) -> EventSourceResponse:
+    """Stream a workspace-aware chat response via Server-Sent Events."""
+    from src.llm.prompts.workspace_assistant_v1 import (
+        SYSTEM_PROMPT_TEMPLATE,
+        format_workspace_context,
+    )
+    from src.services.chat_service import (
+        HISTORY_CHAR_BUDGET,
+        stream_agentic_chat,
+        trim_history,
+    )
+
+    message = body.message
+    conversation_id = body.conversation_id
+
+    # 1. Load workspace context
+    workspace = await _get_workspace_or_error(
+        db, workspace_id=workspace_id, client_id=client_id, load_detail=True
+    )
+    precedent_summaries, sections = _build_workspace_context_for_chat(workspace)
+    workspace_context = format_workspace_context(
+        title=workspace.title,
+        target_jurisdiction=workspace.target_jurisdiction_id or "",
+        drafting_template=workspace.drafting_template or "",
+        goal_prompt=workspace.goal_prompt,
+        precedent_summaries=precedent_summaries,
+        sections=sections,
+    )
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.replace(
+        "{workspace_context}", workspace_context
+    )
+
+    # 2. Load or create conversation
+    if conversation_id:
+        result = await db.execute(
+            select(Conversation)
+            .where(Conversation.id == conversation_id)
+            .options(selectinload(Conversation.messages))
+        )
+        conversation = result.scalar_one_or_none()
+        if (
+            not conversation
+            or conversation.client_id != client_id
+            or conversation.workspace_id != workspace_id
+        ):
+            raise HTTPException(status_code=404, detail="Conversation not found")
+    else:
+        conversation = Conversation(
+            id=uuid.uuid4().hex,
+            client_id=client_id,
+            workspace_id=workspace_id,
+            title=f"Research: {workspace.title[:60]}",
+        )
+        db.add(conversation)
+        await db.flush()
+
+    user_msg = ConversationMessage(
+        conversation_id=conversation.id,
+        role="user",
+        content=message,
+    )
+    db.add(user_msg)
+
+    messages: list[dict] = []
+    for msg in conversation.messages:
+        if msg.role in ("user", "assistant"):
+            messages.append({"role": msg.role, "content": msg.content})
+
+    conv_id = conversation.id
+    await db.commit()
+
+    # 3. Stream agentic loop (no DB held)
+    client = get_anthropic_client()
+    trimmed = trim_history(messages, HISTORY_CHAR_BUDGET)
+
+    async def event_generator():
+        final_text = ""
+        all_tool_calls: list[dict] = []
+
+        async for event_str in stream_agentic_chat(
+            system_prompt=system_prompt,
+            messages=trimmed,
+            client=client,
+        ):
+            if "event: done" in event_str:
+                data_line = event_str.split("data: ", 1)[1].split("\n")[0]
+                done_data = json.loads(data_line)
+                final_text = done_data.get("text", "")
+                all_tool_calls = done_data.get("tool_calls", [])
+                done_data["conversation_id"] = conv_id
+                event_str = (
+                    f"event: done\ndata: {json.dumps(done_data)}\n\n"
+                )
+            yield event_str
+
+        # 4. Persist assistant message
+        if final_text:
+            tool_calls_meta = all_tool_calls if all_tool_calls else None
+            async with async_session_factory() as persist_db:
+                assistant_msg = ConversationMessage(
+                    conversation_id=conv_id,
+                    role="assistant",
+                    content=final_text,
+                    tool_calls=tool_calls_meta,
+                )
+                persist_db.add(assistant_msg)
+                conv = await persist_db.get(Conversation, conv_id)
+                if conv:
+                    conv.updated_at = datetime.now(UTC)
+                await persist_db.commit()
+
+    return EventSourceResponse(event_generator())
+
+
+@router.post(
+    "/policy-workspaces/{workspace_id}/sections/{section_id}/compose/stream",
+)
+@limiter.limit("5/minute")
+async def compose_policy_section_stream(
+    request: Request,
+    workspace_id: str,
+    section_id: str,
+    body: PolicyComposeRequest,
+    client_id: str = Depends(get_client_id),
+    db: AsyncSession = Depends(get_session),
+) -> EventSourceResponse:
+    """Stream a compose/analyze action via Server-Sent Events.
+
+    Streams token events during LLM generation, then emits a done event
+    with the full structured PolicyGenerationResponse.
+    """
+    from src.services.policy_composer_service import (
+        stream_compose_section,
+    )
+
+    try:
+        event_gen = await stream_compose_section(
+            workspace_id=workspace_id,
+            section_id=section_id,
+            client_id=client_id,
+            action_type=body.action_type,
+            instruction_text=body.instruction_text,
+            selected_text=body.selected_text,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return EventSourceResponse(event_gen)
 
 
 @router.get(

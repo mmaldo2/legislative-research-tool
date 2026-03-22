@@ -135,7 +135,7 @@ Build the SSE plumbing bottom-up: harness -> services -> API -> frontend.
   - Yields `done` event with final message text and conversation metadata
   - load-call-persist: load conversation + history before entering generator; persist after generator exhausted (caller responsibility)
 
-- [ ] **1.5** Add SSE endpoints to API layer
+- [x] **1.5** Add SSE endpoints to API layer
   - `POST /chat/stream` in `src/api/chat.py`
     - Returns `EventSourceResponse` (from sse-starlette)
     - Load conversation -> yield from `stream_agentic_chat()` -> persist on completion

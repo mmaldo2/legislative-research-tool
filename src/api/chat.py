@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sse_starlette.sse import EventSourceResponse
 
 from src.api.deps import get_anthropic_client, get_session, limiter
 from src.database import async_session_factory
@@ -533,6 +534,107 @@ async def chat(
             created_at=assistant_msg.created_at,
         ),
     )
+
+
+@router.post("/chat/stream")
+@limiter.limit("30/minute")
+async def chat_stream(
+    request: Request,
+    req: ChatRequest,
+    client_id: str = Depends(get_client_id),
+    db: AsyncSession = Depends(get_session),
+) -> EventSourceResponse:
+    """Stream a chat response via Server-Sent Events.
+
+    Same as POST /chat but returns SSE events: tool_status during tool use,
+    token for streaming text, done with final message and metadata.
+    """
+    # 1. Load phase — create/retrieve conversation, store user message
+    if req.conversation_id:
+        result = await db.execute(
+            select(Conversation)
+            .where(Conversation.id == req.conversation_id)
+            .options(selectinload(Conversation.messages))
+        )
+        conversation = result.scalar_one_or_none()
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        if conversation.client_id != client_id:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+    else:
+        conversation = Conversation(
+            id=uuid.uuid4().hex,
+            client_id=client_id,
+            title=_generate_title(req.message),
+        )
+        db.add(conversation)
+        await db.flush()
+
+    user_msg = ConversationMessage(
+        conversation_id=conversation.id,
+        role="user",
+        content=req.message,
+    )
+    db.add(user_msg)
+
+    messages: list[dict] = []
+    for msg in conversation.messages:
+        if msg.role == "user":
+            messages.append({"role": "user", "content": msg.content})
+        elif msg.role == "assistant":
+            messages.append({"role": "assistant", "content": msg.content})
+
+    conversation_id = conversation.id
+    await db.commit()
+
+    # 2. Call phase — stream agentic loop (no DB held)
+    from src.services.chat_service import (
+        HISTORY_CHAR_BUDGET,
+        stream_agentic_chat,
+        trim_history,
+    )
+
+    client = get_anthropic_client()
+    trimmed = trim_history(messages, HISTORY_CHAR_BUDGET)
+
+    async def event_generator():
+        final_text = ""
+        all_tool_calls: list[dict] = []
+
+        async for event_str in stream_agentic_chat(
+            system_prompt=research_assistant_v1.SYSTEM_PROMPT,
+            messages=trimmed,
+            client=client,
+        ):
+            # Parse the event to capture done data for persistence
+            if 'event: done' in event_str:
+                data_line = event_str.split("data: ", 1)[1].split("\n")[0]
+                done_data = json.loads(data_line)
+                final_text = done_data.get("text", "")
+                all_tool_calls = done_data.get("tool_calls", [])
+                # Include conversation_id in the done event
+                done_data["conversation_id"] = conversation_id
+                event_str = f"event: done\ndata: {json.dumps(done_data)}\n\n"
+
+            yield event_str
+
+        # 3. Persist phase — store assistant message
+        if final_text:
+            tool_calls_meta = all_tool_calls if all_tool_calls else None
+            async with async_session_factory() as persist_db:
+                assistant_msg = ConversationMessage(
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    content=final_text,
+                    tool_calls=tool_calls_meta,
+                )
+                persist_db.add(assistant_msg)
+                conv = await persist_db.get(Conversation, conversation_id)
+                if conv:
+                    conv.updated_at = datetime.now(UTC)
+                await persist_db.commit()
+
+    return EventSourceResponse(event_generator())
 
 
 @router.get("/conversations", response_model=ConversationListResponse)

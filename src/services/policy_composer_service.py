@@ -1,6 +1,8 @@
 """Service layer for composer outline generation, section drafting, and acceptance."""
 
+import json
 import re
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -482,6 +484,156 @@ async def compose_section(
         await session.commit()
         await session.refresh(generation)
         return generation
+
+
+def _sse_event(event_type: str, data: dict) -> str:
+    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+
+
+async def stream_compose_section(
+    *,
+    workspace_id: str,
+    section_id: str,
+    client_id: str,
+    action_type: str,
+    instruction_text: str | None = None,
+    selected_text: str | None = None,
+) -> AsyncGenerator[str, None]:
+    """Stream a compose action, yielding SSE events.
+
+    Returns an async generator. The load and persist phases use their own
+    short-lived DB sessions. The call phase streams with no DB connection held.
+    """
+    if action_type not in COMPOSE_ACTION_TYPES:
+        raise ValueError(f"Invalid action type: {action_type}")
+
+    # --- Load phase ---
+    async with async_session_factory() as session:
+        workspace = await get_workspace_for_composer(
+            session, workspace_id=workspace_id, client_id=client_id
+        )
+        if workspace is None:
+            raise LookupError("Policy workspace not found")
+        if not workspace.sections:
+            raise ValueError("Generate an outline before composing sections")
+
+        section = next(
+            (s for s in workspace.sections if s.id == section_id), None
+        )
+        if section is None:
+            raise LookupError("Policy section not found")
+
+        bill_map = await _load_precedent_bills(session, workspace=workspace)
+        precedents_text = _format_precedent_context(workspace, bill_map)
+        bill_map_ids = list(bill_map.keys())
+
+        ws_id = workspace.id
+        ws_title = workspace.title
+        ws_jurisdiction = workspace.target_jurisdiction_id
+        ws_template = workspace.drafting_template
+        ws_goal = workspace.goal_prompt
+        sec_id = section.id
+        sec_heading = section.heading
+        sec_purpose = section.purpose or ""
+        sec_content = section.content_markdown
+        other_sections = _other_sections_summary(workspace, section.id)
+
+    # --- Call phase: stream from LLM, no DB held ---
+    import anthropic
+
+    harness = LLMHarness(
+        db_session=None,
+        client=anthropic.AsyncAnthropic(),
+    )
+
+    if action_type == "analyze_constitutional":
+        if not sec_content:
+            raise ValueError("Section must have content before analyzing")
+        stream = harness.stream_analyze_draft_constitutional(
+            workspace_id=ws_id,
+            section_id=sec_id,
+            draft_text=sec_content,
+            section_heading=sec_heading,
+            jurisdiction=ws_jurisdiction or "",
+            goal_prompt=ws_goal,
+        )
+    elif action_type == "analyze_patterns":
+        if not sec_content:
+            raise ValueError("Section must have content before analyzing")
+        stream = harness.stream_analyze_draft_patterns(
+            workspace_id=ws_id,
+            section_id=sec_id,
+            draft_text=sec_content,
+            section_heading=sec_heading,
+            jurisdiction=ws_jurisdiction or "",
+            goal_prompt=ws_goal,
+            precedent_context=precedents_text,
+        )
+    elif action_type == "draft_section":
+        stream = harness.stream_draft_policy_section(
+            workspace_id=ws_id,
+            section_id=sec_id,
+            workspace_title=ws_title,
+            target_jurisdiction=ws_jurisdiction,
+            drafting_template=ws_template,
+            goal_prompt=ws_goal,
+            section_heading=sec_heading,
+            section_purpose=sec_purpose,
+            other_sections_summary=other_sections,
+            precedents_text=precedents_text,
+            instruction_text=instruction_text,
+        )
+    else:
+        if not sec_content:
+            raise ValueError("Section must have content before rewriting")
+        stream = harness.stream_rewrite_policy_section(
+            workspace_id=ws_id,
+            section_id=sec_id,
+            action_type=action_type,
+            workspace_title=ws_title,
+            target_jurisdiction=ws_jurisdiction,
+            section_heading=sec_heading,
+            current_text=sec_content,
+            selected_text=selected_text,
+            instruction_text=instruction_text,
+            precedents_text=precedents_text,
+        )
+
+    output_payload = None
+    async for event_str in stream:
+        # Intercept done event to persist generation
+        if "event: done" in event_str:
+            data_line = event_str.split("data: ", 1)[1].split("\n")[0]
+            done_data = json.loads(data_line)
+            output_payload = done_data.get("metadata", {})
+        else:
+            yield event_str
+
+    # --- Persist phase ---
+    if output_payload is not None:
+        async with async_session_factory() as session:
+            generation = PolicyGeneration(
+                workspace_id=ws_id,
+                section_id=sec_id,
+                action_type=action_type,
+                instruction_text=instruction_text,
+                selected_text=selected_text,
+                output_payload=output_payload,
+                provenance={
+                    "precedent_bill_ids": bill_map_ids,
+                    "sources": [],
+                },
+            )
+            session.add(generation)
+            await session.commit()
+            await session.refresh(generation)
+
+            yield _sse_event("done", {
+                "metadata": output_payload,
+                "generation_id": generation.id,
+                "section_id": sec_id,
+                "action_type": action_type,
+            })
 
 
 async def accept_generation(
