@@ -147,7 +147,7 @@ Build the SSE plumbing bottom-up: harness -> services -> API -> frontend.
     - Load section + precedents -> yield from streaming harness -> persist generation on completion
   - Keep all existing sync endpoints unchanged
 
-- [ ] **1.6** Build frontend SSE client and update components
+- [x] **1.6** Build frontend SSE client and update components
   - Create `frontend/src/lib/sse.ts` — SSE event parser for `fetch()` with `ReadableStream`
     - `streamFetch(url, options)` -> async generator yielding typed events
     - Event types: `StreamTokenEvent`, `StreamToolStatusEvent`, `StreamErrorEvent`, `StreamDoneEvent`

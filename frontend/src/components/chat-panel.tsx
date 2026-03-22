@@ -2,10 +2,11 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
-  sendChatMessage,
-  sendWorkspaceChatMessage,
   getWorkspaceConversations,
+  getConversation,
 } from "@/lib/api";
+import { streamChat, streamWorkspaceChat } from "@/lib/sse";
+import type { StreamEvent } from "@/lib/sse";
 import type { ChatMessageResponse } from "@/types/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -42,11 +43,15 @@ export function ChatPanel({
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | undefined>();
   const [initialLoaded, setInitialLoaded] = useState(false);
+  // Streaming state
+  const [streamingText, setStreamingText] = useState("");
+  const [toolStatus, setToolStatus] = useState<string | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [messages, streamingText]);
 
   // Load existing workspace conversation on mount
   useEffect(() => {
@@ -57,7 +62,17 @@ export function ChatPanel({
       try {
         const data = await getWorkspaceConversations(workspaceId);
         if (data.conversations.length > 0) {
-          setConversationId(data.conversations[0].id);
+          const convId = data.conversations[0].id;
+          setConversationId(convId);
+          // Load message history for persistence across page refreshes
+          try {
+            const conv = await getConversation(convId);
+            if (conv.messages?.length) {
+              setMessages(conv.messages);
+            }
+          } catch {
+            // Failed to load history — start fresh
+          }
         }
       } catch {
         // No existing conversation — that's fine
@@ -78,38 +93,119 @@ export function ChatPanel({
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setLoading(true);
+    setStreamingText("");
+    setToolStatus(null);
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     try {
-      const res = workspaceId
-        ? await sendWorkspaceChatMessage(workspaceId, text, conversationId)
-        : await sendChatMessage(text, conversationId);
-      setConversationId(res.conversation_id);
-      setMessages((prev) => [...prev, res.message]);
+      const stream = workspaceId
+        ? streamWorkspaceChat(workspaceId, text, conversationId, controller.signal)
+        : streamChat(text, conversationId, controller.signal);
+
+      let accumulatedText = "";
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      let toolCalls: Array<Record<string, any>> = [];
+
+      for await (const event of stream) {
+        if (controller.signal.aborted) break;
+
+        switch (event.type) {
+          case "token":
+            accumulatedText += event.text;
+            setStreamingText(accumulatedText);
+            break;
+
+          case "tool_status":
+            if (event.status === "running") {
+              setToolStatus(event.description);
+            } else {
+              setToolStatus(null);
+            }
+            break;
+
+          case "done":
+            if (event.conversation_id) {
+              setConversationId(event.conversation_id);
+            }
+            if (event.text) {
+              accumulatedText = event.text;
+            }
+            toolCalls = event.tool_calls ?? [];
+            break;
+
+          case "error":
+            setMessages((prev) => [
+              ...prev,
+              {
+                role: "assistant",
+                content: event.retryable
+                  ? `${event.message} You can try sending your message again.`
+                  : event.message,
+                tool_calls: null,
+                created_at: new Date().toISOString(),
+              },
+            ]);
+            setStreamingText("");
+            setToolStatus(null);
+            setLoading(false);
+            return;
+        }
+      }
+
+      // Finalize: add the complete assistant message
+      const finalMsg: ChatMessageResponse = {
+        role: "assistant",
+        content: accumulatedText,
+        tool_calls: toolCalls.length > 0
+          ? toolCalls.map((tc) => ({
+              tool_name: tc.tool_name ?? "",
+              arguments: tc.arguments ?? {},
+              result_summary: tc.result_summary ?? "",
+            }))
+          : null,
+        created_at: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, finalMsg]);
+      setStreamingText("");
 
       // Check for suggestion blockquotes
-      if (onSuggestion && res.message.content) {
-        const idx = res.message.content.indexOf("> Suggested language:");
+      if (onSuggestion && accumulatedText) {
+        const idx = accumulatedText.indexOf("> Suggested language:");
         if (idx !== -1) {
-          const rest = res.message.content.slice(idx + "> Suggested language:".length);
+          const rest = accumulatedText.slice(idx + "> Suggested language:".length);
           const endIdx = rest.indexOf("\n\n");
           const suggested = endIdx !== -1 ? rest.slice(0, endIdx) : rest;
           onSuggestion(suggested.trim());
         }
       }
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: "Sorry, I encountered an error. Please try again.",
-          tool_calls: null,
-          created_at: new Date().toISOString(),
-        },
-      ]);
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") {
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: "assistant",
+            content: "Sorry, I encountered an error. Please try again.",
+            tool_calls: null,
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      }
+      setStreamingText("");
     } finally {
+      setToolStatus(null);
       setLoading(false);
+      abortControllerRef.current = null;
     }
   }, [input, loading, workspaceId, conversationId, onSuggestion]);
+
+  // Cleanup on unmount — cancel any in-flight stream
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
 
   const defaultEmpty = workspaceId
     ? "Ask questions about your draft, precedent bills, or legislative research."
@@ -119,7 +215,7 @@ export function ChatPanel({
     <div className={`flex flex-col ${className}`}>
       <ScrollArea className="flex-1 rounded-lg border p-3 mb-3">
         <div className="space-y-3">
-          {messages.length === 0 && (
+          {messages.length === 0 && !streamingText && (
             <div className="text-center py-8 text-muted-foreground">
               <Bot className="mx-auto h-10 w-10 mb-3 opacity-50" />
               <p className="text-xs">{emptyMessage || defaultEmpty}</p>
@@ -165,7 +261,40 @@ export function ChatPanel({
               )}
             </div>
           ))}
-          {loading && (
+
+          {/* Streaming assistant message (in progress) */}
+          {(streamingText || toolStatus) && (
+            <div className="flex gap-2">
+              <div className="flex-shrink-0 w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center">
+                <Bot className="h-3.5 w-3.5 text-primary" />
+              </div>
+              <div className="max-w-[85%]">
+                {toolStatus && !streamingText && (
+                  <Card>
+                    <CardContent className="p-2.5">
+                      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        {toolStatus}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )}
+                {streamingText && (
+                  <Card>
+                    <CardContent className="p-2.5">
+                      <p className="text-xs whitespace-pre-wrap leading-relaxed">
+                        {streamingText}
+                        <span className="inline-block w-1.5 h-3.5 bg-primary/50 ml-0.5 animate-pulse" />
+                      </p>
+                    </CardContent>
+                  </Card>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Loading state when no streaming has started */}
+          {loading && !streamingText && !toolStatus && (
             <div className="flex gap-2">
               <div className="flex-shrink-0 w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center">
                 <Bot className="h-3.5 w-3.5 text-primary" />
@@ -174,7 +303,7 @@ export function ChatPanel({
                 <CardContent className="p-2.5">
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Researching...
+                    Connecting...
                   </div>
                 </CardContent>
               </Card>
