@@ -1,7 +1,7 @@
 ---
 title: "feat: Composer v1.5 — IDE Integration (Research + Drafting Convergence)"
 type: feat
-status: active
+status: completed
 date: 2026-03-21
 origin: docs/scopes/2026-03-21-composer-v1.5-ide-integration-scope.md
 ---
@@ -59,9 +59,9 @@ Fix P2 #136 (connection pool starvation) across all LLM-calling code paths. With
 - [x] **0.4** Run existing test suite to verify no regressions from session management changes. (`tests/test_api/test_policy_workspaces.py`)
 
 **Acceptance criteria:**
-- [ ] No DB session is held during any LLM API call (harness or Anthropic SDK)
-- [ ] Multiple sections can have independent pending generations simultaneously
-- [ ] All 18 existing composer tests pass
+- [x] No DB session is held during any LLM API call (harness or Anthropic SDK)
+- [x] Multiple sections can have independent pending generations simultaneously
+- [x] All 18 existing composer tests pass
 
 ---
 
@@ -78,15 +78,15 @@ Wire the existing chat agentic loop into workspace-scoped conversations.
 - [x] **1.5** Extract shared chat logic — move the agentic loop, tool dispatch, and history trimming from `src/api/chat.py` into `src/services/chat_service.py` as `run_agentic_chat(system_prompt, messages, tools, db_factory)`. Both the general `/chat` endpoint and the workspace `/chat` endpoint call this. The general endpoint passes `research_assistant_v1.SYSTEM_PROMPT`; the workspace endpoint passes the formatted workspace prompt.
 - [x] **1.6** Add workspace conversation list endpoint — `GET /api/v1/policy-workspaces/{workspace_id}/conversations` returns conversations scoped to this workspace. Reuse `ConversationResponse` schema. (`src/api/policy_workspaces.py`)
 - [x] **1.7** Add Pydantic schemas — `WorkspaceChatRequest(message: str, conversation_id: str | None)` in `src/schemas/policy_workspace.py`. Reuse existing `ChatResponse` from `src/schemas/chat.py`.
-- [ ] **1.8** Write tests — workspace chat creation, conversation scoped to workspace, conversation resumption, tool use within workspace context, workspace ownership enforcement. (`tests/test_api/test_policy_workspaces.py`)
+- [x] **1.8** Write tests — workspace chat creation, conversation scoped to workspace, conversation resumption, tool use within workspace context, workspace ownership enforcement. (`tests/test_api/test_policy_workspaces.py`)
 
 **Acceptance criteria:**
-- [ ] Sending a chat message with a workspace_id creates a conversation linked to that workspace
-- [ ] The assistant's system prompt includes workspace title, jurisdiction, precedent summaries, and section headings
-- [ ] All 10 research tools work within the workspace chat
-- [ ] Conversation persists and can be resumed across page reloads
-- [ ] Different workspaces have separate conversations
-- [ ] Workspace owner cannot access another client's workspace conversations
+- [x] Sending a chat message with a workspace_id creates a conversation linked to that workspace
+- [x] The assistant's system prompt includes workspace title, jurisdiction, precedent summaries, and section headings
+- [x] All 10 research tools work within the workspace chat
+- [x] Conversation persists and can be resumed across page reloads
+- [x] Different workspaces have separate conversations
+- [x] Workspace owner cannot access another client's workspace conversations
 
 ---
 
@@ -96,19 +96,19 @@ Embed the chat interface in the composer detail page as a collapsible side panel
 
 **Tasks:**
 
-- [ ] **2.1** Extract reusable `ChatPanel` component — from the existing assistant page pattern (`frontend/src/app/assistant/page.tsx`). Props: `workspaceId?: string`, `className?: string`. Manages its own state: messages, input, loading, conversationId. Calls workspace chat endpoint when `workspaceId` is provided, general chat endpoint otherwise. Displays tool calls as collapsible badges. Auto-scrolls. (`frontend/src/components/chat-panel.tsx`)
-- [ ] **2.2** Add workspace chat API functions — `sendWorkspaceChatMessage(workspaceId, message, conversationId?)`, `listWorkspaceConversations(workspaceId)` in `frontend/src/lib/api.ts`. Follow existing patterns with `clientHeaders()`.
-- [ ] **2.3** Add TypeScript types — `WorkspaceChatRequest` in `frontend/src/types/api.ts`. Reuse existing `ChatResponse`, `ChatMessageResponse` types.
-- [ ] **2.4** Integrate `ChatPanel` into composer detail page — replace the collapsible "Research" card (lines 658-728) with a collapsible assistant panel. Use a two-column layout when panel is open: main content (sections editor) takes `col-span-2`, assistant panel takes `col-span-1`. When collapsed, main content takes full width. Toggle button in the composer toolbar with a `MessageSquare` icon. (`frontend/src/app/composer/[id]/page.tsx`)
-- [ ] **2.5** Add "Apply to compose" action — when the assistant's response contains a suggestion (detected by a `> Suggested language:` markdown blockquote pattern or similar convention), show an "Apply to Section" button below the message. Clicking it: (a) opens a dropdown to select which section to target, (b) prefills the compose form with `action_type: "rewrite_selection"`, `instruction_text: "<suggestion text>"`, `selected_text: "<current section content>"`. The user reviews and clicks "Compose" to trigger the normal compose flow. (`frontend/src/components/chat-panel.tsx`, `frontend/src/app/composer/[id]/page.tsx`)
-- [ ] **2.6** Load existing conversation on page mount — if the workspace has an existing conversation, load it into the chat panel so the user can continue where they left off. (`frontend/src/app/composer/[id]/page.tsx`)
+- [x] **2.1** Extract reusable `ChatPanel` component — from the existing assistant page pattern (`frontend/src/app/assistant/page.tsx`). Props: `workspaceId?: string`, `className?: string`. Manages its own state: messages, input, loading, conversationId. Calls workspace chat endpoint when `workspaceId` is provided, general chat endpoint otherwise. Displays tool calls as collapsible badges. Auto-scrolls. (`frontend/src/components/chat-panel.tsx`)
+- [x] **2.2** Add workspace chat API functions — `sendWorkspaceChatMessage(workspaceId, message, conversationId?)`, `listWorkspaceConversations(workspaceId)` in `frontend/src/lib/api.ts`. Follow existing patterns with `clientHeaders()`.
+- [x] **2.3** Add TypeScript types — `WorkspaceChatRequest` in `frontend/src/types/api.ts`. Reuse existing `ChatResponse`, `ChatMessageResponse` types.
+- [x] **2.4** Integrate `ChatPanel` into composer detail page — replace the collapsible "Research" card (lines 658-728) with a collapsible assistant panel. Use a two-column layout when panel is open: main content (sections editor) takes `col-span-2`, assistant panel takes `col-span-1`. When collapsed, main content takes full width. Toggle button in the composer toolbar with a `MessageSquare` icon. (`frontend/src/app/composer/[id]/page.tsx`)
+- [x] **2.5** Add "Apply to compose" action — when the assistant's response contains a suggestion (detected by a `> Suggested language:` markdown blockquote pattern or similar convention), show an "Apply to Section" button below the message. Clicking it: (a) opens a dropdown to select which section to target, (b) prefills the compose form with `action_type: "rewrite_selection"`, `instruction_text: "<suggestion text>"`, `selected_text: "<current section content>"`. The user reviews and clicks "Compose" to trigger the normal compose flow. (`frontend/src/components/chat-panel.tsx`, `frontend/src/app/composer/[id]/page.tsx`)
+- [x] **2.6** Load existing conversation on page mount — if the workspace has an existing conversation, load it into the chat panel so the user can continue where they left off. (`frontend/src/app/composer/[id]/page.tsx`)
 
 **Acceptance criteria:**
-- [ ] Chat panel opens/closes without disrupting the section editor layout
-- [ ] Messages persist across page navigation (conversation is resumable)
-- [ ] All 10 research tools display their results inline in the chat
-- [ ] "Apply to Section" prefills the compose form with assistant-suggested text
-- [ ] Panel is responsive — collapses to full-width on mobile
+- [x] Chat panel opens/closes without disrupting the section editor layout
+- [x] Messages persist across page navigation (conversation is resumable)
+- [x] All 10 research tools display their results inline in the chat
+- [x] "Apply to Section" prefills the compose form with assistant-suggested text
+- [x] Panel is responsive — collapses to full-width on mobile
 
 ---
 
@@ -118,20 +118,20 @@ Add "analyze my draft" actions that run existing analysis prompts against user-a
 
 **Tasks:**
 
-- [ ] **3.1** Add new compose action types — expand `COMPOSE_ACTION_TYPES` in `src/schemas/policy_workspace.py` to include `"analyze_constitutional"` and `"analyze_patterns"`. These are analysis actions, not drafting actions, but they use the same compose → review → accept flow.
-- [ ] **3.2** Add draft analysis prompt — `src/llm/prompts/draft_analysis_v1.py` with two variants: constitutional analysis of draft text, and pattern detection (comparing draft against precedent bills). Follow existing prompt convention: `PROMPT_VERSION`, `SYSTEM_PROMPT`, `USER_PROMPT_TEMPLATE`.
-- [ ] **3.3** Add harness methods — `analyze_draft_constitutional(draft_text, section_heading, workspace_goal, jurisdiction)` and `analyze_draft_patterns(draft_text, section_heading, precedent_context)` in `src/llm/harness.py`. Use `skip_store=True`. Cache key: `f"draft:{hash(draft_text)}:{analysis_type}"`. Return existing `ConstitutionalAnalysisOutput` and `PatternDetectionOutput` schemas.
-- [ ] **3.4** Add service method — `analyze_draft_section(db, workspace, section_id, action_type)` in `src/services/policy_composer_service.py`. Loads section content, calls appropriate harness method, persists result as `PolicyGeneration` with `action_type="analyze_constitutional"` or `"analyze_patterns"`, `output_payload` containing the analysis JSON. Follows load → call → persist pattern (no session held during LLM call).
-- [ ] **3.5** Wire into compose endpoint — the existing `POST /policy-workspaces/{id}/sections/{section_id}/compose` endpoint already dispatches by `action_type`. Add cases for `"analyze_constitutional"` and `"analyze_patterns"` that call the new service method. (`src/api/policy_workspaces.py`)
-- [ ] **3.6** Frontend: "Analyze" dropdown per section — alongside the existing "Compose" dropdown, add an "Analyze" dropdown with options "Constitutional Analysis" and "Pattern Detection". Triggers the compose endpoint with the new action types. Results display in the pending generation panel with analysis-specific formatting (concerns list, risk level, etc. rendered from the structured output). (`frontend/src/app/composer/[id]/page.tsx`)
-- [ ] **3.7** Write tests — analyze_constitutional action on draft text, analyze_patterns action, empty section text rejection, analysis result format validation. (`tests/test_api/test_policy_workspaces.py`)
+- [x] **3.1** Add new compose action types — expand `COMPOSE_ACTION_TYPES` in `src/schemas/policy_workspace.py` to include `"analyze_constitutional"` and `"analyze_patterns"`. These are analysis actions, not drafting actions, but they use the same compose → review → accept flow.
+- [x] **3.2** Add draft analysis prompt — `src/llm/prompts/draft_analysis_v1.py` with two variants: constitutional analysis of draft text, and pattern detection (comparing draft against precedent bills). Follow existing prompt convention: `PROMPT_VERSION`, `SYSTEM_PROMPT`, `USER_PROMPT_TEMPLATE`.
+- [x] **3.3** Add harness methods — `analyze_draft_constitutional(draft_text, section_heading, workspace_goal, jurisdiction)` and `analyze_draft_patterns(draft_text, section_heading, precedent_context)` in `src/llm/harness.py`. Use `skip_store=True`. Cache key: `f"draft:{hash(draft_text)}:{analysis_type}"`. Return existing `ConstitutionalAnalysisOutput` and `PatternDetectionOutput` schemas.
+- [x] **3.4** Add service method — `analyze_draft_section(db, workspace, section_id, action_type)` in `src/services/policy_composer_service.py`. Loads section content, calls appropriate harness method, persists result as `PolicyGeneration` with `action_type="analyze_constitutional"` or `"analyze_patterns"`, `output_payload` containing the analysis JSON. Follows load → call → persist pattern (no session held during LLM call).
+- [x] **3.5** Wire into compose endpoint — the existing `POST /policy-workspaces/{id}/sections/{section_id}/compose` endpoint already dispatches by `action_type`. Add cases for `"analyze_constitutional"` and `"analyze_patterns"` that call the new service method. (`src/api/policy_workspaces.py`)
+- [x] **3.6** Frontend: "Analyze" dropdown per section — alongside the existing "Compose" dropdown, add an "Analyze" dropdown with options "Constitutional Analysis" and "Pattern Detection". Triggers the compose endpoint with the new action types. Results display in the pending generation panel with analysis-specific formatting (concerns list, risk level, etc. rendered from the structured output). (`frontend/src/app/composer/[id]/page.tsx`)
+- [x] **3.7** Write tests — analyze_constitutional action on draft text, analyze_patterns action, empty section text rejection, analysis result format validation. (`tests/test_api/test_policy_workspaces.py`)
 
 **Acceptance criteria:**
-- [ ] User can run constitutional analysis on any section with content
-- [ ] User can run pattern detection on any section with content
-- [ ] Analysis results display with structured formatting (concerns list, severity, risk level)
-- [ ] Analysis is stored as a PolicyGeneration for audit trail
-- [ ] Empty sections return a clear error ("No content to analyze")
+- [x] User can run constitutional analysis on any section with content
+- [x] User can run pattern detection on any section with content
+- [x] Analysis results display with structured formatting (concerns list, severity, risk level)
+- [x] Analysis is stored as a PolicyGeneration for audit trail
+- [x] Empty sections return a clear error ("No content to analyze")
 
 ---
 
@@ -141,21 +141,21 @@ Surface ML prediction and AI summary data for each precedent bill in the workspa
 
 **Tasks:**
 
-- [ ] **4.1** Add precedent insights endpoint — `GET /api/v1/policy-workspaces/{workspace_id}/precedent-insights` returns prediction probability + AI summary for each precedent bill. Calls `predict_bill()` from `src/prediction/service.py` and queries `ai_analyses` for existing summaries. Returns gracefully if prediction model isn't loaded or summary doesn't exist. (`src/api/policy_workspaces.py`)
-- [ ] **4.2** Add response schema — `PrecedentInsightResponse(bill_id, identifier, title, jurisdiction, prediction_probability: float | None, prediction_factors: list | None, ai_summary: str | None)` in `src/schemas/policy_workspace.py`.
-- [ ] **4.3** Frontend: insight cards — in the precedent list section of the composer, show expanded cards for each precedent with: (a) prediction probability as a colored bar (green > 0.7, yellow 0.3-0.7, red < 0.3), (b) top 3 prediction factors, (c) AI summary excerpt (truncated to 200 chars with expand). Lazy-load via the batch endpoint on workspace detail mount. (`frontend/src/app/composer/[id]/page.tsx`)
-- [ ] **4.4** Add API function — `getPrecedentInsights(workspaceId)` in `frontend/src/lib/api.ts`.
-- [ ] **4.5** Add TypeScript type — `PrecedentInsightResponse` in `frontend/src/types/api.ts`.
-- [ ] **4.6** Polish: loading states — skeleton loaders for: chat panel message streaming, insight cards loading, draft analysis in progress. (`frontend/src/app/composer/[id]/page.tsx`)
-- [ ] **4.7** Polish: error handling — assistant panel shows error banners for rate limits and API failures without crashing the composer. Analysis failures show inline error per section. Insight card failures show "Prediction unavailable" gracefully.
-- [ ] **4.8** Write tests — precedent insights endpoint, missing prediction graceful fallback, missing summary graceful fallback. (`tests/test_api/test_policy_workspaces.py`)
+- [x] **4.1** Add precedent insights endpoint — `GET /api/v1/policy-workspaces/{workspace_id}/precedent-insights` returns prediction probability + AI summary for each precedent bill. Calls `predict_bill()` from `src/prediction/service.py` and queries `ai_analyses` for existing summaries. Returns gracefully if prediction model isn't loaded or summary doesn't exist. (`src/api/policy_workspaces.py`)
+- [x] **4.2** Add response schema — `PrecedentInsightResponse(bill_id, identifier, title, jurisdiction, prediction_probability: float | None, prediction_factors: list | None, ai_summary: str | None)` in `src/schemas/policy_workspace.py`.
+- [x] **4.3** Frontend: insight cards — in the precedent list section of the composer, show expanded cards for each precedent with: (a) prediction probability as a colored bar (green > 0.7, yellow 0.3-0.7, red < 0.3), (b) top 3 prediction factors, (c) AI summary excerpt (truncated to 200 chars with expand). Lazy-load via the batch endpoint on workspace detail mount. (`frontend/src/app/composer/[id]/page.tsx`)
+- [x] **4.4** Add API function — `getPrecedentInsights(workspaceId)` in `frontend/src/lib/api.ts`.
+- [x] **4.5** Add TypeScript type — `PrecedentInsightResponse` in `frontend/src/types/api.ts`.
+- [x] **4.6** Polish: loading states — skeleton loaders for: chat panel message streaming, insight cards loading, draft analysis in progress. (`frontend/src/app/composer/[id]/page.tsx`)
+- [x] **4.7** Polish: error handling — assistant panel shows error banners for rate limits and API failures without crashing the composer. Analysis failures show inline error per section. Insight card failures show "Prediction unavailable" gracefully.
+- [x] **4.8** Write tests — precedent insights endpoint, missing prediction graceful fallback, missing summary graceful fallback. (`tests/test_api/test_policy_workspaces.py`)
 
 **Acceptance criteria:**
-- [ ] Each precedent bill shows its committee passage probability when available
-- [ ] Prediction factors are displayed as a concise list
-- [ ] AI summary is shown with expand/collapse
-- [ ] Missing predictions or summaries degrade gracefully (no errors)
-- [ ] Loading states are visible for all async operations
+- [x] Each precedent bill shows its committee passage probability when available
+- [x] Prediction factors are displayed as a concise list
+- [x] AI summary is shown with expand/collapse
+- [x] Missing predictions or summaries degrade gracefully (no errors)
+- [x] Loading states are visible for all async operations
 
 ## System-Wide Impact
 
@@ -187,28 +187,28 @@ Surface ML prediction and AI summary data for each precedent bill in the workspa
 
 ### Functional Requirements
 
-- [ ] Assistant panel in composer with workspace-aware research conversation
-- [ ] All 10 existing research tools functional within workspace chat
-- [ ] Conversations persist per-workspace and resume across sessions
-- [ ] "Apply to Section" flow from assistant suggestions to compose form
-- [ ] "Analyze my draft" for constitutional and pattern-detection analysis
-- [ ] Analysis results displayed inline with structured formatting
-- [ ] Precedent insight cards with ML prediction + AI summary
-- [ ] Graceful degradation when prediction/summary data unavailable
+- [x] Assistant panel in composer with workspace-aware research conversation
+- [x] All 10 existing research tools functional within workspace chat
+- [x] Conversations persist per-workspace and resume across sessions
+- [x] "Apply to Section" flow from assistant suggestions to compose form
+- [x] "Analyze my draft" for constitutional and pattern-detection analysis
+- [x] Analysis results displayed inline with structured formatting
+- [x] Precedent insight cards with ML prediction + AI summary
+- [x] Graceful degradation when prediction/summary data unavailable
 
 ### Non-Functional Requirements
 
-- [ ] No DB session held during LLM API calls (Phase 0 fix verified)
-- [ ] Workspace context injection stays under 8K tokens
-- [ ] Chat panel responsive — works on mobile as full-width
-- [ ] All new endpoints enforce workspace ownership via client_id
+- [x] No DB session held during LLM API calls (Phase 0 fix verified)
+- [x] Workspace context injection stays under 8K tokens
+- [x] Chat panel responsive — works on mobile as full-width
+- [x] All new endpoints enforce workspace ownership via client_id
 
 ### Quality Gates
 
-- [ ] All existing 18 composer tests pass after Phase 0
-- [ ] New tests for workspace chat, draft analysis, precedent insights
-- [ ] `ruff check` and `ruff format` pass
-- [ ] `next build` succeeds with no TypeScript errors
+- [x] All existing 18 composer tests pass after Phase 0
+- [x] New tests for workspace chat, draft analysis, precedent insights
+- [x] `ruff check` and `ruff format` pass
+- [x] `next build` succeeds with no TypeScript errors
 
 ## Dependencies & Prerequisites
 
