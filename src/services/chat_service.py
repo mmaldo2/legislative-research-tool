@@ -1,7 +1,10 @@
 """Shared agentic chat loop used by both general and workspace-scoped assistants."""
 
+import asyncio
 import json
 import logging
+import os
+import sys
 from collections.abc import AsyncGenerator, Callable, Coroutine
 from typing import Any
 
@@ -340,3 +343,170 @@ def _tool_description(tool_name: str, tool_input: dict) -> str:
     }
     fn = descriptions.get(tool_name, lambda _: f"Running {tool_name}...")
     return fn(tool_input)
+
+
+# ---------------------------------------------------------------------------
+# Agent SDK + MCP path — used when no ANTHROPIC_API_KEY is set
+# ---------------------------------------------------------------------------
+
+
+def _build_sdk_prompt(system: str, messages: list[dict]) -> str:
+    """Convert system prompt + conversation history into a flat prompt for the Agent SDK."""
+    parts = []
+    if system:
+        parts.append(f"<system>\n{system}\n</system>\n")
+
+    for msg in messages:
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        if isinstance(content, str):
+            parts.append(f"<{role}>\n{content}\n</{role}>")
+        elif isinstance(content, list):
+            text_parts = []
+            for item in content:
+                if isinstance(item, dict):
+                    if item.get("type") == "text":
+                        text_parts.append(item.get("text", ""))
+                    elif item.get("type") == "tool_result":
+                        text_parts.append(f"[Tool result: {item.get('content', '')}]")
+            if text_parts:
+                parts.append(f"<{role}>\n{''.join(text_parts)}\n</{role}>")
+
+    return "\n".join(parts)
+
+
+def _inherit_env() -> dict[str, str]:
+    """Build env dict for the MCP server subprocess.
+
+    Passes through the current environment so the subprocess has access to
+    DATABASE_URL, API keys, and Python path configuration.
+    """
+    return dict(os.environ)
+
+
+def _run_sdk_query_with_mcp(prompt: str, system_prompt: str) -> list[dict]:
+    """Run Agent SDK query() with MCP server config in a dedicated event loop.
+
+    This runs synchronously — designed to be called via asyncio.to_thread()
+    to avoid corrupting the main thread's greenlet state.
+
+    Returns a list of serialized event dicts for SSE conversion.
+    """
+    import asyncio as _asyncio
+
+    from claude_agent_sdk import ClaudeAgentOptions, query
+    from claude_agent_sdk.types import (
+        AssistantMessage,
+        ResultMessage,
+        TextBlock,
+        ToolUseBlock,
+    )
+
+    options = ClaudeAgentOptions(
+        mcp_servers={
+            "legis-research": {
+                "command": sys.executable,
+                "args": ["-m", "src.mcp.server"],
+                "env": _inherit_env(),
+            }
+        },
+        system_prompt=system_prompt,
+    )
+
+    async def _collect() -> list[dict]:
+        events: list[dict] = []
+        async for msg in query(prompt=prompt, options=options):
+            if isinstance(msg, AssistantMessage):
+                for block in msg.content:
+                    if isinstance(block, TextBlock):
+                        events.append({"type": "text", "text": block.text})
+                    elif isinstance(block, ToolUseBlock):
+                        events.append({
+                            "type": "tool_use",
+                            "name": block.name,
+                            "input": block.input,
+                            "id": block.id,
+                        })
+            elif isinstance(msg, ResultMessage):
+                events.append({
+                    "type": "result",
+                    "is_error": msg.is_error,
+                    "result": msg.result,
+                })
+            # UserMessage (tool results) and SystemMessage are internal to the
+            # SDK's agentic loop — we don't need to surface them.
+        return events
+
+    loop = _asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_collect())
+    finally:
+        loop.close()
+
+
+async def stream_sdk_agentic_chat(
+    *,
+    system_prompt: str,
+    messages: list[dict],
+) -> AsyncGenerator[str, None]:
+    """Run agentic chat via Agent SDK with MCP tools, yielding SSE events.
+
+    The Agent SDK handles the entire tool-use loop internally — it spawns
+    our MCP server as a subprocess, discovers the 10 research tools, and
+    lets Claude call them against the database.
+
+    Events are collected in a background thread (to avoid greenlet corruption)
+    and then converted to our SSE format for the frontend.
+    """
+    prompt = _build_sdk_prompt("", messages)  # system_prompt passed via options
+
+    try:
+        events = await asyncio.to_thread(
+            _run_sdk_query_with_mcp, prompt, system_prompt
+        )
+    except Exception:
+        logger.exception("Agent SDK query with MCP failed")
+        yield _sse_event("error", {
+            "message": "The research assistant encountered an error. Please try again.",
+            "retryable": True,
+        })
+        return
+
+    # Convert collected events to SSE format
+    full_text = ""
+    tool_calls: list[dict] = []
+
+    for event in events:
+        if event["type"] == "text":
+            full_text += event["text"]
+            # Chunk the text for streaming UX
+            text = event["text"]
+            chunk_size = 40
+            for i in range(0, len(text), chunk_size):
+                yield _sse_event("token", {"text": text[i : i + chunk_size]})
+
+        elif event["type"] == "tool_use":
+            tool_calls.append({
+                "tool_name": event["name"],
+                "arguments": event.get("input", {}),
+                "result_summary": _tool_description(event["name"], event.get("input", {})),
+            })
+            yield _sse_event("tool_status", {
+                "status": "running",
+                "description": _tool_description(event["name"], event.get("input", {})),
+            })
+            # Emit a completion status after each tool use
+            yield _sse_event("tool_status", {"status": "complete"})
+
+        elif event["type"] == "result":
+            if event.get("is_error"):
+                yield _sse_event("error", {
+                    "message": event.get("result", "Unknown error"),
+                    "retryable": True,
+                })
+                return
+
+    yield _sse_event("done", {
+        "text": full_text,
+        "tool_calls": tool_calls,
+    })

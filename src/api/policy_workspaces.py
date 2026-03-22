@@ -802,6 +802,7 @@ async def workspace_chat_stream(
     db: AsyncSession = Depends(get_session),
 ) -> StreamingResponse:
     """Stream a workspace-aware chat response via Server-Sent Events."""
+    from src.llm.claude_sdk_adapter import ClaudeSDKClient
     from src.llm.prompts.workspace_assistant_v1 import (
         SYSTEM_PROMPT_TEMPLATE,
         format_workspace_context,
@@ -809,6 +810,7 @@ async def workspace_chat_stream(
     from src.services.chat_service import (
         HISTORY_CHAR_BUDGET,
         stream_agentic_chat,
+        stream_sdk_agentic_chat,
         trim_history,
     )
 
@@ -874,16 +876,25 @@ async def workspace_chat_stream(
     # 3. Stream agentic loop (no DB held)
     client = get_anthropic_client()
     trimmed = trim_history(messages, HISTORY_CHAR_BUDGET)
+    use_sdk = isinstance(client, ClaudeSDKClient)
 
     async def event_generator():
         final_text = ""
         all_tool_calls: list[dict] = []
 
-        async for event_str in stream_agentic_chat(
-            system_prompt=system_prompt,
-            messages=trimmed,
-            client=client,
-        ):
+        if use_sdk:
+            event_stream = stream_sdk_agentic_chat(
+                system_prompt=system_prompt,
+                messages=trimmed,
+            )
+        else:
+            event_stream = stream_agentic_chat(
+                system_prompt=system_prompt,
+                messages=trimmed,
+                client=client,
+            )
+
+        async for event_str in event_stream:
             if event_str.startswith("event: done\n"):
                 data_line = event_str.split("data: ", 1)[1].split("\n")[0]
                 done_data = json.loads(data_line)
