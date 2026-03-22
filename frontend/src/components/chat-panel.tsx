@@ -185,15 +185,18 @@ export function ChatPanel({
       }
     } catch (err) {
       if ((err as Error).name !== "AbortError") {
+        const errorDetail = err instanceof Error ? err.message : String(err);
+        console.error("[ChatPanel] Stream error:", err);
         setMessages((prev) => [
           ...prev,
           {
             role: "assistant",
-            content: "Sorry, I encountered an error. Please try again.",
+            content: `Error: ${errorDetail}`,
             tool_calls: null,
             created_at: new Date().toISOString(),
           },
         ]);
+        setLastError({ retryable: true });
       }
       setStreamingText("");
     } finally {

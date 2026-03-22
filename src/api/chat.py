@@ -578,11 +578,16 @@ async def chat_stream(
         db.add(user_msg)
 
         messages: list[dict] = []
-        for msg in conversation.messages:
-            if msg.role == "user":
-                messages.append({"role": "user", "content": msg.content})
-            elif msg.role == "assistant":
-                messages.append({"role": "assistant", "content": msg.content})
+        if req.conversation_id:
+            # Only load history for existing conversations
+            for msg in conversation.messages:
+                if msg.role == "user":
+                    messages.append({"role": "user", "content": msg.content})
+                elif msg.role == "assistant":
+                    messages.append({"role": "assistant", "content": msg.content})
+
+        # Append the new user message to the history
+        messages.append({"role": "user", "content": req.message})
 
         conversation_id = conversation.id
         await db.commit()
