@@ -319,7 +319,7 @@ Reshape the user-facing story and add the revision diff feature.
     - First revision shows full content (nothing to diff against)
     - Add toggle: "Show changes" / "Show full text"
 
-- [ ] **4.3** Create demo seed data script
+- [x] **4.3** Create demo seed data script
   - Create `scripts/seed_demo.py`
   - Seeds a workspace with:
     - Title: "Model Data Privacy Act" (or similar compelling topic)
@@ -331,7 +331,7 @@ Reshape the user-facing story and add the revision diff feature.
   - Idempotent: skip if demo workspace already exists
   - Run with: `python scripts/seed_demo.py`
 
-- [ ] **4.4** Write demo walkthrough script
+- [x] **4.4** Write demo walkthrough script
   - Create `docs/demo-walkthrough.md`
   - 10-minute structured flow:
     1. Landing page -> "This is the policy IDE" (30s)
