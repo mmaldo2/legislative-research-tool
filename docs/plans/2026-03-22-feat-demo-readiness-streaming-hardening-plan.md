@@ -187,13 +187,13 @@ Build the SSE plumbing bottom-up: harness -> services -> API -> frontend.
 
 Fix reliability issues that would surface during a live presentation.
 
-- [ ] **2.1** Fix ChatPanel state loss on toggle (#149)
+- [x] **2.1** Fix ChatPanel state loss on toggle (#149)
   - Change conditional rendering to CSS display toggle at `composer/[id]/page.tsx:712`
   - Before: `{researchOpen && (<ChatPanel .../>)}`
   - After: `<div style={{display: researchOpen ? 'block' : 'none'}}><ChatPanel .../></div>`
   - Add message history reload: on mount, if `conversationId` exists, fetch messages from `GET /conversations/{id}` and populate `messages` state
 
-- [ ] **2.2** Add BM25 pre-warm via FastAPI lifespan event
+- [x] **2.2** Add BM25 pre-warm via FastAPI lifespan event
   - Add `lifespan` async context manager to `src/api/app.py`
   - On startup: create a DB session, call `rebuild_bm25_index(session)`, log completion time
   - Use `asyncio.create_task()` so the server starts accepting requests after index is built
@@ -201,7 +201,7 @@ Fix reliability issues that would surface during a live presentation.
   - Fallback: if build fails (no bills, DB down), log warning and continue — search degrades to semantic-only
   - Make pre-warm conditional on `PREWARM_BM25` env var (skip in CI/test)
 
-- [ ] **2.3** Add error recovery UI to frontend
+- [x] **2.3** Add error recovery UI to frontend
   - Add retry button to `ChatPanel` error state
     - On error, show message with "Retry" button that re-sends the last user message
     - Distinguish retryable vs. non-retryable errors using `error_type` from SSE `error` event
@@ -210,7 +210,7 @@ Fix reliability issues that would surface during a live presentation.
     - Preserve the compose instruction so user doesn't need to retype
   - Add toast notifications for transient errors (rate limit with auto-retry countdown)
 
-- [ ] **2.4** Add error type propagation to backend
+- [x] **2.4** Add error type propagation to backend
   - Catch specific Anthropic SDK exceptions in harness streaming methods:
     - `anthropic.RateLimitError` -> `error_type: "rate_limit"`, retryable
     - `anthropic.APIStatusError` (5xx) -> `error_type: "server"`, retryable
@@ -219,7 +219,7 @@ Fix reliability issues that would surface during a live presentation.
   - Emit SSE `error` event with type classification
   - For sync endpoints, add `error_type` field to error response bodies
 
-- [ ] **2.5** Handle in-flight streaming on component unmount
+- [x] **2.5** Handle in-flight streaming on component unmount
   - In `ChatPanel`, use `AbortController` for streaming fetch
   - On unmount or panel close, call `controller.abort()` to cancel the stream
   - In compose streaming, abort on navigation away from composer page

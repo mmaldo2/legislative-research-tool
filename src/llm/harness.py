@@ -255,36 +255,36 @@ class LLMHarness:
                 # Get final message for usage tracking
                 final_message = await stream.get_final_message()
 
-        except anthropic.RateLimitError as e:
+        except anthropic.RateLimitError:
+            logger.warning("Rate limit hit during streaming analysis")
             yield self._sse_event("error", {
                 "message": "Rate limit exceeded. Please try again shortly.",
                 "retryable": True,
                 "error_type": "rate_limit",
-                "detail": str(e),
             })
             return
-        except anthropic.APIConnectionError as e:
+        except anthropic.APIConnectionError:
+            logger.warning("Connection error during streaming analysis")
             yield self._sse_event("error", {
                 "message": "Connection to AI service failed.",
                 "retryable": True,
                 "error_type": "timeout",
-                "detail": str(e),
             })
             return
-        except anthropic.BadRequestError as e:
+        except anthropic.BadRequestError:
+            logger.warning("Bad request during streaming analysis", exc_info=True)
             yield self._sse_event("error", {
                 "message": "Request was rejected by the AI service.",
                 "retryable": False,
                 "error_type": "content_policy",
-                "detail": str(e),
             })
             return
-        except anthropic.APIStatusError as e:
+        except anthropic.APIStatusError:
+            logger.warning("API status error during streaming analysis", exc_info=True)
             yield self._sse_event("error", {
                 "message": "AI service encountered an error.",
                 "retryable": True,
                 "error_type": "server",
-                "detail": str(e),
             })
             return
 

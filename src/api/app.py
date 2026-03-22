@@ -1,6 +1,9 @@
 """FastAPI application — entry point for the legislative research API."""
 
 import logging
+import time
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +38,30 @@ from src.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Startup/shutdown lifecycle for the FastAPI application."""
+    # --- Startup ---
+    prewarm = settings.prewarm_bm25
+    if prewarm:
+        logger.info("Pre-warming BM25 index...")
+        try:
+            from src.database import async_session_factory
+            from src.search.engine import rebuild_bm25_index
+
+            start = time.monotonic()
+            async with async_session_factory() as session:
+                await rebuild_bm25_index(session)
+            elapsed = time.monotonic() - start
+            logger.info("BM25 index built in %.1fs", elapsed)
+        except Exception:
+            logger.exception("BM25 pre-warm failed — search will degrade to semantic-only")
+
+    yield
+    # --- Shutdown ---
+
+
 app = FastAPI(
     title="Legislative Research API",
     description=(
@@ -44,6 +71,7 @@ app = FastAPI(
     version="0.1.0",
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 # Rate limiting

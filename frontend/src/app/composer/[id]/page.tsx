@@ -709,7 +709,7 @@ export default function ComposerDetailPage({
                 Ask questions about your draft and precedent legislation
               </span>
             </button>
-            {researchOpen && (
+            <div style={{ display: researchOpen ? "block" : "none" }}>
               <ChatPanel
                 workspaceId={id}
                 className="h-[400px]"
@@ -718,7 +718,7 @@ export default function ComposerDetailPage({
                   setSuggestionText(text);
                 }}
               />
-            )}
+            </div>
           </CardHeader>
         </Card>
       )}

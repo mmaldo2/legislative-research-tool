@@ -13,7 +13,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Send, Bot, User, Loader2, Search, FileText, Scale } from "lucide-react";
+import { Send, Bot, User, Loader2, Search, FileText, Scale, RotateCcw } from "lucide-react";
 
 const TOOL_ICONS: Record<string, React.ReactNode> = {
   search_bills: <Search className="h-3 w-3" />,
@@ -46,7 +46,9 @@ export function ChatPanel({
   // Streaming state
   const [streamingText, setStreamingText] = useState("");
   const [toolStatus, setToolStatus] = useState<string | null>(null);
+  const [lastError, setLastError] = useState<{ retryable: boolean } | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const lastUserMessageRef = useRef<string>("");
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -80,8 +82,8 @@ export function ChatPanel({
     })();
   }, [workspaceId, initialLoaded]);
 
-  const handleSend = useCallback(async () => {
-    const text = input.trim();
+  const handleSend = useCallback(async (overrideText?: string) => {
+    const text = (overrideText ?? input).trim();
     if (!text || loading) return;
 
     const userMsg: ChatMessageResponse = {
@@ -95,6 +97,8 @@ export function ChatPanel({
     setLoading(true);
     setStreamingText("");
     setToolStatus(null);
+    setLastError(null);
+    lastUserMessageRef.current = text;
 
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -140,9 +144,7 @@ export function ChatPanel({
               ...prev,
               {
                 role: "assistant",
-                content: event.retryable
-                  ? `${event.message} You can try sending your message again.`
-                  : event.message,
+                content: event.message,
                 tool_calls: null,
                 created_at: new Date().toISOString(),
               },
@@ -150,6 +152,7 @@ export function ChatPanel({
             setStreamingText("");
             setToolStatus(null);
             setLoading(false);
+            setLastError({ retryable: event.retryable });
             return;
         }
       }
@@ -199,6 +202,26 @@ export function ChatPanel({
       abortControllerRef.current = null;
     }
   }, [input, loading, workspaceId, conversationId, onSuggestion]);
+
+  const handleRetry = useCallback(() => {
+    const lastMsg = lastUserMessageRef.current;
+    if (!lastMsg || loading) return;
+    // Remove trailing error message (keep the user message that will be re-added)
+    setMessages((prev) => {
+      const trimmed = [...prev];
+      // Remove assistant error
+      if (trimmed.length > 0 && trimmed[trimmed.length - 1].role === "assistant") {
+        trimmed.pop();
+      }
+      // Remove the user message (handleSend will re-add it)
+      if (trimmed.length > 0 && trimmed[trimmed.length - 1].role === "user") {
+        trimmed.pop();
+      }
+      return trimmed;
+    });
+    setLastError(null);
+    void handleSend(lastMsg);
+  }, [loading, handleSend]);
 
   // Cleanup on unmount — cancel any in-flight stream
   useEffect(() => {
@@ -261,6 +284,21 @@ export function ChatPanel({
               )}
             </div>
           ))}
+
+          {/* Retry button after error */}
+          {lastError?.retryable && !loading && (
+            <div className="flex justify-center">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleRetry}
+                className="text-xs gap-1.5"
+              >
+                <RotateCcw className="h-3 w-3" />
+                Retry
+              </Button>
+            </div>
+          )}
 
           {/* Streaming assistant message (in progress) */}
           {(streamingText || toolStatus) && (
