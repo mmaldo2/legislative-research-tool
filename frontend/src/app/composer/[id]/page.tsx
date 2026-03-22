@@ -61,6 +61,7 @@ import {
   X,
 } from "lucide-react";
 import { ApiErrorBanner } from "@/components/api-error";
+import { ChatPanel } from "@/components/chat-panel";
 
 function getErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError || error instanceof RateLimitError) {
@@ -103,12 +104,10 @@ export default function ComposerDetailPage({
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [sectionHistory, setSectionHistory] = useState<Record<string, PolicyRevisionResponse[]>>({});
   const [expandedHistory, setExpandedHistory] = useState<Set<string>>(new Set());
-  const [researchQuery, setResearchQuery] = useState("");
-  const [researchResults, setResearchResults] = useState<SearchResult[]>([]);
-  const [researching, setResearching] = useState(false);
   const [researchOpen, setResearchOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [suggestionText, setSuggestionText] = useState<string | null>(null);
 
   const selectedBillIds = useMemo(
     () => new Set(workspace?.precedents.map((precedent) => precedent.bill_id) ?? []),
@@ -304,26 +303,6 @@ export default function ComposerDetailPage({
     } catch (err) {
       console.error("Failed to export:", err);
       setError(getErrorMessage(err, "Failed to export workspace."));
-    }
-  }
-
-  async function handleResearch() {
-    const query = researchQuery.trim();
-    if (!query || !workspace) return;
-    setResearching(true);
-    try {
-      const data = await searchBills({
-        q: query,
-        jurisdiction: workspace.target_jurisdiction_id,
-        per_page: 8,
-      });
-      setResearchResults(data.data);
-      setError(null);
-    } catch (err) {
-      console.error("Failed to search:", err);
-      setError(getErrorMessage(err, "Failed to search legislation."));
-    } finally {
-      setResearching(false);
     }
   }
 
@@ -680,61 +659,20 @@ export default function ComposerDetailPage({
               ) : (
                 <ChevronRight className="h-4 w-4" />
               )}
-              <CardTitle className="text-lg">Research</CardTitle>
+              <CardTitle className="text-lg">Research Assistant</CardTitle>
               <span className="text-sm text-muted-foreground">
-                Search legislation in {formatJurisdiction(workspace.target_jurisdiction_id)}
+                Ask questions about your draft and precedent legislation
               </span>
             </button>
             {researchOpen && (
-              <>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Search for definitions, clauses, enforcement language..."
-                    value={researchQuery}
-                    onChange={(e) => setResearchQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && void handleResearch()}
-                  />
-                  <Button
-                    onClick={handleResearch}
-                    disabled={researching || !researchQuery.trim()}
-                  >
-                    <Search className="mr-1.5 h-4 w-4" />
-                    {researching ? "Searching..." : "Search"}
-                  </Button>
-                </div>
-                {researchResults.length > 0 && (
-                  <div className="space-y-2">
-                    {researchResults.map((result) => (
-                      <div key={result.bill_id} className="rounded-md border p-3 text-sm">
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <Link
-                              href={`/bills/${encodeURIComponent(result.bill_id)}`}
-                              className="font-medium hover:underline"
-                            >
-                              {result.identifier}
-                            </Link>
-                            <span className="ml-2 text-muted-foreground">
-                              {formatJurisdiction(result.jurisdiction_id)}
-                            </span>
-                          </div>
-                          {result.score !== undefined && (
-                            <Badge variant="outline" className="text-xs">
-                              {(result.score * 100).toFixed(0)}% match
-                            </Badge>
-                          )}
-                        </div>
-                        <p className="mt-1 text-muted-foreground">{result.title}</p>
-                        {result.snippet && (
-                          <p className="mt-2 rounded bg-muted/30 px-2 py-1 text-xs text-muted-foreground">
-                            {result.snippet}
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
+              <ChatPanel
+                workspaceId={id}
+                className="h-[400px]"
+                placeholder="Ask about your draft, precedents, or legislation..."
+                onSuggestion={(text) => {
+                  setSuggestionText(text);
+                }}
+              />
             )}
           </CardHeader>
         </Card>

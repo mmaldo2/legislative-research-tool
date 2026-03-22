@@ -679,6 +679,32 @@ export async function getConversation(id: string): Promise<ConversationResponse>
   });
 }
 
+// --- Workspace Chat ---
+
+export async function sendWorkspaceChatMessage(
+  workspaceId: string,
+  message: string,
+  conversationId?: string,
+): Promise<ChatResponse> {
+  return fetchApi<ChatResponse>(
+    `/policy-workspaces/${encodeURIComponent(workspaceId)}/chat`,
+    {
+      method: "POST",
+      body: JSON.stringify({ message, conversation_id: conversationId }),
+      headers: clientHeaders(),
+    },
+  );
+}
+
+export async function getWorkspaceConversations(
+  workspaceId: string,
+): Promise<{ conversations: Array<{ id: string; title: string | null }> }> {
+  return fetchApi(
+    `/policy-workspaces/${encodeURIComponent(workspaceId)}/conversations`,
+    { headers: clientHeaders() },
+  );
+}
+
 // --- Export ---
 
 export function getExportCsvUrl(params: {
