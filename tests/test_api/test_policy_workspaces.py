@@ -613,3 +613,127 @@ class TestPolicyWorkspaceEndpoints:
         assert response.headers["content-type"].startswith("text/markdown")
         assert "# Privacy Model Act" in response.text
         assert "Section 1. Definitions" in response.text
+
+    def test_workspace_chat_creates_conversation(self, client):
+        mock_session = AsyncMock()
+        app.dependency_overrides[get_session] = _override_session(mock_session)
+        app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="pro")
+
+        workspace = _mock_workspace(
+            client_id="client-1",
+            precedents=[_mock_precedent()],
+            sections=[_mock_section()],
+            generations=[_mock_generation()],
+        )
+
+        with (
+            patch(
+                "src.api.policy_workspaces.get_workspace_detail",
+                new_callable=AsyncMock,
+                return_value=workspace,
+            ),
+            patch(
+                "src.api.policy_workspaces.get_workspace_for_client",
+                new_callable=AsyncMock,
+                return_value=workspace,
+            ),
+            patch(
+                "src.services.chat_service.run_agentic_chat",
+                new_callable=AsyncMock,
+                return_value=("Here is my response about your draft.", []),
+            ),
+            patch("src.api.policy_workspaces.async_session_factory") as mock_factory,
+        ):
+            mock_persist_session = AsyncMock()
+            mock_persist_session.__aenter__ = AsyncMock(return_value=mock_persist_session)
+            mock_persist_session.__aexit__ = AsyncMock(return_value=False)
+            mock_persist_session.get = AsyncMock(return_value=None)
+            mock_persist_session.refresh = AsyncMock()
+            mock_factory.return_value = mock_persist_session
+
+            # Mock the SELECT for conversation lookup
+            mock_result = AsyncMock()
+            mock_result.scalar_one_or_none.return_value = None
+            mock_session.execute = AsyncMock(return_value=mock_result)
+            mock_session.flush = AsyncMock()
+            mock_session.commit = AsyncMock()
+
+            response = client.post(
+                "/api/v1/policy-workspaces/workspace123/chat",
+                headers={"X-Client-Id": "client-1"},
+                json={
+                    "message": "What constitutional concerns should I address?",
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "conversation_id" in data
+        assert data["message"]["role"] == "assistant"
+        assert "response about your draft" in data["message"]["content"]
+
+    def test_workspace_chat_wrong_client_returns_403(self, client):
+        mock_session = AsyncMock()
+        app.dependency_overrides[get_session] = _override_session(mock_session)
+        app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="pro")
+
+        with (
+            patch(
+                "src.api.policy_workspaces.get_workspace_detail",
+                new_callable=AsyncMock,
+                side_effect=PermissionError("Not authorized"),
+            ),
+            patch(
+                "src.api.policy_workspaces.get_workspace_for_client",
+                new_callable=AsyncMock,
+                side_effect=PermissionError("Not authorized"),
+            ),
+        ):
+            response = client.post(
+                "/api/v1/policy-workspaces/workspace123/chat",
+                headers={"X-Client-Id": "client-1"},
+                json={"message": "Hello"},
+            )
+
+        assert response.status_code == 403
+
+    def test_precedent_insights_returns_data(self, client):
+        mock_session = AsyncMock()
+        # Mock the execute to return an async-compatible result
+        mock_query_result = AsyncMock()
+        mock_query_result.scalar_one_or_none = lambda: None
+        mock_session.execute = AsyncMock(return_value=mock_query_result)
+        app.dependency_overrides[get_session] = _override_session(mock_session)
+        app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="pro")
+
+        workspace = _mock_workspace(
+            client_id="client-1",
+            precedents=[_mock_precedent()],
+            sections=[_mock_section()],
+            generations=[_mock_generation()],
+        )
+
+        with (
+            patch(
+                "src.api.policy_workspaces.get_workspace_detail",
+                new_callable=AsyncMock,
+                return_value=workspace,
+            ),
+            patch(
+                "src.api.policy_workspaces.get_workspace_for_client",
+                new_callable=AsyncMock,
+                return_value=workspace,
+            ),
+            patch("src.prediction.service.is_model_loaded", return_value=False),
+        ):
+            response = client.get(
+                "/api/v1/policy-workspaces/workspace123/precedent-insights",
+                headers={"X-Client-Id": "client-1"},
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["insights"]) == 1
+        assert data["insights"][0]["bill_id"] == "bill-1"
+        assert data["insights"][0]["identifier"] == "AB 101"
+        assert data["insights"][0]["prediction_probability"] is None
