@@ -2,6 +2,7 @@
 
 import json
 import logging
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 import anthropic
@@ -53,17 +54,31 @@ def extract_text(response: Any) -> str:
     return "\n".join(parts)
 
 
+ToolExecutor = Callable[[str, dict[str, Any], Any, Any], Coroutine[Any, Any, str]]
+
+
+async def _default_execute_tool(
+    tool_name: str,
+    arguments: dict[str, Any],
+    db: Any,
+    harness: Any,
+) -> str:
+    """Default tool executor — imports from chat module."""
+    from src.api.chat import execute_tool
+
+    return await execute_tool(tool_name, arguments, db, harness)
+
+
 async def _execute_tool_with_session(
     tool_name: str,
     arguments: dict[str, Any],
     client: anthropic.AsyncAnthropic,
+    execute_fn: ToolExecutor = _default_execute_tool,
 ) -> str:
     """Execute a single tool call with its own short-lived DB session."""
-    from src.api.chat import execute_tool
-
     async with async_session_factory() as db:
         harness = LLMHarness(db_session=db, client=client)
-        return await execute_tool(tool_name, arguments, db, harness)
+        return await execute_fn(tool_name, arguments, db, harness)
 
 
 async def run_agentic_chat(
@@ -73,6 +88,7 @@ async def run_agentic_chat(
     client: anthropic.AsyncAnthropic,
     tools: list[dict] | None = None,
     max_rounds: int = MAX_TOOL_ROUNDS,
+    execute_tool_fn: ToolExecutor | None = None,
 ) -> tuple[str, list[dict]]:
     """Run the agentic chat loop, returning (final_text, tool_calls_metadata).
 
@@ -82,6 +98,7 @@ async def run_agentic_chat(
     if tools is None:
         tools = RESEARCH_TOOLS
 
+    _exec_fn = execute_tool_fn or _default_execute_tool
     model = settings.summary_model
     all_tool_calls: list[dict] = []
     api_messages = list(messages)
@@ -118,7 +135,9 @@ async def run_agentic_chat(
                 )
 
                 try:
-                    result_str = await _execute_tool_with_session(tool_name, tool_input, client)
+                    result_str = await _execute_tool_with_session(
+                        tool_name, tool_input, client, _exec_fn
+                    )
                 except (ValueError, LookupError, json.JSONDecodeError):
                     logger.exception("Tool execution error: %s", tool_name)
                     result_str = json.dumps({"error": f"Tool '{tool_name}' encountered an error."})

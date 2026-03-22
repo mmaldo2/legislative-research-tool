@@ -37,6 +37,9 @@ from src.schemas.policy_workspace import (
     PolicyWorkspacePrecedentResponse,
     PolicyWorkspaceResponse,
     PolicyWorkspaceUpdate,
+    PrecedentInsightsResponse,
+    WorkspaceConversationListResponse,
+    WorkspaceConversationSummary,
 )
 from src.services.policy_composer_service import (
     OutlineGenerationError,
@@ -539,6 +542,35 @@ async def accept_policy_generation(
     return section_resp
 
 
+@router.post(
+    "/policy-workspaces/{workspace_id}/generations/{generation_id}/reject",
+    status_code=204,
+)
+@limiter.limit("10/minute")
+async def reject_policy_generation(
+    request: Request,
+    workspace_id: str,
+    generation_id: str,
+    client_id: str = Depends(get_client_id),
+    db: AsyncSession = Depends(get_session),
+) -> None:
+    """Mark a generation as rejected (server-side record)."""
+    from src.services.policy_composer_service import get_workspace_for_composer
+
+    workspace = await get_workspace_for_composer(db, workspace_id=workspace_id, client_id=client_id)
+    if workspace is None:
+        raise HTTPException(status_code=404, detail="Policy workspace not found")
+
+    generation = next((g for g in workspace.generations if g.id == generation_id), None)
+    if generation is None:
+        raise HTTPException(status_code=404, detail="Generation not found")
+    if generation.accepted_revision_id is not None:
+        raise HTTPException(status_code=400, detail="Cannot reject an accepted generation")
+
+    generation.rejected_at = datetime.now(UTC)
+    await db.commit()
+
+
 @router.get(
     "/policy-workspaces/{workspace_id}/history",
     response_model=PolicyHistoryResponse,
@@ -686,14 +718,12 @@ async def workspace_chat(
             .options(selectinload(Conversation.messages))
         )
         conversation = result.scalar_one_or_none()
-        if not conversation:
+        if (
+            not conversation
+            or conversation.client_id != client_id
+            or conversation.workspace_id != workspace_id
+        ):
             raise HTTPException(status_code=404, detail="Conversation not found")
-        if conversation.client_id != client_id:
-            raise HTTPException(status_code=403, detail="Not authorized")
-        if conversation.workspace_id != workspace_id:
-            raise HTTPException(
-                status_code=400, detail="Conversation belongs to a different workspace"
-            )
     else:
         conversation = Conversation(
             id=uuid.uuid4().hex,
@@ -763,14 +793,14 @@ async def workspace_chat(
 
 @router.get(
     "/policy-workspaces/{workspace_id}/conversations",
+    response_model=WorkspaceConversationListResponse,
 )
 async def list_workspace_conversations(
     workspace_id: str,
     client_id: str = Depends(get_client_id),
     db: AsyncSession = Depends(get_session),
-):
+) -> WorkspaceConversationListResponse:
     """List conversations for a workspace."""
-    # Verify workspace ownership
     await _get_workspace_or_error(db, workspace_id=workspace_id, client_id=client_id)
 
     result = await db.execute(
@@ -783,17 +813,17 @@ async def list_workspace_conversations(
     )
     conversations = result.scalars().all()
 
-    return {
-        "conversations": [
-            {
-                "id": c.id,
-                "title": c.title,
-                "created_at": c.created_at.isoformat() if c.created_at else None,
-                "updated_at": c.updated_at.isoformat() if c.updated_at else None,
-            }
+    return WorkspaceConversationListResponse(
+        conversations=[
+            WorkspaceConversationSummary(
+                id=c.id,
+                title=c.title,
+                created_at=c.created_at,
+                updated_at=c.updated_at,
+            )
             for c in conversations
         ]
-    }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -801,12 +831,15 @@ async def list_workspace_conversations(
 # ---------------------------------------------------------------------------
 
 
-@router.get("/policy-workspaces/{workspace_id}/precedent-insights")
+@router.get(
+    "/policy-workspaces/{workspace_id}/precedent-insights",
+    response_model=PrecedentInsightsResponse,
+)
 async def get_precedent_insights(
     workspace_id: str,
     client_id: str = Depends(get_client_id),
     db: AsyncSession = Depends(get_session),
-):
+) -> PrecedentInsightsResponse:
     """Get ML prediction + AI summary for each precedent bill."""
     from src.prediction.service import is_model_loaded, predict_bill
 
@@ -814,8 +847,31 @@ async def get_precedent_insights(
         db, workspace_id=workspace_id, client_id=client_id, load_detail=True
     )
 
+    precedents = sorted(workspace.precedents, key=lambda p: p.position)
+    bill_ids = [prec.bill_id for prec in precedents]
+
+    # Batch-load AI summaries in one query instead of N+1
+    from src.models.ai_analysis import AiAnalysis
+
+    summary_map: dict[str, str] = {}
+    if bill_ids:
+        summary_result = await db.execute(
+            select(AiAnalysis)
+            .where(
+                AiAnalysis.bill_id.in_(bill_ids),
+                AiAnalysis.analysis_type == "summary",
+            )
+            .order_by(AiAnalysis.created_at.desc())
+        )
+        for row in summary_result.scalars().all():
+            if row.bill_id not in summary_map and row.result:
+                text = row.result.get("plain_english_summary")
+                if text:
+                    summary_map[row.bill_id] = text
+
+    # Build insights with optional predictions
     insights = []
-    for prec in sorted(workspace.precedents, key=lambda p: p.position):
+    for prec in precedents:
         bill = prec.bill
         insight: dict = {
             "bill_id": bill.id,
@@ -825,10 +881,9 @@ async def get_precedent_insights(
             "status": bill.status,
             "prediction_probability": None,
             "prediction_factors": None,
-            "ai_summary": None,
+            "ai_summary": summary_map.get(bill.id),
         }
 
-        # Try to get ML prediction
         if is_model_loaded():
             try:
                 pred = await predict_bill(db, bill.id)
@@ -838,22 +893,6 @@ async def get_precedent_insights(
             except Exception:
                 logger.warning("Prediction failed for bill %s", bill.id, exc_info=True)
 
-        # Try to get AI summary from existing analyses
-        from src.models.ai_analysis import AiAnalysis
-
-        summary_result = await db.execute(
-            select(AiAnalysis)
-            .where(
-                AiAnalysis.bill_id == bill.id,
-                AiAnalysis.analysis_type == "summary",
-            )
-            .order_by(AiAnalysis.created_at.desc())
-            .limit(1)
-        )
-        summary_row = summary_result.scalar_one_or_none()
-        if summary_row and summary_row.result:
-            insight["ai_summary"] = summary_row.result.get("plain_english_summary")
-
         insights.append(insight)
 
-    return {"insights": insights}
+    return PrecedentInsightsResponse(insights=insights)

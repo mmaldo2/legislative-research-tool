@@ -699,9 +699,9 @@ class TestPolicyWorkspaceEndpoints:
 
     def test_precedent_insights_returns_data(self, client):
         mock_session = AsyncMock()
-        # Mock the execute to return an async-compatible result
-        mock_query_result = AsyncMock()
-        mock_query_result.scalar_one_or_none = lambda: None
+        # Mock execute to return a result with .scalars().all() chain
+        mock_scalars = SimpleNamespace(all=lambda: [])
+        mock_query_result = SimpleNamespace(scalars=lambda: mock_scalars)
         mock_session.execute = AsyncMock(return_value=mock_query_result)
         app.dependency_overrides[get_session] = _override_session(mock_session)
         app.dependency_overrides[require_api_key] = lambda: AuthContext(org_id=None, tier="pro")
