@@ -66,9 +66,9 @@ class BM25Index:
             .limit(max_corpus)
             .execution_options(yield_per=batch_size)
         )
-        result = await session.execute(stmt)
+        result = await session.stream(stmt)
 
-        for partition in result.partitions():
+        async for partition in result.partitions():
             for bill_id, title in partition:
                 doc = title
                 if bill_id in texts_by_bill:
