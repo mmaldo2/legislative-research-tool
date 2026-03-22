@@ -218,31 +218,25 @@ async def stream_agentic_chat(
     final_text = ""
 
     for _round in range(max_rounds):
-        # Stream every round — we yield tokens only for end_turn responses
-        streamed_text = ""
-
-        async with client.messages.stream(
+        # Use non-streaming call for tool-use rounds to avoid greenlet
+        # conflicts with SQLAlchemy when executing tools. Stream the final
+        # text response for real-time token delivery.
+        response = await client.messages.create(
             model=model,
             max_tokens=4096,
             system=system_prompt,
             messages=api_messages,
             tools=tools,
-        ) as stream:
-            async for event in stream:
-                if event.type == "content_block_delta":
-                    if hasattr(event.delta, "text"):
-                        streamed_text += event.delta.text
-                        # Yield token events — these will be visible to the
-                        # user for end_turn responses. For tool_use responses
-                        # (which include text blocks before tool calls), we
-                        # yield them too since the model often explains what
-                        # it's about to do.
-                        yield _sse_event("token", {"text": event.delta.text})
-
-            response = await stream.get_final_message()
+        )
 
         if response.stop_reason == "end_turn":
-            final_text = streamed_text or extract_text(response)
+            # Re-issue as streaming call for token-by-token delivery,
+            # unless using the SDK adapter (which already returned text)
+            final_text = extract_text(response)
+            # Emit the text in chunks for streaming UX
+            chunk_size = 40
+            for i in range(0, len(final_text), chunk_size):
+                yield _sse_event("token", {"text": final_text[i : i + chunk_size]})
             break
 
         elif response.stop_reason == "tool_use":
@@ -304,12 +298,12 @@ async def stream_agentic_chat(
             api_messages.append({"role": "user", "content": tool_results})
 
         else:
-            final_text = streamed_text or extract_text(response)
+            final_text = extract_text(response)
             if not final_text:
                 final_text = "I was unable to complete the request."
             break
     else:
-        final_text = streamed_text or extract_text(response)
+        final_text = extract_text(response)
         if not final_text:
             final_text = (
                 "I reached the maximum number of research steps. "
