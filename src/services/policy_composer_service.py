@@ -391,7 +391,7 @@ async def compose_section(
         )
         output_payload = analysis.model_dump()
         output_payload["content_markdown"] = analysis.summary
-        output_payload["rationale"] = f"Risk level: {analysis.risk_level}"
+        output_payload["rationale"] = f"Risk level: {analysis.overall_risk_level}"
         provenance_sources: list[dict] = []
     elif action_type == "analyze_patterns":
         if not sec_content:

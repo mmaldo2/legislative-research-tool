@@ -1,5 +1,6 @@
 """Policy workspace composer CRUD endpoints."""
 
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -38,7 +39,6 @@ from src.schemas.policy_workspace import (
     PolicyWorkspaceUpdate,
 )
 from src.services.policy_composer_service import (
-    ComposeError,
     OutlineGenerationError,
     accept_generation,
     compose_section,
@@ -57,6 +57,8 @@ from src.services.policy_workspace_service import (
     remove_precedent,
     update_workspace,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -495,7 +497,7 @@ async def compose_policy_section(
         raise HTTPException(status_code=403, detail=str(exc)) from exc
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except (ValueError, ComposeError) as exc:
+    except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     return _build_generation_response(generation)
@@ -674,7 +676,7 @@ async def workspace_chat(
         precedent_summaries=precedent_summaries,
         sections=sections,
     )
-    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(workspace_context=workspace_context)
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.replace("{workspace_context}", workspace_context)
 
     # 3. Load or create conversation scoped to this workspace
     if conversation_id:
@@ -834,7 +836,7 @@ async def get_precedent_insights(
                     insight["prediction_probability"] = pred.get("committee_passage_probability")
                     insight["prediction_factors"] = pred.get("key_factors", [])[:3]
             except Exception:
-                pass  # Graceful degradation
+                logger.warning("Prediction failed for bill %s", bill.id, exc_info=True)
 
         # Try to get AI summary from existing analyses
         from src.models.ai_analysis import AiAnalysis

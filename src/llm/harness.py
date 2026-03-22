@@ -700,17 +700,21 @@ class LLMHarness:
                 draft_analysis_v1.PROMPT_VERSION + ":constitutional",
             ),
             system_prompt=draft_analysis_v1.CONSTITUTIONAL_SYSTEM_PROMPT,
-            user_prompt=draft_analysis_v1.CONSTITUTIONAL_USER_TEMPLATE.format(
-                section_heading=section_heading,
-                jurisdiction=jurisdiction,
-                goal_prompt=goal_prompt or "Not specified",
-                draft_text=draft_text[:MAX_SINGLE_TEXT_CHARS],
+            user_prompt=(
+                draft_analysis_v1.CONSTITUTIONAL_USER_TEMPLATE.replace(
+                    "{section_heading}", section_heading
+                )
+                .replace("{jurisdiction}", jurisdiction)
+                .replace("{goal_prompt}", goal_prompt or "Not specified")
+                .replace("{draft_text}", draft_text[:MAX_SINGLE_TEXT_CHARS])
             ),
             max_tokens=4096,
             output_type=ConstitutionalAnalysisOutput,
             fallback_fn=lambda text: ConstitutionalAnalysisOutput(
                 concerns=[],
-                risk_level="unknown",
+                preemption_issues=[],
+                has_severability_clause=False,
+                overall_risk_level="unknown",
                 summary=text or "Unable to analyze this draft.",
                 confidence=0.0,
             ),
@@ -739,17 +743,24 @@ class LLMHarness:
                 draft_analysis_v1.PROMPT_VERSION + ":patterns",
             ),
             system_prompt=draft_analysis_v1.PATTERNS_SYSTEM_PROMPT,
-            user_prompt=draft_analysis_v1.PATTERNS_USER_TEMPLATE.format(
-                section_heading=section_heading,
-                jurisdiction=jurisdiction,
-                goal_prompt=goal_prompt or "Not specified",
-                draft_text=draft_text[:MAX_SINGLE_TEXT_CHARS],
-                precedent_context=precedent_context[:MAX_PAIRED_TEXT_CHARS],
+            user_prompt=(
+                draft_analysis_v1.PATTERNS_USER_TEMPLATE.replace(
+                    "{section_heading}", section_heading
+                )
+                .replace("{jurisdiction}", jurisdiction)
+                .replace("{goal_prompt}", goal_prompt or "Not specified")
+                .replace("{draft_text}", draft_text[:MAX_SINGLE_TEXT_CHARS])
+                .replace("{precedent_context}", precedent_context[:MAX_PAIRED_TEXT_CHARS])
             ),
             max_tokens=4096,
             output_type=PatternDetectionOutput,
             fallback_fn=lambda text: PatternDetectionOutput(
                 pattern_type="unknown",
+                common_framework="",
+                bills_analyzed=[],
+                shared_provisions=[],
+                key_variations=[],
+                model_legislation_confidence=0.0,
                 summary=text or "Unable to analyze patterns.",
                 confidence=0.0,
             ),
