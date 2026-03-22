@@ -11,6 +11,8 @@ AI-native legislative research platform. Python backend (FastAPI), PostgreSQL + 
 - **DB migrate**: `alembic upgrade head`
 - **DB new migration**: `alembic revision --autogenerate -m "description"`
 - **CLI**: `python -m src.cli <command>`
+- **MCP server**: `python -m src.mcp.server` (stdio transport for IDE/Claude Desktop)
+- **MCP dev/inspect**: `mcp dev src/mcp/server.py` (opens MCP Inspector UI)
 
 ## Conventions
 - Python 3.12+, type hints everywhere
@@ -30,6 +32,7 @@ AI-native legislative research platform. Python backend (FastAPI), PostgreSQL + 
 - `src/search/` — Hybrid search (BM25 + pgvector + reranker)
 - `scripts/` — CLI utilities (historical backfill, etc.)
 - `autoresearch/` — Self-contained ML experimentation sandbox (see below)
+- `src/mcp/` — MCP server exposing research tools (search_bills, get_bill_detail, etc.)
 - `tests/` — pytest tests mirroring src/ structure
 
 ## Key Patterns
@@ -39,6 +42,8 @@ AI-native legislative research platform. Python backend (FastAPI), PostgreSQL + 
 - Every API response includes provenance metadata (source, last_updated, ai model)
 - Bulk upserts via `pg_insert().on_conflict_do_nothing/update()` — no SELECT-before-INSERT
 - Bill models have schema-drift comments warning about `autoresearch/prepare.py` hardcoded SQL
+- MCP server reuses existing tool handlers from `src/api/chat.py` — each tool call gets its own DB session
+- When no `ANTHROPIC_API_KEY` is set, chat endpoints use Agent SDK + MCP for tool-use loops
 
 ## Autoresearch Module
 Self-contained R&D sandbox for bill outcome prediction. Uses raw psycopg2 (not the ORM) to read from the same Postgres database. Does NOT import from `src/`.

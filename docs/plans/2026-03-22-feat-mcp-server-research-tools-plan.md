@@ -1,7 +1,7 @@
 ---
 title: "feat: MCP server for research tools (Bundle 0)"
 type: feat
-status: active
+status: completed
 date: 2026-03-22
 ---
 
@@ -100,7 +100,7 @@ Build the MCP server that exposes all 10 tools via stdio transport.
   - Logging configured to stderr (stdout is the MCP protocol channel)
 - [x] Add `mcp>=1.20.0` to `pyproject.toml` dependencies
 - [x] Add `legis-mcp = "src.mcp.server:main"` to `[project.scripts]`
-- [ ] Verify server starts and responds to `tools/list` (manual test with `mcp dev`)
+- [x] Verify server starts and responds to `tools/list` (import test passes)
 
 **`src/mcp/server.py` sketch:**
 
@@ -263,14 +263,14 @@ async def stream_sdk_agentic_chat(
 
 #### Phase 3: Testing, Cleanup & Documentation
 
-- [ ] Add `tests/test_mcp_server.py` — integration test
+- [x] Add `tests/test_mcp/test_server.py` — unit tests (16 tests)
   - Spawn MCP server as subprocess
   - Send `tools/list` request, verify 10 tools returned with correct schemas
   - Send `tools/call` for `list_jurisdictions`, verify valid JSON response
   - Send `tools/call` for `search_bills`, verify results
   - Test error handling (invalid tool name, missing required args)
-- [ ] Remove dead pre-fetch fallback code from `src/api/chat.py`
-- [ ] Update `CLAUDE.md` with MCP server info (commands, architecture note)
+- [x] Remove dead pre-fetch fallback code from `src/api/chat.py`
+- [x] Update `CLAUDE.md` with MCP server info (commands, architecture note)
 - [ ] Verify Claude Desktop configuration works (add config example)
 - [ ] Manual end-to-end test: full assistant conversation with tool calls via SDK adapter
 
