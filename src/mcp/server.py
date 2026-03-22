@@ -11,18 +11,25 @@ Usage:
 
 import json
 import logging
+import os
 import sys
 
 import mcp.types as types
 from mcp.server.lowlevel import Server
 
 # Route ALL logging to stderr — stdout is the MCP JSON-RPC protocol channel.
+# Also write to a file for diagnostic visibility (subprocess stderr is invisible).
 logging.basicConfig(
     stream=sys.stderr,
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+_LOG_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "mcp_server.log")
+_file_handler = logging.FileHandler(_LOG_FILE, mode="a")
+_file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s"))
+logger.addHandler(_file_handler)
 
 server = Server("legis-research")
 

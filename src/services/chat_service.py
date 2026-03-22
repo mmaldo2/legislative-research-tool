@@ -444,6 +444,10 @@ def _run_sdk_query_with_mcp(prompt: str, system_prompt: str) -> list[dict]:
             }
         },
         system_prompt=system_prompt,
+        # bypassPermissions is required for non-interactive SDK usage —
+        # without it, MCP tool calls are blocked waiting for user confirmation
+        # that never comes (we're running programmatically, not in a terminal).
+        permission_mode="bypassPermissions",
     )
 
     async def _collect() -> list[dict]:
