@@ -593,8 +593,10 @@ async def chat_stream(
         await db.commit()
 
     # 2. Call phase — stream agentic loop (no DB held)
+    from src.llm.claude_sdk_adapter import ClaudeSDKClient
     from src.services.chat_service import (
         HISTORY_CHAR_BUDGET,
+        _sse_event,
         stream_agentic_chat,
         trim_history,
     )
@@ -602,26 +604,83 @@ async def chat_stream(
     client = get_anthropic_client()
     trimmed = trim_history(messages, HISTORY_CHAR_BUDGET)
 
+    # SDK adapter can't do tool-use loops — pre-fetch search context instead
+    use_sdk_fallback = isinstance(client, ClaudeSDKClient)
+
+    if use_sdk_fallback:
+        # Pre-fetch search results to include as context
+        search_context = ""
+        try:
+            async with async_session_factory() as search_db:
+                results = await hybrid_search(
+                    session=search_db, query=req.message, top_k=10
+                )
+                if results:
+                    bill_ids = [r[0] for r in results[:10]]
+                    stmt = select(Bill).where(Bill.id.in_(bill_ids))
+                    bill_result = await search_db.execute(stmt)
+                    bills = bill_result.scalars().all()
+                    bill_lines = []
+                    for bill in bills:
+                        bill_lines.append(
+                            f"- {bill.identifier} ({bill.jurisdiction_id}): "
+                            f"{bill.title} [status: {bill.status or 'unknown'}]"
+                        )
+                    search_context = (
+                        "\n\nRelevant bills from the database:\n"
+                        + "\n".join(bill_lines)
+                    )
+        except Exception:
+            logger.warning("Pre-search for SDK fallback failed", exc_info=True)
+
     async def event_generator():
         final_text = ""
         all_tool_calls: list[dict] = []
 
-        async for event_str in stream_agentic_chat(
-            system_prompt=research_assistant_v1.SYSTEM_PROMPT,
-            messages=trimmed,
-            client=client,
-        ):
-            # Parse the event to capture done data for persistence
-            if event_str.startswith("event: done\n"):
-                data_line = event_str.split("data: ", 1)[1].split("\n")[0]
-                done_data = json.loads(data_line)
-                final_text = done_data.get("text", "")
-                all_tool_calls = done_data.get("tool_calls", [])
-                # Include conversation_id in the done event
-                done_data["conversation_id"] = conversation_id
-                event_str = f"event: done\ndata: {json.dumps(done_data)}\n\n"
+        if use_sdk_fallback:
+            # Single-turn: send message with pre-fetched context, no tools
+            sdk_system = (
+                research_assistant_v1.SYSTEM_PROMPT
+                + "\n\nIMPORTANT: You do not have access to tools in this session. "
+                "Answer based on the search results provided below and your "
+                "knowledge. If search results are provided, cite specific bill "
+                "identifiers."
+                + search_context
+            )
+            sdk_messages = list(trimmed)
+            response = await client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=4096,
+                system=sdk_system,
+                messages=sdk_messages,
+            )
+            final_text = response.content[0].text if response.content else ""
+            chunk_size = 40
+            for i in range(0, len(final_text), chunk_size):
+                yield _sse_event("token", {"text": final_text[i : i + chunk_size]})
+            yield _sse_event("done", {
+                "text": final_text,
+                "tool_calls": [],
+                "conversation_id": conversation_id,
+            })
+        else:
+            async for event_str in stream_agentic_chat(
+                system_prompt=research_assistant_v1.SYSTEM_PROMPT,
+                messages=trimmed,
+                client=client,
+            ):
+                # Parse the event to capture done data for persistence
+                if event_str.startswith("event: done\n"):
+                    data_line = event_str.split("data: ", 1)[1].split("\n")[0]
+                    done_data = json.loads(data_line)
+                    final_text = done_data.get("text", "")
+                    all_tool_calls = done_data.get("tool_calls", [])
+                    done_data["conversation_id"] = conversation_id
+                    event_str = (
+                        f"event: done\ndata: {json.dumps(done_data)}\n\n"
+                    )
 
-            yield event_str
+                yield event_str
 
         # 3. Persist phase — store assistant message
         if final_text:
