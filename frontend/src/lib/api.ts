@@ -696,6 +696,26 @@ export async function sendWorkspaceChatMessage(
   );
 }
 
+export async function getPrecedentInsights(
+  workspaceId: string,
+): Promise<{ insights: Array<PrecedentInsight> }> {
+  return fetchApi(
+    `/policy-workspaces/${encodeURIComponent(workspaceId)}/precedent-insights`,
+    { headers: clientHeaders() },
+  );
+}
+
+export interface PrecedentInsight {
+  bill_id: string;
+  identifier: string;
+  title: string;
+  jurisdiction_id: string;
+  status: string | null;
+  prediction_probability: number | null;
+  prediction_factors: Array<{ feature: string; impact: string }> | null;
+  ai_summary: string | null;
+}
+
 export async function getWorkspaceConversations(
   workspaceId: string,
 ): Promise<{ conversations: Array<{ id: string; title: string | null }> }> {

@@ -792,3 +792,66 @@ async def list_workspace_conversations(
             for c in conversations
         ]
     }
+
+
+# ---------------------------------------------------------------------------
+# Precedent Insights
+# ---------------------------------------------------------------------------
+
+
+@router.get("/policy-workspaces/{workspace_id}/precedent-insights")
+async def get_precedent_insights(
+    workspace_id: str,
+    client_id: str = Depends(get_client_id),
+    db: AsyncSession = Depends(get_session),
+):
+    """Get ML prediction + AI summary for each precedent bill."""
+    from src.prediction.service import is_model_loaded, predict_bill
+
+    workspace = await _get_workspace_or_error(
+        db, workspace_id=workspace_id, client_id=client_id, load_detail=True
+    )
+
+    insights = []
+    for prec in sorted(workspace.precedents, key=lambda p: p.position):
+        bill = prec.bill
+        insight: dict = {
+            "bill_id": bill.id,
+            "identifier": bill.identifier,
+            "title": bill.title,
+            "jurisdiction_id": bill.jurisdiction_id,
+            "status": bill.status,
+            "prediction_probability": None,
+            "prediction_factors": None,
+            "ai_summary": None,
+        }
+
+        # Try to get ML prediction
+        if is_model_loaded():
+            try:
+                pred = await predict_bill(db, bill.id)
+                if pred:
+                    insight["prediction_probability"] = pred.get("committee_passage_probability")
+                    insight["prediction_factors"] = pred.get("key_factors", [])[:3]
+            except Exception:
+                pass  # Graceful degradation
+
+        # Try to get AI summary from existing analyses
+        from src.models.ai_analysis import AiAnalysis
+
+        summary_result = await db.execute(
+            select(AiAnalysis)
+            .where(
+                AiAnalysis.bill_id == bill.id,
+                AiAnalysis.analysis_type == "summary",
+            )
+            .order_by(AiAnalysis.created_at.desc())
+            .limit(1)
+        )
+        summary_row = summary_result.scalar_one_or_none()
+        if summary_row and summary_row.result:
+            insight["ai_summary"] = summary_row.result.get("plain_english_summary")
+
+        insights.append(insight)
+
+    return {"insights": insights}

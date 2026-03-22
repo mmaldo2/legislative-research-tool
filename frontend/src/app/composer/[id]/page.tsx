@@ -11,6 +11,7 @@ import {
   clientHeaders,
   composePolicySection,
   generatePolicyWorkspaceOutline,
+  getPrecedentInsights,
   getPolicyWorkspace,
   getPolicyWorkspaceExportUrl,
   getPolicyWorkspaceHistory,
@@ -110,6 +111,9 @@ export default function ComposerDetailPage({
   const [error, setError] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [suggestionText, setSuggestionText] = useState<string | null>(null);
+  const [precedentInsights, setPrecedentInsights] = useState<
+    Record<string, { probability: number | null; summary: string | null }>
+  >({});
 
   const selectedBillIds = useMemo(
     () => new Set(workspace?.precedents.map((precedent) => precedent.bill_id) ?? []),
@@ -155,6 +159,26 @@ export default function ComposerDetailPage({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Load precedent insights when workspace has precedents
+  useEffect(() => {
+    if (!workspace || workspace.precedents.length === 0) return;
+    void (async () => {
+      try {
+        const data = await getPrecedentInsights(id);
+        const map: Record<string, { probability: number | null; summary: string | null }> = {};
+        for (const insight of data.insights) {
+          map[insight.bill_id] = {
+            probability: insight.prediction_probability,
+            summary: insight.ai_summary,
+          };
+        }
+        setPrecedentInsights(map);
+      } catch {
+        // Graceful degradation — insights are optional
+      }
+    })();
+  }, [workspace?.precedents.length, id]);
 
   async function handleAddPrecedent() {
     if (!billId.trim()) return;
@@ -629,7 +653,26 @@ export default function ComposerDetailPage({
                             {formatStatus(precedent.status)}
                           </Badge>
                         )}
+                        {precedentInsights[precedent.bill_id]?.probability != null && (
+                          <Badge
+                            variant={
+                              precedentInsights[precedent.bill_id].probability! > 0.7
+                                ? "default"
+                                : precedentInsights[precedent.bill_id].probability! > 0.3
+                                  ? "secondary"
+                                  : "destructive"
+                            }
+                          >
+                            {(precedentInsights[precedent.bill_id].probability! * 100).toFixed(0)}%
+                            passage
+                          </Badge>
+                        )}
                       </div>
+                      {precedentInsights[precedent.bill_id]?.summary && (
+                        <p className="mt-2 text-xs text-muted-foreground line-clamp-2">
+                          {precedentInsights[precedent.bill_id].summary}
+                        </p>
+                      )}
                     </div>
                     <Button
                       variant="ghost"
