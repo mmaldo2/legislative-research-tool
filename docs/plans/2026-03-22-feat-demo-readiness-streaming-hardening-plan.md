@@ -249,7 +249,7 @@ Fix reliability issues that would surface during a live presentation.
 
 Close P1 security items so due diligence questions have clean answers.
 
-- [ ] **3.1** Complete prompt injection sanitization (#103)
+- [x] **3.1** Complete prompt injection sanitization (#103)
   - Audit all harness methods that accept user-controlled text:
     - `generate_trend_narrative()` — already fixed (XML `<data>` tags, truncation)
     - `generate_policy_outline()` — `goal_prompt` from user -> needs XML fencing
@@ -262,13 +262,13 @@ Close P1 security items so due diligence questions have clean answers.
   - Truncation budgets: goal_prompt 500 chars, instruction_text 1000 chars, content 50K chars (existing)
   - Add helper: `def fence_user_input(text: str, max_len: int = 1000) -> str`
 
-- [ ] **3.2** Add sanitization tests
+- [x] **3.2** Add sanitization tests
   - Test that adversarial text in `goal_prompt` does not escape XML fencing
   - Test that `.replace()` is used (not `.format()`) for all user text interpolation
   - Test truncation bounds are enforced
   - Static test: grep all prompt templates for undelimited user data interpolation
 
-- [ ] **3.3** Verify and close #120 (artifact integrity)
+- [x] **3.3** Verify and close #120 (artifact integrity)
   - Confirm SHA-256 verification in `service.py:55-74` runs on every model load
   - Confirm `promote.py` generates hashes for all serialized model files
   - Add test: tamper with a hash in metadata.json, verify load fails with clear error

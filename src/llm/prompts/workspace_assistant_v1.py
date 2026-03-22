@@ -75,11 +75,11 @@ def format_workspace_context(
     """
     parts: list[str] = []
 
-    parts.append(f"**Title:** {title}")
+    parts.append(f"**Title:** {title[:200]}")
     parts.append(f"**Target Jurisdiction:** {target_jurisdiction}")
     parts.append(f"**Drafting Template:** {drafting_template}")
     if goal_prompt:
-        parts.append(f"**Policy Goal:** {goal_prompt}")
+        parts.append(f"**Policy Goal:** {goal_prompt[:500]}")
 
     # Precedent bills
     if precedent_summaries:
