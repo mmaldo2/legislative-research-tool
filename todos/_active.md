@@ -2,10 +2,10 @@
 
 Last updated: 2026-03-22
 
-- Active pending todos: 25
-- `P1`: 6
-- `P2`: 15
-- `P3`: 4
+- Active pending todos: 43
+- `P1`: 8
+- `P2`: 27
+- `P3`: 8
 - Completed todos are archived in `todos/archive/`
 
 ## P1
@@ -16,6 +16,8 @@ Last updated: 2026-03-22
 - [104-pending-p1-csv-injection-characters.md](104-pending-p1-csv-injection-characters.md)
 - [117-pending-p1-misleading-feature-contributions.md](117-pending-p1-misleading-feature-contributions.md)
 - [118-pending-p1-duplicate-limiter-instance.md](118-pending-p1-duplicate-limiter-instance.md)
+- [151-pending-p1-await-on-async-generator-compose-stream.md](151-pending-p1-await-on-async-generator-compose-stream.md)
+- [152-pending-p1-fake-streaming-chat-no-latency-benefit.md](152-pending-p1-fake-streaming-chat-no-latency-benefit.md)
 
 ## P2
 
@@ -34,6 +36,18 @@ Last updated: 2026-03-22
 - [124-pending-p2-agent-native-prediction-tool.md](124-pending-p2-agent-native-prediction-tool.md)
 - [127-pending-p2-policy-workspace-workflow-enums.md](127-pending-p2-policy-workspace-workflow-enums.md)
 - [128-pending-p2-policy-workspace-concurrency-and-transaction-tests.md](128-pending-p2-policy-workspace-concurrency-and-transaction-tests.md)
+- [153-pending-p2-no-sse-connection-timeout.md](153-pending-p2-no-sse-connection-timeout.md)
+- [154-pending-p2-anthropic-exception-details-leaked.md](154-pending-p2-anthropic-exception-details-leaked.md)
+- [155-pending-p2-new-anthropic-client-per-compose-stream.md](155-pending-p2-new-anthropic-client-per-compose-stream.md)
+- [156-pending-p2-fragile-sse-string-parsing.md](156-pending-p2-fragile-sse-string-parsing.md)
+- [157-pending-p2-frontend-localstorage-key-mismatch.md](157-pending-p2-frontend-localstorage-key-mismatch.md)
+- [158-pending-p2-uncaught-exception-skips-persistence.md](158-pending-p2-uncaught-exception-skips-persistence.md)
+- [159-pending-p2-streaming-compose-loses-provenance.md](159-pending-p2-streaming-compose-loses-provenance.md)
+- [160-pending-p2-streaming-endpoints-no-openapi-docs.md](160-pending-p2-streaming-endpoints-no-openapi-docs.md)
+- [161-pending-p2-duplicated-sse-event-and-load-persist.md](161-pending-p2-duplicated-sse-event-and-load-persist.md)
+- [162-pending-p2-streaming-harness-methods-duplicate-nonstreaming.md](162-pending-p2-streaming-harness-methods-duplicate-nonstreaming.md)
+- [163-pending-p2-frontend-token-rerender-spam.md](163-pending-p2-frontend-token-rerender-spam.md)
+- [164-pending-p2-no-streaming-endpoint-tests.md](164-pending-p2-no-streaming-endpoint-tests.md)
 
 ## P3
 
@@ -41,3 +55,8 @@ Last updated: 2026-03-22
 - [115-pending-p3-chat-agent-trend-tools.md](115-pending-p3-chat-agent-trend-tools.md)
 - [116-pending-p3-minor-cleanups.md](116-pending-p3-minor-cleanups.md)
 - [125-pending-p3-prediction-code-cleanup.md](125-pending-p3-prediction-code-cleanup.md)
+- [149-pending-p3-chat-panel-remount-loses-state.md](149-pending-p3-chat-panel-remount-loses-state.md)
+- [165-pending-p3-cached-or-stream-yagni.md](165-pending-p3-cached-or-stream-yagni.md)
+- [166-pending-p3-missing-done-event-on-error-path.md](166-pending-p3-missing-done-event-on-error-path.md)
+- [167-pending-p3-backend-get-client-id-duplicated.md](167-pending-p3-backend-get-client-id-duplicated.md)
+- [168-pending-p3-sync-stream-403-vs-404-inconsistency.md](168-pending-p3-sync-stream-403-vs-404-inconsistency.md)
