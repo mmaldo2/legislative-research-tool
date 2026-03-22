@@ -301,7 +301,7 @@ async def seed() -> None:
             id=workspace_id,
             client_id=DEMO_CLIENT_ID,
             title=WORKSPACE_TITLE,
-            target_jurisdiction_id="us-ca",
+            target_jurisdiction_id="us",
             drafting_template="standard-act",
             goal_prompt=(
                 "Draft a comprehensive consumer data privacy act for California that "
@@ -409,7 +409,10 @@ async def seed() -> None:
         # --- Definitions: 2 generations, 2 revisions ---
         def_section = section_objects["definitions"]
 
-        def_gen1_id = _id()
+        def_gen1_id, def_rev1_id = _id(), _id()
+        def_gen2_id, def_rev2_id = _id(), _id()
+
+        # Create generations first (without accepted_revision_id to avoid FK violation)
         def_gen1 = PolicyGeneration(
             id=def_gen1_id,
             workspace_id=workspace_id,
@@ -423,22 +426,6 @@ async def seed() -> None:
                 "latency_ms": 3420,
             },
         )
-        session.add(def_gen1)
-
-        def_rev1_id = _id()
-        def_rev1 = PolicySectionRevision(
-            id=def_rev1_id,
-            section_id=def_section.id,
-            generation_id=def_gen1_id,
-            change_source="ai_generation",
-            content_markdown=DEFINITIONS_V1,
-        )
-        session.add(def_rev1)
-
-        # Mark gen1 as accepted
-        def_gen1.accepted_revision_id = def_rev1_id
-
-        def_gen2_id = _id()
         def_gen2 = PolicyGeneration(
             id=def_gen2_id,
             workspace_id=workspace_id,
@@ -456,18 +443,25 @@ async def seed() -> None:
                 "latency_ms": 4810,
             },
         )
-        session.add(def_gen2)
+        session.add_all([def_gen1, def_gen2])
+        await session.flush()  # Generations exist before revisions reference them
 
-        def_rev2_id = _id()
+        # Create revisions
+        def_rev1 = PolicySectionRevision(
+            id=def_rev1_id, section_id=def_section.id,
+            generation_id=def_gen1_id, change_source="ai_generation",
+            content_markdown=DEFINITIONS_V1,
+        )
         def_rev2 = PolicySectionRevision(
-            id=def_rev2_id,
-            section_id=def_section.id,
-            generation_id=def_gen2_id,
-            change_source="ai_generation",
+            id=def_rev2_id, section_id=def_section.id,
+            generation_id=def_gen2_id, change_source="ai_generation",
             content_markdown=DEFINITIONS_V2,
         )
-        session.add(def_rev2)
+        session.add_all([def_rev1, def_rev2])
+        await session.flush()  # Revisions exist before generations reference them
 
+        # Now link accepted revisions
+        def_gen1.accepted_revision_id = def_rev1_id
         def_gen2.accepted_revision_id = def_rev2_id
 
         print("  [+] Created 2 generations + 2 revisions for Definitions")
@@ -475,7 +469,9 @@ async def seed() -> None:
         # --- Consumer Rights: 2 generations, 2 revisions ---
         cr_section = section_objects["consumer-rights"]
 
-        cr_gen1_id = _id()
+        cr_gen1_id, cr_rev1_id = _id(), _id()
+        cr_gen2_id, cr_rev2_id = _id(), _id()
+
         cr_gen1 = PolicyGeneration(
             id=cr_gen1_id,
             workspace_id=workspace_id,
@@ -489,21 +485,6 @@ async def seed() -> None:
                 "latency_ms": 2950,
             },
         )
-        session.add(cr_gen1)
-
-        cr_rev1_id = _id()
-        cr_rev1 = PolicySectionRevision(
-            id=cr_rev1_id,
-            section_id=cr_section.id,
-            generation_id=cr_gen1_id,
-            change_source="ai_generation",
-            content_markdown=CONSUMER_RIGHTS_V1,
-        )
-        session.add(cr_rev1)
-
-        cr_gen1.accepted_revision_id = cr_rev1_id
-
-        cr_gen2_id = _id()
         cr_gen2 = PolicyGeneration(
             id=cr_gen2_id,
             workspace_id=workspace_id,
@@ -521,18 +502,23 @@ async def seed() -> None:
                 "latency_ms": 3780,
             },
         )
-        session.add(cr_gen2)
+        session.add_all([cr_gen1, cr_gen2])
+        await session.flush()
 
-        cr_rev2_id = _id()
+        cr_rev1 = PolicySectionRevision(
+            id=cr_rev1_id, section_id=cr_section.id,
+            generation_id=cr_gen1_id, change_source="ai_generation",
+            content_markdown=CONSUMER_RIGHTS_V1,
+        )
         cr_rev2 = PolicySectionRevision(
-            id=cr_rev2_id,
-            section_id=cr_section.id,
-            generation_id=cr_gen2_id,
-            change_source="ai_generation",
+            id=cr_rev2_id, section_id=cr_section.id,
+            generation_id=cr_gen2_id, change_source="ai_generation",
             content_markdown=CONSUMER_RIGHTS_V2,
         )
-        session.add(cr_rev2)
+        session.add_all([cr_rev1, cr_rev2])
+        await session.flush()
 
+        cr_gen1.accepted_revision_id = cr_rev1_id
         cr_gen2.accepted_revision_id = cr_rev2_id
 
         print("  [+] Created 2 generations + 2 revisions for Consumer Rights")
