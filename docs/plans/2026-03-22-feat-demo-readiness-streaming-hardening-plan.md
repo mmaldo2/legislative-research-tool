@@ -1,7 +1,7 @@
 ---
 title: "feat: Demo Readiness — Streaming, Hardening, and Narrative"
 type: feat
-status: active
+status: completed
 date: 2026-03-22
 origin: docs/scopes/2026-03-22-demo-readiness-scope.md
 ---
@@ -346,7 +346,7 @@ Reshape the user-facing story and add the revision diff feature.
   - Include fallback talking points for each step if something fails
   - Note which demo data must exist (references seed script)
 
-- [ ] **4.5** Final integration testing and cleanup
+- [x] **4.5** Final integration testing and cleanup
   - Run full demo walkthrough 3 times end-to-end
   - Fix any issues discovered during dry runs
   - Verify all streaming endpoints work with cold start
