@@ -378,7 +378,38 @@ async def compose_section(
         other_sections = _other_sections_summary(workspace, section.id)
 
     # --- Call phase: no DB connection held ---
-    if action_type == "draft_section":
+    if action_type == "analyze_constitutional":
+        if not sec_content:
+            raise ValueError("Section must have content before analyzing")
+        analysis = await harness.analyze_draft_constitutional(
+            workspace_id=ws_id,
+            section_id=sec_id,
+            draft_text=sec_content,
+            section_heading=sec_heading,
+            jurisdiction=ws_jurisdiction or "",
+            goal_prompt=ws_goal,
+        )
+        output_payload = analysis.model_dump()
+        output_payload["content_markdown"] = analysis.summary
+        output_payload["rationale"] = f"Risk level: {analysis.risk_level}"
+        provenance_sources: list[dict] = []
+    elif action_type == "analyze_patterns":
+        if not sec_content:
+            raise ValueError("Section must have content before analyzing")
+        analysis = await harness.analyze_draft_patterns(
+            workspace_id=ws_id,
+            section_id=sec_id,
+            draft_text=sec_content,
+            section_heading=sec_heading,
+            jurisdiction=ws_jurisdiction or "",
+            goal_prompt=ws_goal,
+            precedent_context=precedents_text,
+        )
+        output_payload = analysis.model_dump()
+        output_payload["content_markdown"] = analysis.summary
+        output_payload["rationale"] = f"Pattern type: {analysis.pattern_type}"
+        provenance_sources = []
+    elif action_type == "draft_section":
         result = await harness.draft_policy_section(
             workspace_id=ws_id,
             section_id=sec_id,
@@ -392,6 +423,8 @@ async def compose_section(
             precedents_text=precedents_text,
             instruction_text=instruction_text,
         )
+        output_payload = None  # set below
+        provenance_sources = []
     else:
         if not sec_content:
             raise ValueError("Section must have content before rewriting")
@@ -407,21 +440,29 @@ async def compose_section(
             instruction_text=instruction_text,
             precedents_text=precedents_text,
         )
+        output_payload = None  # set below
+        provenance_sources = []
 
-    provenance_sources = []
-    for idx, bill_id in enumerate(result.source_bill_ids):
-        bill = bill_map.get(bill_id)
-        if bill:
-            note = result.source_notes[idx] if idx < len(result.source_notes) else None
-            provenance_sources.append(
-                {
-                    "bill_id": bill.id,
-                    "identifier": bill.identifier,
-                    "title": bill.title,
-                    "jurisdiction_id": bill.jurisdiction_id,
-                    "note": note,
-                }
-            )
+    # Build output_payload and provenance for drafting/rewriting actions
+    if output_payload is None:
+        provenance_sources = []
+        for idx, bid in enumerate(result.source_bill_ids):
+            bill = bill_map.get(bid)
+            if bill:
+                note = result.source_notes[idx] if idx < len(result.source_notes) else None
+                provenance_sources.append(
+                    {
+                        "bill_id": bill.id,
+                        "identifier": bill.identifier,
+                        "title": bill.title,
+                        "jurisdiction_id": bill.jurisdiction_id,
+                        "note": note,
+                    }
+                )
+        output_payload = {
+            "content_markdown": result.content_markdown,
+            "rationale": result.rationale,
+        }
 
     # --- Persist phase: hold DB connection briefly ---
     async with async_session_factory() as session:
@@ -431,10 +472,7 @@ async def compose_section(
             action_type=action_type,
             instruction_text=instruction_text,
             selected_text=selected_text,
-            output_payload={
-                "content_markdown": result.content_markdown,
-                "rationale": result.rationale,
-            },
+            output_payload=output_payload,
             provenance={
                 "precedent_bill_ids": list(bill_map.keys()),
                 "sources": provenance_sources,

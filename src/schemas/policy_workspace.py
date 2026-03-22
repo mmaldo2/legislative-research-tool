@@ -115,7 +115,14 @@ class PolicyWorkspaceListResponse(BaseModel):
 # --- Compose action schemas ---
 
 COMPOSE_ACTION_TYPES = frozenset(
-    ["draft_section", "rewrite_selection", "tighten_definition", "harmonize_with_precedent"]
+    [
+        "draft_section",
+        "rewrite_selection",
+        "tighten_definition",
+        "harmonize_with_precedent",
+        "analyze_constitutional",
+        "analyze_patterns",
+    ]
 )
 
 

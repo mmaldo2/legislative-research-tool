@@ -26,6 +26,7 @@ import {
   formatComposeAction,
   formatComposerStatus,
   formatComposerTemplate,
+  ANALYZE_ACTION_OPTIONS,
 } from "@/lib/composer";
 import { formatJurisdiction, formatStatus, statusVariant } from "@/lib/format";
 import type {
@@ -55,6 +56,7 @@ import {
   Download,
   Plus,
   Save,
+  Scale,
   Search,
   Trash2,
   WandSparkles,
@@ -803,6 +805,23 @@ export default function ComposerDetailPage({
                         </Button>
                       );
                     })}
+                    {section.content_markdown && (
+                      <>
+                        <span className="text-muted-foreground text-xs self-center mx-1">|</span>
+                        {ANALYZE_ACTION_OPTIONS.map((action) => (
+                          <Button
+                            key={action.value}
+                            size="sm"
+                            variant="secondary"
+                            disabled={composingId === section.id}
+                            onClick={() => void handleCompose(section.id, action.value)}
+                          >
+                            <Scale className="mr-1.5 h-3 w-3" />
+                            {composingId === section.id ? "Analyzing..." : action.label}
+                          </Button>
+                        ))}
+                      </>
+                    )}
                   </div>
 
                   {/* Pending generation */}
