@@ -7,8 +7,13 @@ the Claude Agent SDK, which authenticates via the user's Claude subscription
 The Agent SDK returns responses as streaming events. This adapter collects
 the full text and returns it in a format compatible with the Anthropic SDK's
 Messages API response shape.
+
+IMPORTANT: The Agent SDK's query() function disrupts Python's greenlet state,
+which breaks SQLAlchemy's async session management. To avoid this, all SDK
+calls are run in a separate thread via asyncio.to_thread().
 """
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
@@ -35,6 +40,32 @@ class SDKResponse:
     content: list[TextBlock]
     usage: Usage
     stop_reason: str
+
+
+def _run_sdk_query_sync(prompt: str) -> str:
+    """Run the Agent SDK query synchronously in a dedicated event loop.
+
+    This runs in a separate thread (via asyncio.to_thread) so the SDK's
+    subprocess management doesn't corrupt the main thread's greenlet state.
+    """
+    import asyncio as _asyncio
+
+    from claude_agent_sdk import query
+
+    async def _collect():
+        full_text = ""
+        async for event in query(prompt=prompt):
+            if hasattr(event, "content"):
+                for block in event.content:
+                    if hasattr(block, "text"):
+                        full_text += block.text
+        return full_text
+
+    loop = _asyncio.new_event_loop()
+    try:
+        return loop.run_until_complete(_collect())
+    finally:
+        loop.close()
 
 
 def _extract_json(text: str) -> str:
@@ -84,19 +115,16 @@ class _SDKMessages:
         tools: list[dict] | None = None,
         **kwargs,
     ) -> SDKResponse:
-        """Send a message via the Agent SDK and return a complete response."""
-        from claude_agent_sdk import query
+        """Send a message via the Agent SDK and return a complete response.
 
+        Runs the SDK query in a separate thread to avoid corrupting the
+        main thread's greenlet state (required by SQLAlchemy async).
+        """
         prompt = _build_prompt(system, messages)
         logger.info("SDK adapter: sending %d-char prompt via Agent SDK", len(prompt))
 
-        full_text = ""
         try:
-            async for event in query(prompt=prompt):
-                if hasattr(event, "content"):
-                    for block in event.content:
-                        if hasattr(block, "text"):
-                            full_text += block.text
+            full_text = await asyncio.to_thread(_run_sdk_query_sync, prompt)
         except Exception:
             logger.exception("SDK adapter: Agent SDK query failed")
             raise
@@ -143,17 +171,14 @@ class _SDKStream:
         pass
 
     async def __aiter__(self):
-        from claude_agent_sdk import query
-
         prompt = _build_prompt(self._system, self._messages)
 
-        async for event in query(prompt=prompt):
-            if hasattr(event, "content"):
-                for block in event.content:
-                    if hasattr(block, "text"):
-                        self._full_text += block.text
-                        # Emit a content_block_delta-like event
-                        yield _DeltaEvent(text=block.text)
+        # Run SDK in separate thread to preserve greenlet state
+        self._full_text = await asyncio.to_thread(_run_sdk_query_sync, prompt)
+
+        # Emit the full text as a single delta event
+        # (SDK adapter doesn't support true token-level streaming)
+        yield _DeltaEvent(text=self._full_text)
 
     async def get_final_message(self) -> SDKResponse:
         cleaned = _extract_json(self._full_text)

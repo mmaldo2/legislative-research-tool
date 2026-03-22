@@ -542,50 +542,50 @@ async def chat_stream(
     request: Request,
     req: ChatRequest,
     client_id: str = Depends(get_client_id),
-    db: AsyncSession = Depends(get_session),
 ) -> EventSourceResponse:
     """Stream a chat response via Server-Sent Events.
 
     Same as POST /chat but returns SSE events: tool_status during tool use,
     token for streaming text, done with final message and metadata.
     """
-    # 1. Load phase — create/retrieve conversation, store user message
-    if req.conversation_id:
-        result = await db.execute(
-            select(Conversation)
-            .where(Conversation.id == req.conversation_id)
-            .options(selectinload(Conversation.messages))
+    # 1. Load phase — own session, closed before streaming begins
+    async with async_session_factory() as db:
+        if req.conversation_id:
+            result = await db.execute(
+                select(Conversation)
+                .where(Conversation.id == req.conversation_id)
+                .options(selectinload(Conversation.messages))
+            )
+            conversation = result.scalar_one_or_none()
+            if not conversation:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+            if conversation.client_id != client_id:
+                raise HTTPException(status_code=404, detail="Conversation not found")
+        else:
+            conversation = Conversation(
+                id=uuid.uuid4().hex,
+                client_id=client_id,
+                title=_generate_title(req.message),
+            )
+            db.add(conversation)
+            await db.flush()
+
+        user_msg = ConversationMessage(
+            conversation_id=conversation.id,
+            role="user",
+            content=req.message,
         )
-        conversation = result.scalar_one_or_none()
-        if not conversation:
-            raise HTTPException(status_code=404, detail="Conversation not found")
-        if conversation.client_id != client_id:
-            raise HTTPException(status_code=404, detail="Conversation not found")
-    else:
-        conversation = Conversation(
-            id=uuid.uuid4().hex,
-            client_id=client_id,
-            title=_generate_title(req.message),
-        )
-        db.add(conversation)
-        await db.flush()
+        db.add(user_msg)
 
-    user_msg = ConversationMessage(
-        conversation_id=conversation.id,
-        role="user",
-        content=req.message,
-    )
-    db.add(user_msg)
+        messages: list[dict] = []
+        for msg in conversation.messages:
+            if msg.role == "user":
+                messages.append({"role": "user", "content": msg.content})
+            elif msg.role == "assistant":
+                messages.append({"role": "assistant", "content": msg.content})
 
-    messages: list[dict] = []
-    for msg in conversation.messages:
-        if msg.role == "user":
-            messages.append({"role": "user", "content": msg.content})
-        elif msg.role == "assistant":
-            messages.append({"role": "assistant", "content": msg.content})
-
-    conversation_id = conversation.id
-    await db.commit()
+        conversation_id = conversation.id
+        await db.commit()
 
     # 2. Call phase — stream agentic loop (no DB held)
     from src.services.chat_service import (
