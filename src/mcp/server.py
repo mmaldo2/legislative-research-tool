@@ -47,10 +47,15 @@ async def list_tools() -> list[types.Tool]:
     return [_convert_schema(t) for t in RESEARCH_TOOLS]
 
 
+# Tools that require LLM calls (Claude-powered analysis). These must NOT be
+# invoked via ClaudeSDKClient to avoid Claude-calling-Claude recursion.
+_LLM_TOOLS = {"analyze_version_diff", "analyze_constitutional", "analyze_patterns"}
+
+
 @server.call_tool()
 async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
     from src.api.chat import execute_tool
-    from src.api.deps import get_anthropic_client
+    from src.config import settings
     from src.database import async_session_factory
     from src.llm.harness import LLMHarness
 
@@ -58,14 +63,26 @@ async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
 
     try:
         async with async_session_factory() as db:
-            client = get_anthropic_client()
-            harness = LLMHarness(db_session=db, client=client)
+            harness = None
+            if name in _LLM_TOOLS:
+                if not settings.anthropic_api_key:
+                    error_msg = (
+                        f"Tool '{name}' requires an Anthropic API key for LLM analysis. "
+                        "This tool is unavailable in subscription (Agent SDK) mode. "
+                        "Use search and data tools instead."
+                    )
+                    return [types.TextContent(type="text", text=json.dumps({"error": error_msg}))]
+                import anthropic
+
+                client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+                harness = LLMHarness(db_session=db, client=client)
+
             result = await execute_tool(name, arguments, db, harness)
         logger.info("Tool %s returned %d chars", name, len(result))
         return [types.TextContent(type="text", text=result)]
-    except Exception as e:
+    except Exception:
         logger.exception("Tool %s failed", name)
-        error_json = json.dumps({"error": f"Tool '{name}' failed: {e}"})
+        error_json = json.dumps({"error": f"Tool '{name}' encountered an internal error."})
         return [types.TextContent(type="text", text=error_json)]
 
 

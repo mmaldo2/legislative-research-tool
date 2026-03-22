@@ -324,22 +324,28 @@ def _tool_description(tool_name: str, tool_input: dict) -> str:
     descriptions: dict[str, Callable[[dict], str]] = {
         "search_bills": lambda args: f"Searching for '{args.get('query', '')}'...",
         "get_bill_detail": lambda args: f"Reading bill {args.get('bill_id', '')}...",
-        "get_bill_text": lambda args: f"Fetching text of {args.get('bill_id', '')}...",
-        "get_similar_bills": lambda args: (
+        "list_jurisdictions": lambda _args: "Listing available jurisdictions...",
+        "find_similar_bills": lambda args: (
             f"Finding similar bills to {args.get('bill_id', '')}..."
         ),
-        "summarize_bill": lambda args: f"Summarizing {args.get('bill_id', '')}...",
+        "analyze_version_diff": lambda args: (
+            f"Comparing versions of {args.get('bill_id', '')}..."
+        ),
         "analyze_constitutional": lambda args: (
             f"Analyzing constitutionality of {args.get('bill_id', '')}..."
         ),
-        "search_precedent_language": lambda args: (
-            f"Searching precedent language for '{args.get('query', '')}'..."
+        "analyze_patterns": lambda args: (
+            f"Detecting legislative patterns for {args.get('bill_id', '')}..."
         ),
-        "get_trend_data": lambda _args: "Getting trend data...",
-        "get_jurisdiction_info": lambda args: (
-            f"Looking up {args.get('jurisdiction_id', '')}..."
+        "predict_bill_passage": lambda args: (
+            f"Predicting passage for {args.get('bill_id', '')}..."
         ),
-        "get_legislator_info": lambda _args: "Looking up legislator...",
+        "search_govinfo": lambda args: (
+            f"Searching GovInfo for '{args.get('query', '')}'..."
+        ),
+        "get_govinfo_document": lambda args: (
+            f"Retrieving document {args.get('package_id', '')}..."
+        ),
     }
     fn = descriptions.get(tool_name, lambda _: f"Running {tool_name}...")
     return fn(tool_input)
@@ -375,13 +381,40 @@ def _build_sdk_prompt(system: str, messages: list[dict]) -> str:
     return "\n".join(parts)
 
 
-def _inherit_env() -> dict[str, str]:
-    """Build env dict for the MCP server subprocess.
+# Environment variables the MCP server subprocess needs. Everything else is
+# filtered out to avoid leaking unrelated secrets (webhook keys, cloud creds).
+_MCP_ENV_ALLOWLIST = {
+    # Application
+    "DATABASE_URL",
+    "ANTHROPIC_API_KEY",
+    "VOYAGE_API_KEY",
+    "CONGRESS_API_KEY",
+    "GOVINFO_API_KEY",
+    "OPENSTATES_API_KEY",
+    # Python / system
+    "PYTHONPATH",
+    "VIRTUAL_ENV",
+    "PATH",
+    # Windows-specific (required for subprocess to run)
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERPROFILE",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "COMSPEC",
+}
 
-    Passes through the current environment so the subprocess has access to
-    DATABASE_URL, API keys, and Python path configuration.
+
+def _inherit_env() -> dict[str, str]:
+    """Build a filtered env dict for the MCP server subprocess.
+
+    Only passes through variables the MCP server actually needs —
+    database URL, API keys, and system essentials.
     """
-    return dict(os.environ)
+    return {k: v for k, v in os.environ.items() if k.upper() in _MCP_ENV_ALLOWLIST}
 
 
 def _run_sdk_query_with_mcp(prompt: str, system_prompt: str) -> list[dict]:
@@ -492,11 +525,15 @@ async def stream_sdk_agentic_chat(
                 "result_summary": _tool_description(event["name"], event.get("input", {})),
             })
             yield _sse_event("tool_status", {
+                "tool": event["name"],
                 "status": "running",
                 "description": _tool_description(event["name"], event.get("input", {})),
             })
             # Emit a completion status after each tool use
-            yield _sse_event("tool_status", {"status": "complete"})
+            yield _sse_event("tool_status", {
+                "tool": event["name"],
+                "status": "complete",
+            })
 
         elif event["type"] == "result":
             if event.get("is_error"):
