@@ -45,6 +45,7 @@ from src.schemas.analysis import (
 from src.schemas.compare import BillComparisonOutput
 from src.schemas.policy_workspace import (
     PolicyOutlineOutput,
+    PolicyOutlineSectionOutput,
     PolicyRewriteOutput,
     PolicySectionDraftOutput,
 )
@@ -61,6 +62,69 @@ T = TypeVar("T", bound=BaseModel)
 # User-input truncation limits for prompt injection defense
 MAX_GOAL_PROMPT_CHARS = 500
 MAX_INSTRUCTION_TEXT_CHARS = 1000
+
+
+def _coerce_outline(text: str) -> "PolicyOutlineOutput":
+    """Try to parse an outline from raw LLM text, coercing field names.
+
+    The LLM sometimes returns section_number instead of section_key,
+    source_notes as a string instead of a list, or omits confidence.
+    This function handles those variations gracefully.
+    """
+    import re as _re
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        # Try extracting JSON from markdown code blocks
+        match = _re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, _re.DOTALL)
+        if match:
+            try:
+                data = json.loads(match.group(1).strip())
+            except json.JSONDecodeError:
+                return PolicyOutlineOutput(
+                    sections=[], drafting_notes=[text or "Unable to parse outline."],
+                    confidence=0.0,
+                )
+        else:
+            return PolicyOutlineOutput(
+                sections=[], drafting_notes=[text or "Unable to parse outline."],
+                confidence=0.0,
+            )
+
+    # Coerce sections
+    raw_sections = data.get("sections", [])
+    coerced_sections = []
+    for i, sec in enumerate(raw_sections):
+        # section_key: use section_key, or derive from heading, or use section_number
+        section_key = sec.get("section_key")
+        if not section_key:
+            heading = sec.get("heading", f"section_{i}")
+            section_key = _re.sub(r"[^a-z0-9]+", "_", heading.lower()).strip("_")
+
+        # source_notes: coerce string to list
+        source_notes = sec.get("source_notes", [])
+        if isinstance(source_notes, str):
+            source_notes = [source_notes] if source_notes else []
+
+        # source_bill_ids: ensure list
+        source_bill_ids = sec.get("source_bill_ids", [])
+        if not isinstance(source_bill_ids, list):
+            source_bill_ids = []
+
+        coerced_sections.append(PolicyOutlineSectionOutput(
+            section_key=section_key[:100],
+            heading=sec.get("heading", f"Section {i + 1}")[:200],
+            purpose=sec.get("purpose", "")[:1000] or "No purpose provided",
+            source_bill_ids=source_bill_ids[:5],
+            source_notes=source_notes[:5],
+        ))
+
+    return PolicyOutlineOutput(
+        sections=coerced_sections,
+        drafting_notes=data.get("drafting_notes", [])[:10],
+        confidence=data.get("confidence", 0.7),
+    )
 
 
 def fence_user_input(text: str, label: str = "user_input", max_len: int = 1000) -> str:
@@ -700,11 +764,7 @@ class LLMHarness:
             ),
             max_tokens=4096,
             output_type=PolicyOutlineOutput,
-            fallback_fn=lambda text: PolicyOutlineOutput(
-                sections=[],
-                drafting_notes=[text or "Unable to generate a policy outline."],
-                confidence=0.0,
-            ),
+            fallback_fn=lambda text: _coerce_outline(text),
             cost_label="policy_outline",
             skip_store=True,
         )
