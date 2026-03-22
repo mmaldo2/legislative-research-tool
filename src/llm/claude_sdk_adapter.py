@@ -88,13 +88,20 @@ class _SDKMessages:
         from claude_agent_sdk import query
 
         prompt = _build_prompt(system, messages)
+        logger.info("SDK adapter: sending %d-char prompt via Agent SDK", len(prompt))
 
         full_text = ""
-        async for event in query(prompt=prompt):
-            if hasattr(event, "content"):
-                for block in event.content:
-                    if hasattr(block, "text"):
-                        full_text += block.text
+        try:
+            async for event in query(prompt=prompt):
+                if hasattr(event, "content"):
+                    for block in event.content:
+                        if hasattr(block, "text"):
+                            full_text += block.text
+        except Exception:
+            logger.exception("SDK adapter: Agent SDK query failed")
+            raise
+
+        logger.info("SDK adapter: received %d-char response", len(full_text))
 
         # Extract JSON if the response is wrapped in code blocks
         cleaned = _extract_json(full_text)
