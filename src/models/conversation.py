@@ -21,6 +21,11 @@ class Conversation(Base):
         index=True,
     )
     title: Mapped[str | None] = mapped_column(String)  # auto-generated from first message
+    workspace_id: Mapped[str | None] = mapped_column(
+        ForeignKey("policy_workspaces.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

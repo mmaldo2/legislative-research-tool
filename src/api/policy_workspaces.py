@@ -1,14 +1,25 @@
 """Policy workspace composer CRUD endpoints."""
 
+import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from src.api.deps import get_llm_harness, get_session, limiter
+from src.api.deps import get_anthropic_client, get_llm_harness, get_session, limiter
+from src.database import async_session_factory
 from src.llm.harness import LLMHarness
+from src.models.conversation import Conversation, ConversationMessage
 from src.models.policy_workspace import PolicyWorkspace
+from src.schemas.chat import (
+    ChatMessageResponse,
+    ChatRequest,
+    ChatResponse,
+    ToolCallInfo,
+)
 from src.schemas.common import MetaResponse
 from src.schemas.policy_workspace import (
     PolicyComposeRequest,
@@ -586,3 +597,198 @@ async def export_policy_workspace(
         media_type="text/markdown",
         headers={"Content-Disposition": f'attachment; filename="{workspace_id}.md"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# Workspace Chat
+# ---------------------------------------------------------------------------
+
+
+def _build_workspace_context_for_chat(
+    workspace: PolicyWorkspace,
+) -> tuple[list[dict], list[dict]]:
+    """Build precedent summaries and section data for prompt context."""
+    precedent_summaries = []
+    for prec in sorted(workspace.precedents, key=lambda p: p.position):
+        bill = prec.bill
+        precedent_summaries.append(
+            {
+                "identifier": bill.identifier,
+                "title": bill.title,
+                "jurisdiction_id": bill.jurisdiction_id,
+                "status": bill.status,
+            }
+        )
+
+    sections = []
+    for sec in sorted(workspace.sections, key=lambda s: s.position):
+        sections.append(
+            {
+                "heading": sec.heading,
+                "status": sec.status,
+                "content_markdown": sec.content_markdown or "",
+            }
+        )
+
+    return precedent_summaries, sections
+
+
+@router.post(
+    "/policy-workspaces/{workspace_id}/chat",
+    response_model=ChatResponse,
+)
+@limiter.limit("30/minute")
+async def workspace_chat(
+    request: Request,
+    workspace_id: str,
+    body: ChatRequest,
+    client_id: str = Depends(get_client_id),
+    db: AsyncSession = Depends(get_session),
+) -> ChatResponse:
+    """Chat with a workspace-aware research assistant."""
+    from src.llm.prompts.workspace_assistant_v1 import (
+        SYSTEM_PROMPT_TEMPLATE,
+        format_workspace_context,
+    )
+    from src.services.chat_service import (
+        HISTORY_CHAR_BUDGET,
+        run_agentic_chat,
+        trim_history,
+    )
+
+    message = body.message
+    conversation_id = body.conversation_id
+
+    # 1. Load workspace with full context
+    workspace = await _get_workspace_or_error(
+        db, workspace_id=workspace_id, client_id=client_id, load_detail=True
+    )
+
+    # 2. Build workspace context for system prompt
+    precedent_summaries, sections = _build_workspace_context_for_chat(workspace)
+    workspace_context = format_workspace_context(
+        title=workspace.title,
+        target_jurisdiction=workspace.target_jurisdiction_id or "",
+        drafting_template=workspace.drafting_template or "",
+        goal_prompt=workspace.goal_prompt,
+        precedent_summaries=precedent_summaries,
+        sections=sections,
+    )
+    system_prompt = SYSTEM_PROMPT_TEMPLATE.format(workspace_context=workspace_context)
+
+    # 3. Load or create conversation scoped to this workspace
+    if conversation_id:
+        result = await db.execute(
+            select(Conversation)
+            .where(Conversation.id == conversation_id)
+            .options(selectinload(Conversation.messages))
+        )
+        conversation = result.scalar_one_or_none()
+        if not conversation:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        if conversation.client_id != client_id:
+            raise HTTPException(status_code=403, detail="Not authorized")
+        if conversation.workspace_id != workspace_id:
+            raise HTTPException(
+                status_code=400, detail="Conversation belongs to a different workspace"
+            )
+    else:
+        conversation = Conversation(
+            id=uuid.uuid4().hex,
+            client_id=client_id,
+            workspace_id=workspace_id,
+            title=f"Research: {workspace.title[:60]}",
+        )
+        db.add(conversation)
+        await db.flush()
+
+    # 4. Store user message
+    user_msg = ConversationMessage(
+        conversation_id=conversation.id,
+        role="user",
+        content=message,
+    )
+    db.add(user_msg)
+
+    # 5. Build message history
+    messages: list[dict] = []
+    for msg in conversation.messages:
+        if msg.role in ("user", "assistant"):
+            messages.append({"role": msg.role, "content": msg.content})
+
+    conv_id = conversation.id
+    await db.commit()
+
+    # 6. Run agentic loop (no DB connection held)
+    client = get_anthropic_client()
+    trimmed = trim_history(messages, HISTORY_CHAR_BUDGET)
+
+    final_text, all_tool_calls = await run_agentic_chat(
+        system_prompt=system_prompt,
+        messages=trimmed,
+        client=client,
+    )
+
+    # 7. Persist assistant message
+    tool_calls_meta = all_tool_calls if all_tool_calls else None
+    async with async_session_factory() as persist_db:
+        assistant_msg = ConversationMessage(
+            conversation_id=conv_id,
+            role="assistant",
+            content=final_text,
+            tool_calls=tool_calls_meta,
+        )
+        persist_db.add(assistant_msg)
+
+        conv = await persist_db.get(Conversation, conv_id)
+        if conv:
+            conv.updated_at = datetime.now(UTC)
+        await persist_db.commit()
+        await persist_db.refresh(assistant_msg)
+
+    # 8. Build response
+    tool_call_infos = [ToolCallInfo(**tc) for tc in all_tool_calls] if all_tool_calls else None
+    return ChatResponse(
+        conversation_id=conv_id,
+        message=ChatMessageResponse(
+            role="assistant",
+            content=final_text,
+            tool_calls=tool_call_infos,
+            created_at=assistant_msg.created_at,
+        ),
+    )
+
+
+@router.get(
+    "/policy-workspaces/{workspace_id}/conversations",
+)
+async def list_workspace_conversations(
+    workspace_id: str,
+    client_id: str = Depends(get_client_id),
+    db: AsyncSession = Depends(get_session),
+):
+    """List conversations for a workspace."""
+    # Verify workspace ownership
+    await _get_workspace_or_error(db, workspace_id=workspace_id, client_id=client_id)
+
+    result = await db.execute(
+        select(Conversation)
+        .where(
+            Conversation.workspace_id == workspace_id,
+            Conversation.client_id == client_id,
+        )
+        .order_by(Conversation.updated_at.desc())
+    )
+    conversations = result.scalars().all()
+
+    return {
+        "conversations": [
+            {
+                "id": c.id,
+                "title": c.title,
+                "created_at": c.created_at.isoformat() if c.created_at else None,
+                "updated_at": c.updated_at.isoformat() if c.updated_at else None,
+            }
+            for c in conversations
+        ]
+    }

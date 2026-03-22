@@ -13,11 +13,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.api.deps import get_anthropic_client, get_session, limiter
-from src.config import settings
 from src.database import async_session_factory
 from src.llm.harness import LLMHarness
 from src.llm.prompts import research_assistant_v1
-from src.llm.tools import RESEARCH_TOOLS
 from src.models.bill import Bill
 from src.models.bill_text import texts_without_markup
 from src.models.conversation import Conversation, ConversationMessage
@@ -40,12 +38,6 @@ from src.services.bill_service import extract_bill_text
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-# Maximum tool-use rounds before forcing a text response
-_MAX_TOOL_ROUNDS = 10
-
-# Character budget for conversation history sent to the API
-_HISTORY_CHAR_BUDGET = 100_000
 
 
 def get_client_id(x_client_id: str | None = Header(None)) -> str:
@@ -425,12 +417,6 @@ async def execute_tool(
 # ---------------------------------------------------------------------------
 
 
-def _extract_text(response: Any) -> str:
-    """Extract concatenated text from an Anthropic response's content blocks."""
-    parts = [block.text for block in response.content if block.type == "text"]
-    return "\n".join(parts)
-
-
 def _generate_title(message: str) -> str:
     """Generate a short conversation title from the first user message."""
     text = message.strip()
@@ -441,40 +427,6 @@ def _generate_title(message: str) -> str:
         if 0 < idx < 80:
             return text[: idx + 1]
     return text[:80] + ("..." if len(text) > 80 else "")
-
-
-def _trim_history(messages: list[dict], budget: int) -> list[dict]:
-    """Keep the first message + most recent messages within a character budget.
-
-    This prevents sending unbounded conversation history to the Anthropic API,
-    which would cause cost explosions and eventually hit the context limit.
-    """
-    if not messages:
-        return messages
-
-    # Estimate size of each message by its JSON representation
-    sizes = [len(json.dumps(m)) for m in messages]
-    total = sum(sizes)
-
-    if total <= budget:
-        return messages
-
-    # Always keep the first message for context
-    trimmed = [messages[0]]
-    remaining_budget = budget - sizes[0]
-
-    # Walk backwards from the most recent, adding messages that fit
-    tail: list[dict] = []
-    for i in range(len(messages) - 1, 0, -1):
-        if sizes[i] <= remaining_budget:
-            tail.append(messages[i])
-            remaining_budget -= sizes[i]
-        else:
-            break
-
-    tail.reverse()
-    trimmed.extend(tail)
-    return trimmed
 
 
 # ---------------------------------------------------------------------------
@@ -535,111 +487,23 @@ async def chat(
         elif msg.role == "assistant":
             messages.append({"role": "assistant", "content": msg.content})
 
-    messages = _trim_history(messages, _HISTORY_CHAR_BUDGET)
-
     # Commit user message and release DB connection before agentic loop
     conversation_id = conversation.id
     await db.commit()
 
-    # 4. Call Anthropic SDK with tool_use enabled (shared client)
+    # 4. Run agentic loop — no DB connection held during LLM calls
+    from src.services.chat_service import HISTORY_CHAR_BUDGET, run_agentic_chat, trim_history
+
     client = get_anthropic_client()
-    model = settings.summary_model
+    trimmed = trim_history(messages, HISTORY_CHAR_BUDGET)
 
-    # Track tool calls for metadata storage
-    all_tool_calls: list[dict] = []
+    final_text, all_tool_calls = await run_agentic_chat(
+        system_prompt=research_assistant_v1.SYSTEM_PROMPT,
+        messages=trimmed,
+        client=client,
+    )
 
-    # 5. Agentic loop — no DB connection held during LLM calls.
-    #    Tool handlers get fresh sessions per execution.
-    api_messages = list(messages)
-    for _round in range(_MAX_TOOL_ROUNDS):
-        response = await client.messages.create(
-            model=model,
-            max_tokens=4096,
-            system=research_assistant_v1.SYSTEM_PROMPT,
-            messages=api_messages,
-            tools=RESEARCH_TOOLS,
-        )
-
-        # Check stop reason
-        if response.stop_reason == "end_turn":
-            final_text = _extract_text(response)
-            break
-
-        elif response.stop_reason == "tool_use":
-            api_messages.append({"role": "assistant", "content": response.content})
-
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    tool_name = block.name
-                    tool_input = block.input
-
-                    logger.info(
-                        "Chat tool call: %s(%s) in conversation %s",
-                        tool_name,
-                        json.dumps(tool_input)[:200],
-                        conversation_id,
-                    )
-
-                    try:
-                        # Each tool gets its own short-lived DB session
-                        async with async_session_factory() as tool_db:
-                            tool_harness = LLMHarness(db_session=tool_db, client=client)
-                            result_str = await execute_tool(
-                                tool_name, tool_input, tool_db, tool_harness
-                            )
-                    except (
-                        ValueError,
-                        LookupError,
-                        json.JSONDecodeError,
-                    ):
-                        logger.exception("Tool execution error: %s", tool_name)
-                        result_str = json.dumps(
-                            {"error": (f"Tool '{tool_name}' encountered an internal error.")}
-                        )
-
-                    # Summarize for metadata
-                    result_data = json.loads(result_str)
-                    if "error" in result_data:
-                        summary = result_data["error"]
-                    elif "total" in result_data:
-                        summary = f"{result_data['total']} results"
-                    elif "bill_id" in result_data:
-                        ident = result_data.get("identifier", result_data["bill_id"])
-                        summary = f"Retrieved {ident}"
-                    else:
-                        summary = f"{len(result_str)} chars"
-
-                    all_tool_calls.append(
-                        {
-                            "tool_name": tool_name,
-                            "arguments": tool_input,
-                            "result_summary": summary,
-                        }
-                    )
-
-                    tool_results.append(
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": block.id,
-                            "content": result_str,
-                        }
-                    )
-
-            api_messages.append({"role": "user", "content": tool_results})
-
-        else:
-            final_text = _extract_text(response)
-            if not final_text:
-                final_text = "I was unable to complete the request."
-            break
-    else:
-        extracted = _extract_text(response)
-        final_text = extracted or (
-            "I reached the maximum number of research steps. Here is what I found so far."
-        )
-
-    # 6. Store assistant message — brief DB connection for persist
+    # 5. Store assistant message — brief DB connection for persist
     tool_calls_meta = all_tool_calls if all_tool_calls else None
     async with async_session_factory() as persist_db:
         assistant_msg = ConversationMessage(
