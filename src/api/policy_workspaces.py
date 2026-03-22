@@ -378,7 +378,6 @@ async def generate_policy_workspace_outline(
 ) -> PolicyWorkspaceDetailResponse:
     try:
         workspace = await generate_outline_for_workspace(
-            db,
             harness=harness,
             workspace_id=workspace_id,
             client_id=client_id,
@@ -473,7 +472,6 @@ async def compose_policy_section(
 ) -> PolicyGenerationResponse:
     try:
         generation = await compose_section(
-            db,
             harness=harness,
             workspace_id=workspace_id,
             section_id=section_id,

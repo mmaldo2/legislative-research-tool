@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from src.database import async_session_factory
 from src.llm.harness import LLMHarness
 from src.models.bill import Bill
 from src.models.bill_text import texts_without_markup
@@ -186,71 +187,88 @@ def _enrich_outline_payload(
 
 
 async def generate_outline_for_workspace(
-    session: AsyncSession,
     *,
     harness: LLMHarness,
     workspace_id: str,
     client_id: str,
 ) -> PolicyWorkspace | None:
-    workspace = await get_workspace_for_composer(
-        session,
-        workspace_id=workspace_id,
-        client_id=client_id,
-    )
-    if workspace is None:
-        return None
-    if not workspace.precedents:
-        raise ValueError("Add at least one precedent bill before generating an outline")
-    if workspace.sections:
-        raise ValueError("Outline already exists for this workspace")
-    if not workspace.target_jurisdiction_id or not workspace.drafting_template:
-        raise ValueError("Target jurisdiction and drafting template are required")
+    # --- Load phase: hold DB connection briefly ---
+    async with async_session_factory() as session:
+        workspace = await get_workspace_for_composer(
+            session,
+            workspace_id=workspace_id,
+            client_id=client_id,
+        )
+        if workspace is None:
+            return None
+        if not workspace.precedents:
+            raise ValueError("Add at least one precedent bill before generating an outline")
+        if workspace.sections:
+            raise ValueError("Outline already exists for this workspace")
+        if not workspace.target_jurisdiction_id or not workspace.drafting_template:
+            raise ValueError("Target jurisdiction and drafting template are required")
 
-    bill_map = await _load_precedent_bills(session, workspace=workspace)
-    if len(bill_map) != len(workspace.precedents):
-        raise LookupError("One or more precedent bills could not be loaded")
+        bill_map = await _load_precedent_bills(session, workspace=workspace)
+        if len(bill_map) != len(workspace.precedents):
+            raise LookupError("One or more precedent bills could not be loaded")
 
+        # Extract values for LLM call before releasing connection
+        ws_id = workspace.id
+        ws_title = workspace.title
+        ws_jurisdiction = workspace.target_jurisdiction_id
+        ws_template = workspace.drafting_template
+        ws_goal = workspace.goal_prompt
+        precedents_text = _format_precedent_context(workspace, bill_map)
+        precedent_count = len(workspace.precedents)
+
+    # --- Call phase: no DB connection held ---
     outline = await harness.generate_policy_outline(
-        workspace_id=workspace.id,
-        workspace_title=workspace.title,
-        target_jurisdiction=workspace.target_jurisdiction_id,
-        drafting_template=workspace.drafting_template,
-        goal_prompt=workspace.goal_prompt,
-        precedents_text=_format_precedent_context(workspace, bill_map),
-        precedent_count=len(workspace.precedents),
+        workspace_id=ws_id,
+        workspace_title=ws_title,
+        target_jurisdiction=ws_jurisdiction,
+        drafting_template=ws_template,
+        goal_prompt=ws_goal,
+        precedents_text=precedents_text,
+        precedent_count=precedent_count,
     )
     outline_payload = _enrich_outline_payload(outline, bill_map=bill_map)
 
-    generation = PolicyGeneration(
-        workspace_id=workspace.id,
-        action_type="outline",
-        output_payload=outline_payload,
-        provenance={"precedent_bill_ids": list(bill_map.keys())},
-    )
-    session.add(generation)
-
-    for position, section_payload in enumerate(outline_payload["sections"]):
-        session.add(
-            PolicySection(
-                workspace_id=workspace.id,
-                section_key=section_payload["section_key"],
-                heading=section_payload["heading"],
-                purpose=section_payload["purpose"],
-                position=position,
-                content_markdown="",
-                status="outlined",
-            )
+    # --- Persist phase: hold DB connection briefly ---
+    async with async_session_factory() as session:
+        generation = PolicyGeneration(
+            workspace_id=ws_id,
+            action_type="outline",
+            output_payload=outline_payload,
+            provenance={"precedent_bill_ids": list(bill_map.keys())},
         )
+        session.add(generation)
 
-    workspace.status = "outline_ready"
-    workspace.updated_at = datetime.now(UTC)
+        for position, section_payload in enumerate(outline_payload["sections"]):
+            session.add(
+                PolicySection(
+                    workspace_id=ws_id,
+                    section_key=section_payload["section_key"],
+                    heading=section_payload["heading"],
+                    purpose=section_payload["purpose"],
+                    position=position,
+                    content_markdown="",
+                    status="outlined",
+                )
+            )
 
-    await session.commit()
-    return await get_workspace_for_composer(
-        session,
-        workspace_id=workspace.id,
-        client_id=client_id,
-    )
+        # Update workspace status
+        ws = await session.get(PolicyWorkspace, ws_id)
+        if ws:
+            ws.status = "outline_ready"
+            ws.updated_at = datetime.now(UTC)
+
+        await session.commit()
+
+        return await get_workspace_for_composer(
+            session,
+            workspace_id=ws_id,
+            client_id=client_id,
+        )
 
 
 async def update_workspace_section(
@@ -317,7 +335,6 @@ def _other_sections_summary(workspace: PolicyWorkspace, exclude_id: str) -> str:
 
 
 async def compose_section(
-    session: AsyncSession,
     *,
     harness: LLMHarness,
     workspace_id: str,
@@ -331,46 +348,61 @@ async def compose_section(
     if action_type not in COMPOSE_ACTION_TYPES:
         raise ValueError(f"Invalid action type: {action_type}")
 
-    workspace = await get_workspace_for_composer(
-        session, workspace_id=workspace_id, client_id=client_id
-    )
-    if workspace is None:
-        raise LookupError("Policy workspace not found")
-    if not workspace.sections:
-        raise ValueError("Generate an outline before composing sections")
+    # --- Load phase: hold DB connection briefly ---
+    async with async_session_factory() as session:
+        workspace = await get_workspace_for_composer(
+            session, workspace_id=workspace_id, client_id=client_id
+        )
+        if workspace is None:
+            raise LookupError("Policy workspace not found")
+        if not workspace.sections:
+            raise ValueError("Generate an outline before composing sections")
 
-    section = next((s for s in workspace.sections if s.id == section_id), None)
-    if section is None:
-        raise LookupError("Policy section not found")
+        section = next((s for s in workspace.sections if s.id == section_id), None)
+        if section is None:
+            raise LookupError("Policy section not found")
 
-    bill_map = await _load_precedent_bills(session, workspace=workspace)
-    precedents_text = _format_precedent_context(workspace, bill_map)
+        bill_map = await _load_precedent_bills(session, workspace=workspace)
+        precedents_text = _format_precedent_context(workspace, bill_map)
 
+        # Extract values for LLM call before releasing connection
+        ws_id = workspace.id
+        ws_title = workspace.title
+        ws_jurisdiction = workspace.target_jurisdiction_id
+        ws_template = workspace.drafting_template
+        ws_goal = workspace.goal_prompt
+        sec_id = section.id
+        sec_heading = section.heading
+        sec_purpose = section.purpose or ""
+        sec_content = section.content_markdown
+        other_sections = _other_sections_summary(workspace, section.id)
+
+    # --- Call phase: no DB connection held ---
     if action_type == "draft_section":
         result = await harness.draft_policy_section(
-            workspace_id=workspace.id,
-            section_id=section.id,
-            workspace_title=workspace.title,
-            target_jurisdiction=workspace.target_jurisdiction_id,
-            drafting_template=workspace.drafting_template,
-            goal_prompt=workspace.goal_prompt,
-            section_heading=section.heading,
-            section_purpose=section.purpose or "",
-            other_sections_summary=_other_sections_summary(workspace, section.id),
+            workspace_id=ws_id,
+            section_id=sec_id,
+            workspace_title=ws_title,
+            target_jurisdiction=ws_jurisdiction,
+            drafting_template=ws_template,
+            goal_prompt=ws_goal,
+            section_heading=sec_heading,
+            section_purpose=sec_purpose,
+            other_sections_summary=other_sections,
             precedents_text=precedents_text,
             instruction_text=instruction_text,
         )
     else:
-        if not section.content_markdown:
+        if not sec_content:
             raise ValueError("Section must have content before rewriting")
         result = await harness.rewrite_policy_section(
-            workspace_id=workspace.id,
-            section_id=section.id,
+            workspace_id=ws_id,
+            section_id=sec_id,
             action_type=action_type,
-            workspace_title=workspace.title,
-            target_jurisdiction=workspace.target_jurisdiction_id,
-            section_heading=section.heading,
-            current_text=section.content_markdown,
+            workspace_title=ws_title,
+            target_jurisdiction=ws_jurisdiction,
+            section_heading=sec_heading,
+            current_text=sec_content,
             selected_text=selected_text,
             instruction_text=instruction_text,
             precedents_text=precedents_text,
@@ -391,25 +423,27 @@ async def compose_section(
                 }
             )
 
-    generation = PolicyGeneration(
-        workspace_id=workspace.id,
-        section_id=section.id,
-        action_type=action_type,
-        instruction_text=instruction_text,
-        selected_text=selected_text,
-        output_payload={
-            "content_markdown": result.content_markdown,
-            "rationale": result.rationale,
-        },
-        provenance={
-            "precedent_bill_ids": list(bill_map.keys()),
-            "sources": provenance_sources,
-        },
-    )
-    session.add(generation)
-    await session.commit()
-    await session.refresh(generation)
-    return generation
+    # --- Persist phase: hold DB connection briefly ---
+    async with async_session_factory() as session:
+        generation = PolicyGeneration(
+            workspace_id=ws_id,
+            section_id=sec_id,
+            action_type=action_type,
+            instruction_text=instruction_text,
+            selected_text=selected_text,
+            output_payload={
+                "content_markdown": result.content_markdown,
+                "rationale": result.rationale,
+            },
+            provenance={
+                "precedent_bill_ids": list(bill_map.keys()),
+                "sources": provenance_sources,
+            },
+        )
+        session.add(generation)
+        await session.commit()
+        await session.refresh(generation)
+        return generation
 
 
 async def accept_generation(

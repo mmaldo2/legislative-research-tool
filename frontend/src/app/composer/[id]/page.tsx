@@ -99,7 +99,7 @@ export default function ComposerDetailPage({
   const [generatingOutline, setGeneratingOutline] = useState(false);
   const [savingSectionId, setSavingSectionId] = useState<string | null>(null);
   const [composingId, setComposingId] = useState<string | null>(null);
-  const [pendingGeneration, setPendingGeneration] = useState<PolicyGenerationResponse | null>(null);
+  const [pendingGenerations, setPendingGenerations] = useState<Record<string, PolicyGenerationResponse>>({});
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [sectionHistory, setSectionHistory] = useState<Record<string, PolicyRevisionResponse[]>>({});
   const [expandedHistory, setExpandedHistory] = useState<Set<string>>(new Set());
@@ -329,12 +329,16 @@ export default function ComposerDetailPage({
 
   async function handleCompose(sectionId: string, actionType: string) {
     setComposingId(sectionId);
-    setPendingGeneration(null);
+    setPendingGenerations((prev) => {
+      const next = { ...prev };
+      delete next[sectionId];
+      return next;
+    });
     try {
       const gen = await composePolicySection(id, sectionId, {
         action_type: actionType,
       });
-      setPendingGeneration(gen);
+      setPendingGenerations((prev) => ({ ...prev, [sectionId]: gen }));
       setError(null);
     } catch (err) {
       console.error("Failed to compose section:", err);
@@ -344,12 +348,16 @@ export default function ComposerDetailPage({
     }
   }
 
-  async function handleAccept(generationId: string) {
+  async function handleAccept(sectionId: string, generationId: string) {
     if (!workspace) return;
     setAcceptingId(generationId);
     try {
       await acceptPolicyGeneration(workspace.id, generationId);
-      setPendingGeneration(null);
+      setPendingGenerations((prev) => {
+        const next = { ...prev };
+        delete next[sectionId];
+        return next;
+      });
       await load();
       setError(null);
     } catch (err) {
@@ -360,8 +368,12 @@ export default function ComposerDetailPage({
     }
   }
 
-  function handleRejectGeneration() {
-    setPendingGeneration(null);
+  function handleRejectGeneration(sectionId: string) {
+    setPendingGenerations((prev) => {
+      const next = { ...prev };
+      delete next[sectionId];
+      return next;
+    });
   }
 
   async function toggleHistory(sectionId: string) {
@@ -856,45 +868,47 @@ export default function ComposerDetailPage({
                   </div>
 
                   {/* Pending generation */}
-                  {pendingGeneration && pendingGeneration.section_id === section.id && (
+                  {pendingGenerations[section.id] && (() => {
+                    const pg = pendingGenerations[section.id];
+                    return (
                     <div className="mt-4 rounded-md border border-primary/30 bg-primary/5 p-4">
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex flex-wrap gap-2">
                           <Badge variant="outline">
-                            {formatComposeAction(pendingGeneration.action_type)}
+                            {formatComposeAction(pg.action_type)}
                           </Badge>
                           <Badge variant="secondary">Pending Review</Badge>
                         </div>
                         <div className="flex gap-2">
                           <Button
                             size="sm"
-                            onClick={() => void handleAccept(pendingGeneration.id)}
-                            disabled={acceptingId === pendingGeneration.id}
+                            onClick={() => void handleAccept(section.id, pg.id)}
+                            disabled={acceptingId === pg.id}
                           >
                             <Check className="mr-1.5 h-3 w-3" />
-                            {acceptingId === pendingGeneration.id ? "Accepting..." : "Accept"}
+                            {acceptingId === pg.id ? "Accepting..." : "Accept"}
                           </Button>
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={handleRejectGeneration}
+                            onClick={() => handleRejectGeneration(section.id)}
                           >
                             <X className="mr-1.5 h-3 w-3" />
                             Reject
                           </Button>
                         </div>
                       </div>
-                      {pendingGeneration.rationale && (
+                      {pg.rationale && (
                         <p className="mt-2 text-sm text-muted-foreground">
-                          {pendingGeneration.rationale}
+                          {pg.rationale}
                         </p>
                       )}
                       <div className="mt-3 whitespace-pre-wrap rounded-md border bg-background p-3 text-sm">
-                        {pendingGeneration.output_markdown}
+                        {pg.output_markdown}
                       </div>
-                      {pendingGeneration.provenance.length > 0 && (
+                      {pg.provenance.length > 0 && (
                         <div className="mt-3 flex flex-wrap gap-2">
-                          {pendingGeneration.provenance.map((source) => (
+                          {pg.provenance.map((source) => (
                             <div
                               key={source.bill_id}
                               className="rounded-md border px-2 py-1 text-xs"
@@ -910,7 +924,8 @@ export default function ComposerDetailPage({
                         </div>
                       )}
                     </div>
-                  )}
+                    );
+                  })()}
 
                   {/* Provenance */}
                   {section.provenance.length > 0 && (

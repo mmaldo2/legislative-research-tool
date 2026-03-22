@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 
 from src.api.deps import get_anthropic_client, get_session, limiter
 from src.config import settings
+from src.database import async_session_factory
 from src.llm.harness import LLMHarness
 from src.llm.prompts import research_assistant_v1
 from src.llm.tools import RESEARCH_TOOLS
@@ -525,7 +526,6 @@ async def chat(
         content=req.message,
     )
     db.add(user_msg)
-    await db.flush()
 
     # 3. Build message history from conversation (with budget trimming)
     messages: list[dict] = []
@@ -537,15 +537,19 @@ async def chat(
 
     messages = _trim_history(messages, _HISTORY_CHAR_BUDGET)
 
+    # Commit user message and release DB connection before agentic loop
+    conversation_id = conversation.id
+    await db.commit()
+
     # 4. Call Anthropic SDK with tool_use enabled (shared client)
     client = get_anthropic_client()
     model = settings.summary_model
-    harness = LLMHarness(db_session=db, client=client)
 
     # Track tool calls for metadata storage
     all_tool_calls: list[dict] = []
 
-    # 5. Agentic loop — handle multiple tool_use rounds
+    # 5. Agentic loop — no DB connection held during LLM calls.
+    #    Tool handlers get fresh sessions per execution.
     api_messages = list(messages)
     for _round in range(_MAX_TOOL_ROUNDS):
         response = await client.messages.create(
@@ -574,11 +578,16 @@ async def chat(
                         "Chat tool call: %s(%s) in conversation %s",
                         tool_name,
                         json.dumps(tool_input)[:200],
-                        conversation.id,
+                        conversation_id,
                     )
 
                     try:
-                        result_str = await execute_tool(tool_name, tool_input, db, harness)
+                        # Each tool gets its own short-lived DB session
+                        async with async_session_factory() as tool_db:
+                            tool_harness = LLMHarness(db_session=tool_db, client=client)
+                            result_str = await execute_tool(
+                                tool_name, tool_input, tool_db, tool_harness
+                            )
                     except (
                         ValueError,
                         LookupError,
@@ -630,25 +639,29 @@ async def chat(
             "I reached the maximum number of research steps. Here is what I found so far."
         )
 
-    # 6. Store assistant message with tool_calls metadata
+    # 6. Store assistant message — brief DB connection for persist
     tool_calls_meta = all_tool_calls if all_tool_calls else None
-    assistant_msg = ConversationMessage(
-        conversation_id=conversation.id,
-        role="assistant",
-        content=final_text,
-        tool_calls=tool_calls_meta,
-    )
-    db.add(assistant_msg)
+    async with async_session_factory() as persist_db:
+        assistant_msg = ConversationMessage(
+            conversation_id=conversation_id,
+            role="assistant",
+            content=final_text,
+            tool_calls=tool_calls_meta,
+        )
+        persist_db.add(assistant_msg)
 
-    # Update conversation timestamp
-    conversation.updated_at = datetime.now(UTC)
-    await db.commit()
+        # Update conversation timestamp
+        conv = await persist_db.get(Conversation, conversation_id)
+        if conv:
+            conv.updated_at = datetime.now(UTC)
+        await persist_db.commit()
+        await persist_db.refresh(assistant_msg)
 
     # 7. Build response
     tool_call_infos = [ToolCallInfo(**tc) for tc in all_tool_calls] if all_tool_calls else None
 
     return ChatResponse(
-        conversation_id=conversation.id,
+        conversation_id=conversation_id,
         message=ChatMessageResponse(
             role="assistant",
             content=final_text,
