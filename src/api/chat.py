@@ -8,10 +8,10 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from sse_starlette.sse import EventSourceResponse
 
 from src.api.deps import get_anthropic_client, get_session, limiter
 from src.database import async_session_factory
@@ -542,7 +542,7 @@ async def chat_stream(
     request: Request,
     req: ChatRequest,
     client_id: str = Depends(get_client_id),
-) -> EventSourceResponse:
+) -> StreamingResponse:
     """Stream a chat response via Server-Sent Events.
 
     Same as POST /chat but returns SSE events: tool_status during tool use,
@@ -639,7 +639,7 @@ async def chat_stream(
                     conv.updated_at = datetime.now(UTC)
                 await persist_db.commit()
 
-    return EventSourceResponse(event_generator())
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get("/conversations", response_model=ConversationListResponse)

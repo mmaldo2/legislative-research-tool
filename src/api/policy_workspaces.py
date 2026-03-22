@@ -6,11 +6,10 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from sse_starlette.sse import EventSourceResponse
 
 from src.api.deps import get_anthropic_client, get_llm_harness, get_session, limiter
 from src.database import async_session_factory
@@ -801,7 +800,7 @@ async def workspace_chat_stream(
     body: ChatRequest,
     client_id: str = Depends(get_client_id),
     db: AsyncSession = Depends(get_session),
-) -> EventSourceResponse:
+) -> StreamingResponse:
     """Stream a workspace-aware chat response via Server-Sent Events."""
     from src.llm.prompts.workspace_assistant_v1 import (
         SYSTEM_PROMPT_TEMPLATE,
@@ -912,7 +911,7 @@ async def workspace_chat_stream(
                     conv.updated_at = datetime.now(UTC)
                 await persist_db.commit()
 
-    return EventSourceResponse(event_generator())
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.post(
@@ -926,7 +925,7 @@ async def compose_policy_section_stream(
     body: PolicyComposeRequest,
     client_id: str = Depends(get_client_id),
     db: AsyncSession = Depends(get_session),
-) -> EventSourceResponse:
+) -> StreamingResponse:
     """Stream a compose/analyze action via Server-Sent Events.
 
     Streams token events during LLM generation, then emits a done event
@@ -953,7 +952,7 @@ async def compose_policy_section_stream(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    return EventSourceResponse(event_gen)
+    return StreamingResponse(event_gen, media_type="text/event-stream")
 
 
 @router.get(
