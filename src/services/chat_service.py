@@ -491,7 +491,21 @@ async def stream_sdk_agentic_chat(
     Events are collected in a background thread (to avoid greenlet corruption)
     and then converted to our SSE format for the frontend.
     """
-    prompt = _build_sdk_prompt("", messages)  # system_prompt passed via options
+    # Build the prompt from conversation history. The system_prompt is passed
+    # separately via ClaudeAgentOptions, so we don't include it in the flat prompt.
+    # We DO append a tool-availability reminder because the conversation history
+    # may contain prior assistant messages that (incorrectly) claim tools are
+    # unavailable — Claude would inherit that belief without this nudge.
+    prompt = _build_sdk_prompt("", messages)
+    prompt += (
+        "\n\n<system>\nIMPORTANT: You have access to legislative research tools "
+        "in this session via MCP. Use them to answer the user's question. "
+        "Available tools include: search_bills, get_bill_detail, list_jurisdictions, "
+        "find_similar_bills, predict_bill_passage, search_govinfo, get_govinfo_document. "
+        "Always use tools to look up real data rather than relying on memory or prior "
+        "conversation context. If the user asks a follow-up question, call the "
+        "appropriate tool to get the answer.\n</system>"
+    )
 
     try:
         events = await asyncio.to_thread(
