@@ -8,7 +8,9 @@ from src.schemas.common import MetaResponse
 
 class ChatRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=10_000)
-    conversation_id: str | None = None  # None = start new conversation
+    conversation_id: str | None = Field(
+        None, max_length=64, pattern=r"^[a-f0-9]+$"
+    )  # None = start new conversation
 
 
 class ToolCallInfo(BaseModel):

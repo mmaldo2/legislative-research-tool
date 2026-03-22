@@ -5,8 +5,22 @@ export const COMPOSE_ACTION_OPTIONS = [
   { value: "harmonize_with_precedent", label: "Harmonize with Precedent" },
 ] as const;
 
+export const ANALYZE_ACTION_OPTIONS = [
+  { value: "analyze_constitutional", label: "Constitutional Analysis" },
+  { value: "analyze_patterns", label: "Pattern Detection" },
+] as const;
+
+const ALL_ACTION_LABELS: Record<string, string> = {
+  draft_section: "Draft Section",
+  rewrite_selection: "Rewrite Selection",
+  tighten_definition: "Tighten Definitions",
+  harmonize_with_precedent: "Harmonize with Precedent",
+  analyze_constitutional: "Constitutional Analysis",
+  analyze_patterns: "Pattern Detection",
+};
+
 export function formatComposeAction(action: string): string {
-  return COMPOSE_ACTION_OPTIONS.find((o) => o.value === action)?.label ?? action;
+  return ALL_ACTION_LABELS[action] ?? action;
 }
 
 export const COMPOSER_TEMPLATE_OPTIONS = [

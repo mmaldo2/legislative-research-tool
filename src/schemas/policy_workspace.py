@@ -115,7 +115,14 @@ class PolicyWorkspaceListResponse(BaseModel):
 # --- Compose action schemas ---
 
 COMPOSE_ACTION_TYPES = frozenset(
-    ["draft_section", "rewrite_selection", "tighten_definition", "harmonize_with_precedent"]
+    [
+        "draft_section",
+        "rewrite_selection",
+        "tighten_definition",
+        "harmonize_with_precedent",
+        "analyze_constitutional",
+        "analyze_patterns",
+    ]
 )
 
 
@@ -164,3 +171,37 @@ class PolicyRevisionResponse(BaseModel):
 
 class PolicyHistoryResponse(BaseModel):
     revisions: list[PolicyRevisionResponse] = Field(default_factory=list)
+
+
+# --- Workspace chat & insights response schemas ---
+
+
+class WorkspaceConversationSummary(BaseModel):
+    id: str
+    title: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+
+class WorkspaceConversationListResponse(BaseModel):
+    conversations: list[WorkspaceConversationSummary] = Field(default_factory=list)
+
+
+class PrecedentInsightFactor(BaseModel):
+    feature: str
+    impact: str
+
+
+class PrecedentInsightResponse(BaseModel):
+    bill_id: str
+    identifier: str
+    title: str
+    jurisdiction_id: str
+    status: str | None = None
+    prediction_probability: float | None = None
+    prediction_factors: list[PrecedentInsightFactor] | None = None
+    ai_summary: str | None = None
+
+
+class PrecedentInsightsResponse(BaseModel):
+    insights: list[PrecedentInsightResponse] = Field(default_factory=list)

@@ -11,6 +11,7 @@ import {
   clientHeaders,
   composePolicySection,
   generatePolicyWorkspaceOutline,
+  getPrecedentInsights,
   getPolicyWorkspace,
   getPolicyWorkspaceExportUrl,
   getPolicyWorkspaceHistory,
@@ -26,6 +27,7 @@ import {
   formatComposeAction,
   formatComposerStatus,
   formatComposerTemplate,
+  ANALYZE_ACTION_OPTIONS,
 } from "@/lib/composer";
 import { formatJurisdiction, formatStatus, statusVariant } from "@/lib/format";
 import type {
@@ -55,12 +57,14 @@ import {
   Download,
   Plus,
   Save,
+  Scale,
   Search,
   Trash2,
   WandSparkles,
   X,
 } from "lucide-react";
 import { ApiErrorBanner } from "@/components/api-error";
+import { ChatPanel } from "@/components/chat-panel";
 
 function getErrorMessage(error: unknown, fallback: string): string {
   if (error instanceof ApiError || error instanceof RateLimitError) {
@@ -99,16 +103,17 @@ export default function ComposerDetailPage({
   const [generatingOutline, setGeneratingOutline] = useState(false);
   const [savingSectionId, setSavingSectionId] = useState<string | null>(null);
   const [composingId, setComposingId] = useState<string | null>(null);
-  const [pendingGeneration, setPendingGeneration] = useState<PolicyGenerationResponse | null>(null);
+  const [pendingGenerations, setPendingGenerations] = useState<Record<string, PolicyGenerationResponse>>({});
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [sectionHistory, setSectionHistory] = useState<Record<string, PolicyRevisionResponse[]>>({});
   const [expandedHistory, setExpandedHistory] = useState<Set<string>>(new Set());
-  const [researchQuery, setResearchQuery] = useState("");
-  const [researchResults, setResearchResults] = useState<SearchResult[]>([]);
-  const [researching, setResearching] = useState(false);
   const [researchOpen, setResearchOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [suggestionText, setSuggestionText] = useState<string | null>(null);
+  const [precedentInsights, setPrecedentInsights] = useState<
+    Record<string, { probability: number | null; summary: string | null }>
+  >({});
 
   const selectedBillIds = useMemo(
     () => new Set(workspace?.precedents.map((precedent) => precedent.bill_id) ?? []),
@@ -154,6 +159,26 @@ export default function ComposerDetailPage({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Load precedent insights when workspace has precedents
+  useEffect(() => {
+    if (!workspace || workspace.precedents.length === 0) return;
+    void (async () => {
+      try {
+        const data = await getPrecedentInsights(id);
+        const map: Record<string, { probability: number | null; summary: string | null }> = {};
+        for (const insight of data.insights) {
+          map[insight.bill_id] = {
+            probability: insight.prediction_probability,
+            summary: insight.ai_summary,
+          };
+        }
+        setPrecedentInsights(map);
+      } catch {
+        // Graceful degradation — insights are optional
+      }
+    })();
+  }, [workspace?.precedents.length, id]);
 
   async function handleAddPrecedent() {
     if (!billId.trim()) return;
@@ -307,34 +332,18 @@ export default function ComposerDetailPage({
     }
   }
 
-  async function handleResearch() {
-    const query = researchQuery.trim();
-    if (!query || !workspace) return;
-    setResearching(true);
-    try {
-      const data = await searchBills({
-        q: query,
-        jurisdiction: workspace.target_jurisdiction_id,
-        per_page: 8,
-      });
-      setResearchResults(data.data);
-      setError(null);
-    } catch (err) {
-      console.error("Failed to search:", err);
-      setError(getErrorMessage(err, "Failed to search legislation."));
-    } finally {
-      setResearching(false);
-    }
-  }
-
   async function handleCompose(sectionId: string, actionType: string) {
     setComposingId(sectionId);
-    setPendingGeneration(null);
+    setPendingGenerations((prev) => {
+      const next = { ...prev };
+      delete next[sectionId];
+      return next;
+    });
     try {
       const gen = await composePolicySection(id, sectionId, {
         action_type: actionType,
       });
-      setPendingGeneration(gen);
+      setPendingGenerations((prev) => ({ ...prev, [sectionId]: gen }));
       setError(null);
     } catch (err) {
       console.error("Failed to compose section:", err);
@@ -344,12 +353,16 @@ export default function ComposerDetailPage({
     }
   }
 
-  async function handleAccept(generationId: string) {
+  async function handleAccept(sectionId: string, generationId: string) {
     if (!workspace) return;
     setAcceptingId(generationId);
     try {
       await acceptPolicyGeneration(workspace.id, generationId);
-      setPendingGeneration(null);
+      setPendingGenerations((prev) => {
+        const next = { ...prev };
+        delete next[sectionId];
+        return next;
+      });
       await load();
       setError(null);
     } catch (err) {
@@ -360,8 +373,12 @@ export default function ComposerDetailPage({
     }
   }
 
-  function handleRejectGeneration() {
-    setPendingGeneration(null);
+  function handleRejectGeneration(sectionId: string) {
+    setPendingGenerations((prev) => {
+      const next = { ...prev };
+      delete next[sectionId];
+      return next;
+    });
   }
 
   async function toggleHistory(sectionId: string) {
@@ -636,7 +653,26 @@ export default function ComposerDetailPage({
                             {formatStatus(precedent.status)}
                           </Badge>
                         )}
+                        {precedentInsights[precedent.bill_id]?.probability != null && (
+                          <Badge
+                            variant={
+                              precedentInsights[precedent.bill_id].probability! > 0.7
+                                ? "default"
+                                : precedentInsights[precedent.bill_id].probability! > 0.3
+                                  ? "secondary"
+                                  : "destructive"
+                            }
+                          >
+                            {(precedentInsights[precedent.bill_id].probability! * 100).toFixed(0)}%
+                            passage
+                          </Badge>
+                        )}
                       </div>
+                      {precedentInsights[precedent.bill_id]?.summary && (
+                        <p className="mt-2 text-xs text-muted-foreground line-clamp-2">
+                          {precedentInsights[precedent.bill_id].summary}
+                        </p>
+                      )}
                     </div>
                     <Button
                       variant="ghost"
@@ -668,61 +704,20 @@ export default function ComposerDetailPage({
               ) : (
                 <ChevronRight className="h-4 w-4" />
               )}
-              <CardTitle className="text-lg">Research</CardTitle>
+              <CardTitle className="text-lg">Research Assistant</CardTitle>
               <span className="text-sm text-muted-foreground">
-                Search legislation in {formatJurisdiction(workspace.target_jurisdiction_id)}
+                Ask questions about your draft and precedent legislation
               </span>
             </button>
             {researchOpen && (
-              <>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="Search for definitions, clauses, enforcement language..."
-                    value={researchQuery}
-                    onChange={(e) => setResearchQuery(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && void handleResearch()}
-                  />
-                  <Button
-                    onClick={handleResearch}
-                    disabled={researching || !researchQuery.trim()}
-                  >
-                    <Search className="mr-1.5 h-4 w-4" />
-                    {researching ? "Searching..." : "Search"}
-                  </Button>
-                </div>
-                {researchResults.length > 0 && (
-                  <div className="space-y-2">
-                    {researchResults.map((result) => (
-                      <div key={result.bill_id} className="rounded-md border p-3 text-sm">
-                        <div className="flex items-start justify-between gap-2">
-                          <div>
-                            <Link
-                              href={`/bills/${encodeURIComponent(result.bill_id)}`}
-                              className="font-medium hover:underline"
-                            >
-                              {result.identifier}
-                            </Link>
-                            <span className="ml-2 text-muted-foreground">
-                              {formatJurisdiction(result.jurisdiction_id)}
-                            </span>
-                          </div>
-                          {result.score !== undefined && (
-                            <Badge variant="outline" className="text-xs">
-                              {(result.score * 100).toFixed(0)}% match
-                            </Badge>
-                          )}
-                        </div>
-                        <p className="mt-1 text-muted-foreground">{result.title}</p>
-                        {result.snippet && (
-                          <p className="mt-2 rounded bg-muted/30 px-2 py-1 text-xs text-muted-foreground">
-                            {result.snippet}
-                          </p>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </>
+              <ChatPanel
+                workspaceId={id}
+                className="h-[400px]"
+                placeholder="Ask about your draft, precedents, or legislation..."
+                onSuggestion={(text) => {
+                  setSuggestionText(text);
+                }}
+              />
             )}
           </CardHeader>
         </Card>
@@ -853,48 +848,67 @@ export default function ComposerDetailPage({
                         </Button>
                       );
                     })}
+                    {section.content_markdown && (
+                      <>
+                        <span className="text-muted-foreground text-xs self-center mx-1">|</span>
+                        {ANALYZE_ACTION_OPTIONS.map((action) => (
+                          <Button
+                            key={action.value}
+                            size="sm"
+                            variant="secondary"
+                            disabled={composingId === section.id}
+                            onClick={() => void handleCompose(section.id, action.value)}
+                          >
+                            <Scale className="mr-1.5 h-3 w-3" />
+                            {composingId === section.id ? "Analyzing..." : action.label}
+                          </Button>
+                        ))}
+                      </>
+                    )}
                   </div>
 
                   {/* Pending generation */}
-                  {pendingGeneration && pendingGeneration.section_id === section.id && (
+                  {pendingGenerations[section.id] && (() => {
+                    const pg = pendingGenerations[section.id];
+                    return (
                     <div className="mt-4 rounded-md border border-primary/30 bg-primary/5 p-4">
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex flex-wrap gap-2">
                           <Badge variant="outline">
-                            {formatComposeAction(pendingGeneration.action_type)}
+                            {formatComposeAction(pg.action_type)}
                           </Badge>
                           <Badge variant="secondary">Pending Review</Badge>
                         </div>
                         <div className="flex gap-2">
                           <Button
                             size="sm"
-                            onClick={() => void handleAccept(pendingGeneration.id)}
-                            disabled={acceptingId === pendingGeneration.id}
+                            onClick={() => void handleAccept(section.id, pg.id)}
+                            disabled={acceptingId === pg.id}
                           >
                             <Check className="mr-1.5 h-3 w-3" />
-                            {acceptingId === pendingGeneration.id ? "Accepting..." : "Accept"}
+                            {acceptingId === pg.id ? "Accepting..." : "Accept"}
                           </Button>
                           <Button
                             size="sm"
                             variant="ghost"
-                            onClick={handleRejectGeneration}
+                            onClick={() => handleRejectGeneration(section.id)}
                           >
                             <X className="mr-1.5 h-3 w-3" />
                             Reject
                           </Button>
                         </div>
                       </div>
-                      {pendingGeneration.rationale && (
+                      {pg.rationale && (
                         <p className="mt-2 text-sm text-muted-foreground">
-                          {pendingGeneration.rationale}
+                          {pg.rationale}
                         </p>
                       )}
                       <div className="mt-3 whitespace-pre-wrap rounded-md border bg-background p-3 text-sm">
-                        {pendingGeneration.output_markdown}
+                        {pg.output_markdown}
                       </div>
-                      {pendingGeneration.provenance.length > 0 && (
+                      {pg.provenance.length > 0 && (
                         <div className="mt-3 flex flex-wrap gap-2">
-                          {pendingGeneration.provenance.map((source) => (
+                          {pg.provenance.map((source) => (
                             <div
                               key={source.bill_id}
                               className="rounded-md border px-2 py-1 text-xs"
@@ -910,7 +924,8 @@ export default function ComposerDetailPage({
                         </div>
                       )}
                     </div>
-                  )}
+                    );
+                  })()}
 
                   {/* Provenance */}
                   {section.provenance.length > 0 && (
