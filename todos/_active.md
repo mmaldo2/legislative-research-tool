@@ -1,9 +1,9 @@
 # Active Todo Index
 
-Last updated: 2026-03-21
+Last updated: 2026-03-22
 
-- Active pending todos: 27
-- `P1`: 8
+- Active pending todos: 25
+- `P1`: 6
 - `P2`: 15
 - `P3`: 4
 - Completed todos are archived in `todos/archive/`
@@ -16,8 +16,6 @@ Last updated: 2026-03-21
 - [104-pending-p1-csv-injection-characters.md](104-pending-p1-csv-injection-characters.md)
 - [117-pending-p1-misleading-feature-contributions.md](117-pending-p1-misleading-feature-contributions.md)
 - [118-pending-p1-duplicate-limiter-instance.md](118-pending-p1-duplicate-limiter-instance.md)
-- [119-pending-p1-feature-parity-risk.md](119-pending-p1-feature-parity-risk.md)
-- [120-pending-p1-pickle-integrity-verification.md](120-pending-p1-pickle-integrity-verification.md)
 
 ## P2
 
