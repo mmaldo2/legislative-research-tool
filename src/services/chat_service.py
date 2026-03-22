@@ -202,9 +202,11 @@ async def stream_agentic_chat(
 ) -> AsyncGenerator[str, None]:
     """Stream the agentic chat loop, yielding SSE events.
 
-    Yields tool_status events during tool-use rounds and token events for
-    the final response. The caller is responsible for DB persistence
-    (load-call-persist pattern).
+    Uses true Anthropic SDK streaming for every round:
+    - Tool-use rounds: accumulate silently, emit tool_status events, execute tools
+    - End-turn rounds: yield real token events as text deltas arrive
+
+    The caller is responsible for DB persistence (load-call-persist pattern).
     """
     if tools is None:
         tools = RESEARCH_TOOLS
@@ -216,19 +218,31 @@ async def stream_agentic_chat(
     final_text = ""
 
     for _round in range(max_rounds):
-        # Non-streaming call for tool-use rounds
-        response = await client.messages.create(
+        # Stream every round — we yield tokens only for end_turn responses
+        streamed_text = ""
+
+        async with client.messages.stream(
             model=model,
             max_tokens=4096,
             system=system_prompt,
             messages=api_messages,
             tools=tools,
-        )
+        ) as stream:
+            async for event in stream:
+                if event.type == "content_block_delta":
+                    if hasattr(event.delta, "text"):
+                        streamed_text += event.delta.text
+                        # Yield token events — these will be visible to the
+                        # user for end_turn responses. For tool_use responses
+                        # (which include text blocks before tool calls), we
+                        # yield them too since the model often explains what
+                        # it's about to do.
+                        yield _sse_event("token", {"text": event.delta.text})
+
+            response = await stream.get_final_message()
 
         if response.stop_reason == "end_turn":
-            # Final response — stream this one token-by-token
-            # Re-do the call with streaming for the final response
-            final_text = extract_text(response)
+            final_text = streamed_text or extract_text(response)
             break
 
         elif response.stop_reason == "tool_use":
@@ -242,7 +256,6 @@ async def stream_agentic_chat(
                 tool_name = block.name
                 tool_input = block.input
 
-                # Yield tool_status event so frontend shows progress
                 yield _sse_event("tool_status", {
                     "tool": tool_name,
                     "status": "running",
@@ -255,9 +268,10 @@ async def stream_agentic_chat(
                     )
                 except (ValueError, LookupError, json.JSONDecodeError):
                     logger.exception("Tool execution error: %s", tool_name)
-                    result_str = json.dumps({"error": f"Tool '{tool_name}' encountered an error."})
+                    result_str = json.dumps(
+                        {"error": f"Tool '{tool_name}' encountered an error."}
+                    )
 
-                # Summarize for metadata
                 result_data = json.loads(result_str)
                 if "error" in result_data:
                     summary = result_data["error"]
@@ -290,24 +304,17 @@ async def stream_agentic_chat(
             api_messages.append({"role": "user", "content": tool_results})
 
         else:
-            final_text = extract_text(response)
+            final_text = streamed_text or extract_text(response)
             if not final_text:
                 final_text = "I was unable to complete the request."
             break
     else:
-        extracted = extract_text(response)
-        final_text = extracted or (
-            "I reached the maximum number of research steps. Here is what I found so far."
-        )
-
-    # Now stream the final response token-by-token by re-calling with streaming
-    # We already have the final text from the non-streaming call above. For the
-    # best UX we re-issue the final turn as a streaming call. However, if the
-    # response was produced from a non-tool-use turn, we already have the text
-    # and can emit it in chunks to simulate streaming (avoids a redundant API call).
-    chunk_size = 12  # characters per token event (approximates real token boundaries)
-    for i in range(0, len(final_text), chunk_size):
-        yield _sse_event("token", {"text": final_text[i : i + chunk_size]})
+        final_text = streamed_text or extract_text(response)
+        if not final_text:
+            final_text = (
+                "I reached the maximum number of research steps. "
+                "Here is what I found so far."
+            )
 
     yield _sse_event("done", {
         "text": final_text,

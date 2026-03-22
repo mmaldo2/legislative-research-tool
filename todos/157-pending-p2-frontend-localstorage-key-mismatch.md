@@ -1,5 +1,5 @@
 ---
-status: pending
+status: resolved
 priority: p2
 issue_id: 157
 tags: [code-review, bug, frontend]

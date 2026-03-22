@@ -55,10 +55,10 @@ export type StreamEvent =
 
 function getClientId(): string {
   if (typeof window === "undefined") return "server";
-  let id = localStorage.getItem("legis_client_id");
+  let id = localStorage.getItem("legis-client-id");
   if (!id) {
     id = crypto.randomUUID();
-    localStorage.setItem("legis_client_id", id);
+    localStorage.setItem("legis-client-id", id);
   }
   return id;
 }

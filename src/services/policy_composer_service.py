@@ -1,9 +1,15 @@
 """Service layer for composer outline generation, section drafting, and acceptance."""
 
+from __future__ import annotations
+
 import json
 import re
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from anthropic import AsyncAnthropic
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -498,16 +504,20 @@ async def stream_compose_section(
     action_type: str,
     instruction_text: str | None = None,
     selected_text: str | None = None,
+    client: AsyncAnthropic | None = None,
 ) -> AsyncGenerator[str, None]:
-    """Stream a compose action, yielding SSE events.
+    """Validate inputs eagerly, then return a streaming async generator.
 
-    Returns an async generator. The load and persist phases use their own
-    short-lived DB sessions. The call phase streams with no DB connection held.
+    This is a regular coroutine (not an async generator) so that validation
+    errors raise before the caller wraps us in EventSourceResponse. The actual
+    streaming happens in _stream_compose_impl().
     """
+    import anthropic as anthropic_mod
+
     if action_type not in COMPOSE_ACTION_TYPES:
         raise ValueError(f"Invalid action type: {action_type}")
 
-    # --- Load phase ---
+    # --- Load phase: eagerly validate, extract scalars, close session ---
     async with async_session_factory() as session:
         workspace = await get_workspace_for_composer(
             session, workspace_id=workspace_id, client_id=client_id
@@ -523,86 +533,107 @@ async def stream_compose_section(
         if section is None:
             raise LookupError("Policy section not found")
 
+        # Validate content requirements eagerly
+        sec_content = section.content_markdown
+        if action_type in ("analyze_constitutional", "analyze_patterns") and not sec_content:
+            raise ValueError("Section must have content before analyzing")
+        if action_type not in ("draft_section", "analyze_constitutional", "analyze_patterns"):
+            if not sec_content:
+                raise ValueError("Section must have content before rewriting")
+
         bill_map = await _load_precedent_bills(session, workspace=workspace)
         precedents_text = _format_precedent_context(workspace, bill_map)
         bill_map_ids = list(bill_map.keys())
 
-        ws_id = workspace.id
-        ws_title = workspace.title
-        ws_jurisdiction = workspace.target_jurisdiction_id
-        ws_template = workspace.drafting_template
-        ws_goal = workspace.goal_prompt
-        sec_id = section.id
-        sec_heading = section.heading
-        sec_purpose = section.purpose or ""
-        sec_content = section.content_markdown
-        other_sections = _other_sections_summary(workspace, section.id)
+        ctx = {
+            "ws_id": workspace.id,
+            "ws_title": workspace.title,
+            "ws_jurisdiction": workspace.target_jurisdiction_id,
+            "ws_template": workspace.drafting_template,
+            "ws_goal": workspace.goal_prompt,
+            "sec_id": section.id,
+            "sec_heading": section.heading,
+            "sec_purpose": section.purpose or "",
+            "sec_content": sec_content,
+            "other_sections": _other_sections_summary(workspace, section.id),
+            "precedents_text": precedents_text,
+            "bill_map_ids": bill_map_ids,
+        }
 
-    # --- Call phase: stream from LLM, no DB held ---
-    import anthropic
+    # Build harness with injected or default client
+    api_client = client or anthropic_mod.AsyncAnthropic()
+    harness = LLMHarness(db_session=None, client=api_client)
 
-    harness = LLMHarness(
-        db_session=None,
-        client=anthropic.AsyncAnthropic(),
+    # Return the lazy streaming generator (validation already done)
+    return _stream_compose_impl(
+        harness=harness,
+        ctx=ctx,
+        action_type=action_type,
+        instruction_text=instruction_text,
+        selected_text=selected_text,
     )
 
+
+async def _stream_compose_impl(
+    *,
+    harness: LLMHarness,
+    ctx: dict,
+    action_type: str,
+    instruction_text: str | None,
+    selected_text: str | None,
+) -> AsyncGenerator[str, None]:
+    """Stream LLM generation and persist the result. No DB held during streaming."""
     if action_type == "analyze_constitutional":
-        if not sec_content:
-            raise ValueError("Section must have content before analyzing")
         stream = harness.stream_analyze_draft_constitutional(
-            workspace_id=ws_id,
-            section_id=sec_id,
-            draft_text=sec_content,
-            section_heading=sec_heading,
-            jurisdiction=ws_jurisdiction or "",
-            goal_prompt=ws_goal,
+            workspace_id=ctx["ws_id"],
+            section_id=ctx["sec_id"],
+            draft_text=ctx["sec_content"],
+            section_heading=ctx["sec_heading"],
+            jurisdiction=ctx["ws_jurisdiction"] or "",
+            goal_prompt=ctx["ws_goal"],
         )
     elif action_type == "analyze_patterns":
-        if not sec_content:
-            raise ValueError("Section must have content before analyzing")
         stream = harness.stream_analyze_draft_patterns(
-            workspace_id=ws_id,
-            section_id=sec_id,
-            draft_text=sec_content,
-            section_heading=sec_heading,
-            jurisdiction=ws_jurisdiction or "",
-            goal_prompt=ws_goal,
-            precedent_context=precedents_text,
+            workspace_id=ctx["ws_id"],
+            section_id=ctx["sec_id"],
+            draft_text=ctx["sec_content"],
+            section_heading=ctx["sec_heading"],
+            jurisdiction=ctx["ws_jurisdiction"] or "",
+            goal_prompt=ctx["ws_goal"],
+            precedent_context=ctx["precedents_text"],
         )
     elif action_type == "draft_section":
         stream = harness.stream_draft_policy_section(
-            workspace_id=ws_id,
-            section_id=sec_id,
-            workspace_title=ws_title,
-            target_jurisdiction=ws_jurisdiction,
-            drafting_template=ws_template,
-            goal_prompt=ws_goal,
-            section_heading=sec_heading,
-            section_purpose=sec_purpose,
-            other_sections_summary=other_sections,
-            precedents_text=precedents_text,
+            workspace_id=ctx["ws_id"],
+            section_id=ctx["sec_id"],
+            workspace_title=ctx["ws_title"],
+            target_jurisdiction=ctx["ws_jurisdiction"],
+            drafting_template=ctx["ws_template"],
+            goal_prompt=ctx["ws_goal"],
+            section_heading=ctx["sec_heading"],
+            section_purpose=ctx["sec_purpose"],
+            other_sections_summary=ctx["other_sections"],
+            precedents_text=ctx["precedents_text"],
             instruction_text=instruction_text,
         )
     else:
-        if not sec_content:
-            raise ValueError("Section must have content before rewriting")
         stream = harness.stream_rewrite_policy_section(
-            workspace_id=ws_id,
-            section_id=sec_id,
+            workspace_id=ctx["ws_id"],
+            section_id=ctx["sec_id"],
             action_type=action_type,
-            workspace_title=ws_title,
-            target_jurisdiction=ws_jurisdiction,
-            section_heading=sec_heading,
-            current_text=sec_content,
+            workspace_title=ctx["ws_title"],
+            target_jurisdiction=ctx["ws_jurisdiction"],
+            section_heading=ctx["sec_heading"],
+            current_text=ctx["sec_content"],
             selected_text=selected_text,
             instruction_text=instruction_text,
-            precedents_text=precedents_text,
+            precedents_text=ctx["precedents_text"],
         )
 
     output_payload = None
     async for event_str in stream:
         # Intercept done event to persist generation
-        if "event: done" in event_str:
+        if event_str.startswith("event: done\n"):
             data_line = event_str.split("data: ", 1)[1].split("\n")[0]
             done_data = json.loads(data_line)
             output_payload = done_data.get("metadata", {})
@@ -613,14 +644,14 @@ async def stream_compose_section(
     if output_payload is not None:
         async with async_session_factory() as session:
             generation = PolicyGeneration(
-                workspace_id=ws_id,
-                section_id=sec_id,
+                workspace_id=ctx["ws_id"],
+                section_id=ctx["sec_id"],
                 action_type=action_type,
                 instruction_text=instruction_text,
                 selected_text=selected_text,
                 output_payload=output_payload,
                 provenance={
-                    "precedent_bill_ids": bill_map_ids,
+                    "precedent_bill_ids": ctx["bill_map_ids"],
                     "sources": [],
                 },
             )
@@ -631,7 +662,7 @@ async def stream_compose_section(
             yield _sse_event("done", {
                 "metadata": output_payload,
                 "generation_id": generation.id,
-                "section_id": sec_id,
+                "section_id": ctx["sec_id"],
                 "action_type": action_type,
             })
 

@@ -1,5 +1,5 @@
 ---
-status: pending
+status: resolved
 priority: p1
 issue_id: 151
 tags: [code-review, bug, streaming]

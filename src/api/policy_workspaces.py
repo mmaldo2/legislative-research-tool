@@ -885,7 +885,7 @@ async def workspace_chat_stream(
             messages=trimmed,
             client=client,
         ):
-            if "event: done" in event_str:
+            if event_str.startswith("event: done\n"):
                 data_line = event_str.split("data: ", 1)[1].split("\n")[0]
                 done_data = json.loads(data_line)
                 final_text = done_data.get("text", "")
@@ -944,6 +944,7 @@ async def compose_policy_section_stream(
             action_type=body.action_type,
             instruction_text=body.instruction_text,
             selected_text=body.selected_text,
+            client=get_anthropic_client(),
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc

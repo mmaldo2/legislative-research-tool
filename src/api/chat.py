@@ -607,7 +607,7 @@ async def chat_stream(
             client=client,
         ):
             # Parse the event to capture done data for persistence
-            if 'event: done' in event_str:
+            if event_str.startswith("event: done\n"):
                 data_line = event_str.split("data: ", 1)[1].split("\n")[0]
                 done_data = json.loads(data_line)
                 final_text = done_data.get("text", "")
