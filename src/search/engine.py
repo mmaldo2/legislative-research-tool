@@ -74,9 +74,21 @@ async def hybrid_search(
 
     # BM25 keyword search
     if mode in ("keyword", "hybrid"):
-        await _ensure_bm25_built(session)
-
-        bm25_results = _bm25_index.search(query, top_k=top_k * 2)
+        if _bm25_index.is_built:
+            bm25_results = _bm25_index.search(query, top_k=top_k * 2)
+        else:
+            # BM25 not built yet — fall back to SQL ILIKE rather than blocking
+            # for 30-60s to build the index (critical for MCP subprocess cold start).
+            logger.info("BM25 not built, falling back to SQL keyword search")
+            stmt = (
+                select(Bill.id)
+                .where(Bill.title.ilike(f"%{query}%"))
+                .limit(top_k * 2)
+            )
+            if jurisdiction:
+                stmt = stmt.where(Bill.jurisdiction_id == jurisdiction)
+            result = await session.execute(stmt)
+            bm25_results = [(row[0], 1.0) for row in result.all()]
 
         # Apply jurisdiction filter if set
         if jurisdiction and bm25_results:
