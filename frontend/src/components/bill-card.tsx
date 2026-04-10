@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { SaveToCollection } from "@/components/save-to-collection";
 import { formatJurisdiction, formatStatus, statusVariant, truncate } from "@/lib/format";
 
 interface BillCardProps {
@@ -29,37 +31,45 @@ export function BillCard({
     : `/bills/${encodeURIComponent(id)}`;
 
   return (
-    <Link href={href}>
-      <Card className="transition-colors hover:bg-accent/50">
-        <CardHeader className="gap-2">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Badge variant="outline" className="font-mono text-xs">
-              {identifier}
+    <Card className="transition-colors hover:bg-accent/50">
+      <CardHeader className="gap-3">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Badge variant="outline" className="font-mono text-xs">
+            {identifier}
+          </Badge>
+          <Badge variant="secondary" className="text-xs">
+            {formatJurisdiction(jurisdictionId)}
+          </Badge>
+          {status && (
+            <Badge variant={statusVariant(status)} className="text-xs">
+              {formatStatus(status)}
             </Badge>
-            <Badge variant="secondary" className="text-xs">
-              {formatJurisdiction(jurisdictionId)}
-            </Badge>
-            {status && (
-              <Badge variant={statusVariant(status)} className="text-xs">
-                {formatStatus(status)}
-              </Badge>
-            )}
-            {score !== undefined && (
-              <span className="ml-auto text-xs text-muted-foreground">
-                {(score * 100).toFixed(0)}% match
-              </span>
-            )}
-          </div>
+          )}
+          {score !== undefined && (
+            <span className="ml-auto text-xs text-muted-foreground">
+              {(score * 100).toFixed(0)}% match
+            </span>
+          )}
+        </div>
+        <div className="space-y-2">
           <CardTitle className="text-base leading-snug">
-            {truncate(title, 200)}
+            <Link href={href} className="hover:underline">
+              {truncate(title, 200)}
+            </Link>
           </CardTitle>
           {snippet && (
             <CardDescription className="text-sm">
               {truncate(snippet, 300)}
             </CardDescription>
           )}
-        </CardHeader>
-      </Card>
-    </Link>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="outline" size="sm">
+            <Link href={href}>Open bill</Link>
+          </Button>
+          <SaveToCollection billId={id} collectionId={collectionId} compact />
+        </div>
+      </CardHeader>
+    </Card>
   );
 }

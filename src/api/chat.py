@@ -1,10 +1,12 @@
 """Research assistant chat endpoints — conversational AI with tool use."""
 
+import asyncio
 import json
 import logging
 import uuid
 from collections.abc import Callable, Coroutine
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -14,7 +16,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.api.deps import get_agentic_client, get_llm_client, get_session, limiter
+from src.config import settings
 from src.database import async_session_factory
+from src.llm.codex_local_bridge import CodexLocalBridge
 from src.llm.harness import LLMHarness
 from src.llm.prompts import research_assistant_v1
 from src.models.bill import Bill
@@ -39,6 +43,30 @@ from src.services.bill_service import extract_bill_text
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+async def _run_codex_chat_once(message: str) -> tuple[str, list[dict]]:
+    def _run() -> tuple[list[str], str]:
+        with CodexLocalBridge(_repo_root()) as bridge:
+            return bridge.run_prompt(message, cwd=_repo_root())
+
+    deltas, final_text = await asyncio.to_thread(_run)
+    return final_text, []
+
+
+async def _stream_codex_chat_once(message: str):
+    def _run() -> tuple[list[str], str]:
+        with CodexLocalBridge(_repo_root()) as bridge:
+            return bridge.run_prompt(message, cwd=_repo_root())
+
+    deltas, final_text = await asyncio.to_thread(_run)
+    for delta in deltas:
+        yield f"event: token\ndata: {json.dumps({'text': delta})}\n\n"
+    yield f"event: done\ndata: {json.dumps({'text': final_text, 'tool_calls': []})}\n\n"
 
 
 def get_client_id(x_client_id: str | None = Header(None)) -> str:
@@ -503,17 +531,26 @@ async def chat(
     # 4. Run agentic loop — no DB connection held during LLM calls
     from src.services.chat_service import HISTORY_CHAR_BUDGET, run_agentic_chat, trim_history
 
-    try:
-        client = get_agentic_client()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
     trimmed = trim_history(messages, HISTORY_CHAR_BUDGET)
 
-    final_text, all_tool_calls = await run_agentic_chat(
-        system_prompt=research_assistant_v1.SYSTEM_PROMPT,
-        messages=trimmed,
-        client=client,
-    )
+    if settings.agentic_provider.strip().lower() == "codex-local":
+        prompt_parts = [research_assistant_v1.SYSTEM_PROMPT]
+        for msg in trimmed:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            prompt_parts.append(f"<{role}>\n{content}\n</{role}>")
+        final_text, all_tool_calls = await _run_codex_chat_once("\n\n".join(prompt_parts))
+    else:
+        try:
+            client = get_agentic_client()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+        final_text, all_tool_calls = await run_agentic_chat(
+            system_prompt=research_assistant_v1.SYSTEM_PROMPT,
+            messages=trimmed,
+            client=client,
+        )
 
     # 5. Store assistant message — brief DB connection for persist
     tool_calls_meta = all_tool_calls if all_tool_calls else None
@@ -612,26 +649,36 @@ async def chat_stream(
         trim_history,
     )
 
-    try:
-        client = get_agentic_client()
-    except RuntimeError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
     trimmed = trim_history(messages, HISTORY_CHAR_BUDGET)
-    use_sdk = isinstance(client, ClaudeSDKClient)
+    use_codex = settings.agentic_provider.strip().lower() == "codex-local"
+    use_sdk = False
+    client = None
+    if not use_codex:
+        try:
+            client = get_agentic_client()
+        except RuntimeError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        use_sdk = isinstance(client, ClaudeSDKClient)
 
     async def event_generator():
         final_text = ""
         all_tool_calls: list[dict] = []
 
-        # Choose the right agentic loop based on auth mode
-        if use_sdk:
+        if use_codex:
+            prompt_parts = [research_assistant_v1.SYSTEM_PROMPT]
+            for msg in trimmed:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                prompt_parts.append(f"<{role}>\n{content}\n</{role}>")
+            event_stream = _stream_codex_chat_once("\n\n".join(prompt_parts))
+        elif use_sdk:
             # Agent SDK path: MCP server provides tools to Claude's agentic loop
             event_stream = stream_sdk_agentic_chat(
                 system_prompt=research_assistant_v1.SYSTEM_PROMPT,
                 messages=trimmed,
             )
         else:
-            # Standard Anthropic API path: our agentic loop with native tool-use
+            # Standard Anthropic/OpenAI compatibility path: our app-managed research loop
             event_stream = stream_agentic_chat(
                 system_prompt=research_assistant_v1.SYSTEM_PROMPT,
                 messages=trimmed,

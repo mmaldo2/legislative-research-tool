@@ -2,13 +2,31 @@
 
 > For Hermes: use subagent-driven-development if implementing this plan later.
 
-Goal: replace provider-shaped LLM wiring with a provider-neutral runtime layer so the standalone app remains primary while supporting a ChatGPT-first MVP, direct API providers, and later local OSS models.
+Goal: replace provider-shaped LLM wiring with an app-owned, provider-neutral execution layer so the standalone app remains primary while supporting durable app-owned tools/workflows, current subscription/API runtimes, and later local OSS models.
 
 Architecture summary
 - Keep the app/web workflows as the product shell.
-- Treat search, investigations, bill detail, artifacts, and persistence as the durable tool/data plane.
-- Insert a runtime abstraction between product workflows and model providers.
-- Support multiple runtime modes behind one contract: ChatGPT-hosted, direct API, Claude subscription SDK, and local OSS.
+- Treat search, investigations, bill detail, artifacts, persistence, and MCP-exposed operations as the canonical app-owned tool/data plane.
+- Insert runtime-neutral orchestration between product workflows and model providers.
+- Support multiple runtime modes behind app-owned contracts: Anthropic API, Claude subscription SDK, OpenAI generation, and later local OpenAI-compatible runtimes.
+- Keep future hosted/delegated ChatGPT-style reasoning as a compatibility target, not the defining MVP adapter.
+
+## Architectural frame: 3 durable layers
+
+1. Canonical app-owned tool/data plane
+- Existing API handlers, services, DB models, caches, and MCP tools.
+- This is the durable product boundary and system of record.
+- Tool execution should remain app-owned.
+
+2. Runtime-neutral orchestrators
+- Structured generation orchestration for harness/report/composer flows.
+- Chat/tool orchestration for assistant/workspace flows.
+- These orchestrators consume canonical internal tool/event schemas, not provider SDK types.
+
+3. Runtime adapters
+- Thin translation layers that map internal contracts to provider-native APIs/SDKs.
+- Adapters translate request/response shapes only.
+- They should not absorb app workflow logic or durable tool orchestration.
 
 ## Current-state findings
 
@@ -80,7 +98,7 @@ class UsageInfo:
     input_tokens: int | None = None
     output_tokens: int | None = None
     cost_usd: float | None = None
-    billing_mode: str | None = None  # api, subscription, local, hosted
+    billing_mode: str | None = None  # api, subscription, local, hosted, unknown
 
 @dataclass
 class GenerationResult:
@@ -93,11 +111,18 @@ class GenerationResult:
 
 @dataclass
 class RuntimeCapabilities:
-    structured_output: bool
-    streaming: bool
-    tool_calling: bool
-    hosted_by_user_subscription: bool
+    structured_generation: bool
+    native_tool_calling: bool
+    app_managed_tool_loop: bool
+    streaming_text: bool
+    accurate_usage_reporting: bool
+    subscription_auth: bool
     local_model: bool
+
+@dataclass
+class AssistantEvent:
+    type: str  # text_delta | tool_request | tool_result | done | error
+    payload: dict[str, Any]
 
 class ModelRuntime:
     name: str
@@ -126,41 +151,47 @@ class AgentRuntime:
     name: str
     capabilities: RuntimeCapabilities
 
-    async def run_agent_turns(
+    async def next_response(
         self,
         *,
         system_prompt: str,
         messages: list[dict],
         tools: list[dict],
         model: str,
-        max_rounds: int,
-        tool_executor: Any,
-    ) -> dict[str, Any]: ...
+        max_tokens: int,
+    ) -> list[AssistantEvent]: ...
 
-    async def stream_agent_turns(...) -> AsyncIterator[dict[str, Any]]: ...
+    async def stream_response(...) -> AsyncIterator[AssistantEvent]: ...
 ```
+
+Boundary note
+- Orchestrators own the durable app workflow loop, tool execution, retries, and state transitions.
+- `AgentRuntime` only translates between app-owned messages/tools/events and provider-native request/response semantics.
 
 ### 2. Runtime adapters
 
 Add adapters under `src/runtime/adapters/`.
 
-MVP adapters
-- `chatgpt_hosted.py`
-  - target default frontier runtime for MVP
-  - app remains primary shell, but reasoning is delegated to a ChatGPT-hosted path when supported
-  - if true delegated runtime is not yet fully available, ship this as an interface with a temporary “not implemented / connector-only” implementation while other adapters keep the app working
-- `openai_api.py`
-  - wraps direct API use
-- `claude_sdk.py`
-  - wraps Claude subscription SDK
+First-pass adapters
 - `anthropic_api.py`
   - wraps direct Anthropic API
+- `claude_sdk.py`
+  - wraps Claude subscription SDK
+- `openai_api.py`
+  - wraps direct OpenAI API, initially for generation-oriented flows
+  - this is a tactical generation path, not the intended long-term primary frontier-runtime strategy
 - `local_openai_compatible.py`
   - for Ollama/vLLM/OpenAI-compatible local servers later
 
-Important rule
+Future target adapter
+- `chatgpt_hosted.py`
+  - reserved for a future hosted/delegated runtime path once the mechanics are concrete
+  - do not let this speculative path define the MVP runtime shape
+
+Important rules
 - Adapters convert provider-native responses into internal contracts.
 - The rest of the app never imports provider SDK types.
+- Adapters should not own app workflow logic, canonical tool execution, or long-lived orchestration.
 
 ### 3. Internal tool schema
 
@@ -190,84 +221,101 @@ This removes Anthropic schema from `src/llm/tools.py` and makes tools reusable a
 Move runtime selection out of provider-specific dependency helpers and into a registry.
 
 Suggested config split
-- `DEFAULT_MODEL_RUNTIME=chatgpt-hosted|openai-api|anthropic-api|claude-sdk|local-openai-compatible`
-- `DEFAULT_AGENT_RUNTIME=chatgpt-hosted|claude-sdk|openai-api|local-openai-compatible`
+- `DEFAULT_MODEL_RUNTIME=anthropic-api|claude-sdk|openai-api|local-openai-compatible`
+- `DEFAULT_AGENT_RUNTIME=anthropic-api|claude-sdk|local-openai-compatible`
 - optional per-workspace override later
 - separate model names from runtime names
 
 Example
 - `SUMMARY_MODEL=gpt-5-mini`
-- `AGENT_MODEL=gpt-5`
+- `AGENT_MODEL=claude-sonnet-4-6`
 - `LOCAL_MODEL=qwen2.5-72b-instruct`
 
 Avoid using `LLM_PROVIDER` as the main abstraction long-term; it is too narrow.
 
+### 5. Capability model
+
+Model/runtime differences in this repo are not just provider differences; they are execution-model differences.
+
+Recommended capability flags should distinguish:
+- `structured_generation`
+- `native_tool_calling`
+- `app_managed_tool_loop`
+- `streaming_text`
+- `accurate_usage_reporting`
+- `subscription_auth`
+- `local_model`
+
+A single `tool_calling: bool` capability is too weak for safe migration decisions.
+
 ## Migration path
 
-### Phase 1: Extract runtime contracts without changing product behavior
-1. Create `src/runtime/contracts.py`.
-2. Create `src/runtime/registry.py`.
-3. Implement `AnthropicApiRuntime`, `ClaudeSdkRuntime`, and `OpenAIApiRuntime` by wrapping existing adapters.
-4. Change `src/api/deps.py` to resolve a `ModelRuntime` and `AgentRuntime` rather than raw SDK clients.
+### Phase 1: Establish canonical internal tool schema + minimal runtime contracts
+1. Create `src/runtime/tools.py` with canonical app-owned tool definitions.
+2. Add projection helpers for Anthropic/OpenAI/MCP shapes.
+3. Create `src/runtime/contracts.py` and `src/runtime/registry.py`.
+4. Change `src/api/deps.py` to resolve runtime objects rather than raw SDK clients.
 5. Keep existing env vars temporarily for backwards compatibility.
 
 Success criteria
-- No route imports provider SDK classes directly.
-- Runtime resolution returns internal runtime objects.
+- Internal tool definitions are no longer Anthropic-shaped.
+- No route needs a raw provider SDK client.
+- MCP and in-app assistant code can converge on one canonical tool definition set.
 
-### Phase 2: Refactor `LLMHarness` onto `ModelRuntime`
+### Phase 2: Normalize current Anthropic API + Claude SDK behavior behind contracts
+1. Implement `AnthropicApiRuntime` and `ClaudeSdkRuntime`.
+2. Preserve current behavior while moving provider request/response translation into adapters.
+3. Treat Claude subscription auth as a first-class capability difference, not just another provider name.
+
+Success criteria
+- Existing Anthropic/Claude-backed behavior still works.
+- Provider-specific logic is increasingly isolated in adapters.
+
+### Phase 3: Refactor `LLMHarness` onto generation runtime
 1. Change `LLMHarness` constructor to accept `runtime: ModelRuntime`.
 2. Replace direct `client.messages.create(...)` with `runtime.generate_structured(...)` or `generate_text(...)`.
 3. Move JSON parsing fallback into the runtime layer where possible.
 4. Replace Anthropic response assumptions with `GenerationResult`.
-5. Update cost tracking to support unknown/subscription/local billing.
+5. Update cost tracking to support unknown/subscription/local billing and optional usage metadata.
 
 Success criteria
 - Analysis/report/composer flows become provider-neutral.
-- `src/llm/openai_adapter.py` and `src/llm/claude_sdk_adapter.py` are no longer imported outside runtime adapters.
+- Usage accounting is treated as optional metadata, not guaranteed API-token accounting.
 
-### Phase 3: Refactor agentic chat/workspace flows onto `AgentRuntime`
+### Phase 4: Refactor chat/workspace flows into runtime-neutral orchestration
 1. Replace Anthropic-specific tool loop logic in `src/services/chat_service.py`.
-2. Define a provider-neutral event model for:
+2. Define canonical app-owned chat/tool events for:
    - assistant text delta
    - tool requested
    - tool running
    - tool completed
    - final response
-3. Move provider-specific message block parsing into agent runtime adapters.
-4. Convert `RESEARCH_TOOLS` into provider-neutral tool specs.
+3. Keep tool execution app-owned.
+4. Move only provider-native message/block translation into adapters.
 
 Success criteria
 - `get_agentic_client()` disappears.
 - Chat/workspace flows ask for `AgentRuntime`, not a provider client.
+- `AgentRuntime` does not just rename Anthropic semantics; it supports app-managed orchestration cleanly.
 
-### Phase 4: Add ChatGPT-first runtime path
-There are two possible implementations:
+### Phase 5: Add OpenAI generation path + local OpenAI-compatible path
+1. Add `OpenAIApiRuntime`, initially focused on generation-oriented flows.
+2. Add `LocalOpenAICompatibleRuntime` for local vLLM/Ollama-style servers.
+3. Expand agentic parity only where the execution model is proven and worth the complexity.
 
-A. True delegated hosted runtime (ideal)
+Success criteria
+- Same generation workflows run via OpenAI API or local OpenAI-compatible backends without route-level changes.
+
+### Phase 6: Add future hosted/delegated runtime path only when concrete
+Possible future target
 - independent app shell
 - user authorizes ChatGPT-linked runtime access
 - app sends prompts/tool context to hosted runtime
 - runtime reasons and calls back into app tools
 
-B. Transitional split-brain mode (practical)
-- web app remains primary
-- MCP/ChatGPT connector is available for hosted reasoning workflows
-- in-app LLM workflows continue via direct/API or subscription adapters until delegated hosted runtime is supported
-
-Recommendation
-- Design the runtime interface for A.
-- Ship the product using B where needed.
-- Do not contort the whole app around connector-only UX.
-
-### Phase 5: Add local OSS runtime
-Implement `LocalOpenAICompatibleRuntime` for:
-- local vLLM server
-- Ollama with compatible endpoints if sufficient
-- other OpenAI-compatible servers
-
-Success criteria
-- same app workflows run against a local runtime without route-level changes.
+Until that path is operationally concrete:
+- keep MCP/ChatGPT as an interoperability surface
+- do not let speculative hosted-runtime mechanics drive the MVP design
 
 ## File-level proposal
 
@@ -279,8 +327,11 @@ Create
 - `src/runtime/adapters/openai_api.py`
 - `src/runtime/adapters/anthropic_api.py`
 - `src/runtime/adapters/claude_sdk.py`
-- `src/runtime/adapters/chatgpt_hosted.py`
 - `src/runtime/adapters/local_openai_compatible.py`
+
+Future target
+- `src/runtime/adapters/chatgpt_hosted.py`
+  - add only when the hosted/delegated runtime mechanics are concrete enough to implement safely
 
 Refactor
 - `src/api/deps.py`
@@ -312,9 +363,10 @@ Refactor
 
 For MVP, optimize for this stack:
 - App shell: existing standalone web app
-- Data/workflow plane: existing API + MCP tools
-- Default frontier runtime target: ChatGPT-hosted/delegated runtime path when available
-- Transitional fallback runtimes: Claude SDK and direct OpenAI API
+- Data/workflow plane: existing API + canonical internal tools + MCP interoperability
+- Primary stable runtimes: Anthropic API and Claude SDK
+- Added generation path: OpenAI API where useful
 - Future local runtime: OpenAI-compatible local server adapter
+- Future hosted/delegated target: ChatGPT-style runtime only when the mechanics are concrete
 
-This preserves the product direction without forcing an immediate connector-only future.
+This preserves the product direction, strengthens the app-owned boundary, and avoids forcing the MVP to depend on a speculative hosted-runtime path.

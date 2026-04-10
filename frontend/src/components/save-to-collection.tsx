@@ -16,9 +16,11 @@ import { Bookmark, Plus, Check } from "lucide-react";
 
 interface SaveToCollectionProps {
   billId: string;
+  collectionId?: number;
+  compact?: boolean;
 }
 
-export function SaveToCollection({ billId }: SaveToCollectionProps) {
+export function SaveToCollection({ billId, collectionId, compact = false }: SaveToCollectionProps) {
   const [collections, setCollections] = useState<CollectionResponse[]>([]);
   const [saved, setSaved] = useState(false);
   const [showNewInput, setShowNewInput] = useState(false);
@@ -37,7 +39,12 @@ export function SaveToCollection({ billId }: SaveToCollectionProps) {
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (e) {
-      // 409 = already exists, that's fine
+      const error = e as { status?: number } | undefined;
+      if (error?.status === 409) {
+        setSaved(true);
+        setTimeout(() => setSaved(false), 2000);
+        return;
+      }
       console.error("Failed to add to collection:", e);
     }
   }
@@ -58,6 +65,24 @@ export function SaveToCollection({ billId }: SaveToCollectionProps) {
     } finally {
       setCreating(false);
     }
+  }
+
+  if (collectionId) {
+    return (
+      <Button
+        type="button"
+        variant={saved ? "secondary" : "outline"}
+        size={compact ? "sm" : "sm"}
+        onClick={() => handleAdd(collectionId)}
+      >
+        {saved ? (
+          <Check className="mr-1.5 h-4 w-4 text-green-600" />
+        ) : (
+          <Bookmark className="mr-1.5 h-4 w-4" />
+        )}
+        {saved ? "Added" : compact ? "Add" : "Add to Investigation"}
+      </Button>
+    );
   }
 
   return (

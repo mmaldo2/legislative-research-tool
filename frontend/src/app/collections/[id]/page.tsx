@@ -112,7 +112,7 @@ export default function CollectionDetailPage({
           <span className="rounded-full border px-2 py-1">Question → compare → synthesize</span>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
-          <Link href="/search" className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent">
+          <Link href={`/search?collection_id=${collectionId}`} className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent">
             Continue Search
           </Link>
           <Link href={`/assistant?collection_id=${collectionId}`} className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent">
@@ -159,7 +159,7 @@ export default function CollectionDetailPage({
             build your working set.
           </p>
           <Link
-            href="/search"
+            href={`/search?collection_id=${collectionId}`}
             className="mt-4 inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent"
           >
             Go to Search
@@ -171,7 +171,7 @@ export default function CollectionDetailPage({
             <Card key={item.id}>
               <CardHeader className="flex-row items-start justify-between gap-4">
                 <div className="flex-1">
-                  <Link href={`/bills/${encodeURIComponent(item.bill_id)}`}>
+                  <Link href={`/bills/${encodeURIComponent(item.bill_id)}?collection_id=${collectionId}`}>
                     <CardTitle className="text-base hover:underline">
                       {item.bill_identifier || item.bill_id}
                     </CardTitle>

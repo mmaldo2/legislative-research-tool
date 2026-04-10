@@ -1,36 +1,23 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Frontend development
 
-## Getting Started
+## Recommended local dev command in this repo
 
-First, run the development server:
+From `frontend/`:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run dev:webpack
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Why
+- This Windows-mounted repo has hit Turbopack `.next` write failures under WSL.
+- `dev:webpack` is the safer local path here.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## App/backend expectation
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The frontend expects the backend at:
+- `http://localhost:8000/api/v1`
 
-## Learn More
+For local backend work, the current default assistant/report/compare mode is:
+- `AGENTIC_PROVIDER=codex-local`
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+That routes the main synthesis flows through the locally authenticated Codex bridge.
