@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
 
+_VECTOR_COLUMN_CANDIDATES = ("vector", "embedding")
+
 
 @dataclass(frozen=True, slots=True)
 class SimilarBillMatch:
@@ -47,30 +49,39 @@ async def find_similar_bill_ids(
         jurisdiction_clause = "AND b.jurisdiction_id != :exclude_jurisdiction"
         params["exclude_jurisdiction"] = exclude_jurisdiction
 
-    min_score_clause = ""
-    if min_score > 0.0:
-        min_score_clause = "AND 1 - (be1.embedding <=> be2.embedding) > :min_score"
-        params["min_score"] = min_score
+    rows = []
+    for vector_column in _VECTOR_COLUMN_CANDIDATES:
+        min_score_clause = ""
+        if min_score > 0.0:
+            min_score_clause = (
+                f"AND 1 - (be1.{vector_column} <=> be2.{vector_column}) > :min_score"
+            )
+            params["min_score"] = min_score
 
-    # Try pgvector cosine similarity first
-    embedding_query = text(f"""
-        SELECT be2.bill_id,
-               1 - (be1.embedding <=> be2.embedding) AS score
-        FROM bill_embeddings be1
-        JOIN bill_embeddings be2 ON be1.bill_id != be2.bill_id
-        JOIN bills b ON b.id = be2.bill_id
-        WHERE be1.bill_id = :bill_id
-          {min_score_clause}
-          {jurisdiction_clause}
-        ORDER BY be1.embedding <=> be2.embedding
-        LIMIT :top_k
-    """)
+        embedding_query = text(f"""
+            SELECT be2.bill_id,
+                   1 - (be1.{vector_column} <=> be2.{vector_column}) AS score
+            FROM bill_embeddings be1
+            JOIN bill_embeddings be2 ON be1.bill_id != be2.bill_id
+            JOIN bills b ON b.id = be2.bill_id
+            WHERE be1.bill_id = :bill_id
+              {min_score_clause}
+              {jurisdiction_clause}
+            ORDER BY be1.{vector_column} <=> be2.{vector_column}
+            LIMIT :top_k
+        """)
 
-    try:
-        rows = (await session.execute(embedding_query, params)).fetchall()
-    except Exception as e:
-        logger.warning("Embedding similarity failed: %s", e)
-        rows = []
+        try:
+            rows = (await session.execute(embedding_query, params)).fetchall()
+            break
+        except Exception as e:
+            logger.warning(
+                "Embedding similarity failed using bill_embeddings.%s: %s",
+                vector_column,
+                e,
+            )
+            await session.rollback()
+            rows = []
 
     # Fallback to pre-computed bill_similarities table
     if not rows:
@@ -112,26 +123,32 @@ async def vector_search(
     """Search bill embeddings using cosine similarity.
 
     Returns list of (bill_id, similarity_score) sorted by descending similarity.
-    Requires the bill_embeddings table to have a `embedding` vector column.
+    Supports either `vector` or `embedding` as the pgvector column name.
     """
     params: dict = {"embedding": str(query_embedding), "limit": top_k}
 
-    # Build query with optional jurisdiction filter — all values are bound params
-    base = (
-        "SELECT be.bill_id, 1 - (be.embedding <=> :embedding::vector) AS similarity"
-        " FROM bill_embeddings be"
-        " JOIN bills b ON b.id = be.bill_id"
-        " WHERE be.embedding IS NOT NULL"
-    )
-    if jurisdiction:
-        base += " AND b.jurisdiction_id = :jurisdiction"
-        params["jurisdiction"] = jurisdiction
+    for vector_column in _VECTOR_COLUMN_CANDIDATES:
+        base = (
+            f"SELECT be.bill_id, 1 - (be.{vector_column} <=> :embedding::vector) AS similarity"
+            " FROM bill_embeddings be"
+            " JOIN bills b ON b.id = be.bill_id"
+            f" WHERE be.{vector_column} IS NOT NULL"
+        )
+        if jurisdiction:
+            base += " AND b.jurisdiction_id = :jurisdiction"
+            params["jurisdiction"] = jurisdiction
 
-    base += " ORDER BY be.embedding <=> :embedding::vector LIMIT :limit"
+        base += f" ORDER BY be.{vector_column} <=> :embedding::vector LIMIT :limit"
 
-    try:
-        result = await session.execute(text(base), params)
-        return [(row.bill_id, float(row.similarity)) for row in result.all()]
-    except Exception as e:
-        logger.warning("Vector search failed (embeddings may not exist yet): %s", e)
-        return []
+        try:
+            result = await session.execute(text(base), params)
+            return [(row.bill_id, float(row.similarity)) for row in result.all()]
+        except Exception as e:
+            logger.warning(
+                "Vector search failed using bill_embeddings.%s: %s",
+                vector_column,
+                e,
+            )
+            await session.rollback()
+
+    return []

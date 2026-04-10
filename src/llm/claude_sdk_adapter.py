@@ -50,7 +50,12 @@ def _run_sdk_query_sync(prompt: str) -> str:
     """
     import asyncio as _asyncio
 
-    from claude_agent_sdk import query
+    try:
+        from claude_agent_sdk import query
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Claude Agent SDK is not installed. Install `claude-agent-sdk` or set ANTHROPIC_API_KEY."
+        ) from exc
 
     async def _collect():
         full_text = ""
@@ -125,9 +130,11 @@ class _SDKMessages:
 
         try:
             full_text = await asyncio.to_thread(_run_sdk_query_sync, prompt)
-        except Exception:
+        except Exception as exc:
             logger.exception("SDK adapter: Agent SDK query failed")
-            raise
+            raise RuntimeError(
+                "Claude Agent SDK request failed. If you want Claude, set LLM_PROVIDER=claude-sdk and ensure Claude SDK auth is available."
+            ) from exc
 
         logger.info("SDK adapter: received %d-char response", len(full_text))
 

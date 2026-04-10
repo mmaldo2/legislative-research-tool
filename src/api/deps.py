@@ -4,6 +4,7 @@ import logging
 import secrets
 import uuid
 from collections.abc import AsyncGenerator
+from typing import Any
 
 import anthropic
 from fastapi import Depends, HTTPException, Security
@@ -36,30 +37,71 @@ limiter = Limiter(key_func=_get_key_func(), default_limits=["200/minute"])
 
 _api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
-# Module-level singleton for Anthropic client — connection pooling across requests
-_anthropic_client: anthropic.AsyncAnthropic | None = None
+# Module-level singleton for the configured LLM client — connection pooling across requests
+_llm_client: Any | None = None
 
 
-def get_anthropic_client():
-    """Return a shared LLM client (created once, reused across requests).
+def get_llm_client() -> Any:
+    """Return the configured shared LLM client.
 
-    Auth priority:
-    1. ANTHROPIC_API_KEY — standard API key (production)
-    2. Claude Agent SDK — routes through Claude subscription (local dev/demo)
+    This intentionally no longer auto-falls-back from one provider to another.
+    The provider must be chosen explicitly via LLM_PROVIDER.
     """
-    global _anthropic_client
-    if _anthropic_client is None:
-        if settings.anthropic_api_key:
-            _anthropic_client = anthropic.AsyncAnthropic(
-                api_key=settings.anthropic_api_key,
-            )
-        else:
-            # Use Claude Agent SDK adapter (subscription auth via `claude login`)
-            from src.llm.claude_sdk_adapter import ClaudeSDKClient
+    global _llm_client
+    if _llm_client is not None:
+        return _llm_client
 
-            logger.info("No ANTHROPIC_API_KEY set — using Claude Agent SDK (subscription auth)")
-            _anthropic_client = ClaudeSDKClient()
-    return _anthropic_client
+    provider = settings.llm_provider.strip().lower()
+    if provider == "openai":
+        if not settings.openai_api_key:
+            raise RuntimeError(
+                "LLM_PROVIDER=openai but OPENAI_API_KEY is not configured."
+            )
+        from src.llm.openai_adapter import OpenAICompatClient
+
+        logger.info("Using OpenAI as the primary LLM provider")
+        _llm_client = OpenAICompatClient(api_key=settings.openai_api_key)
+        return _llm_client
+
+    if provider == "anthropic":
+        if not settings.anthropic_api_key:
+            raise RuntimeError(
+                "LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY is not configured."
+            )
+        _llm_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
+        return _llm_client
+
+    if provider == "claude-sdk":
+        try:
+            from src.llm.claude_sdk_adapter import ClaudeSDKClient
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "LLM_PROVIDER=claude-sdk but claude-agent-sdk is unavailable."
+            ) from exc
+
+        logger.info("Using Claude SDK as the explicit LLM provider")
+        _llm_client = ClaudeSDKClient()
+        return _llm_client
+
+    raise RuntimeError(
+        f"Unsupported LLM_PROVIDER={settings.llm_provider!r}. Use openai, anthropic, or claude-sdk."
+    )
+
+
+def get_agentic_client() -> Any:
+    """Return a client suitable for the tool-using chat/workspace flows.
+
+    Today those flows still depend on Anthropic-style tool use or the Claude SDK MCP loop.
+    OpenAI is intentionally not wired into that path yet.
+    """
+    provider = settings.llm_provider.strip().lower()
+    if provider == "openai":
+        raise RuntimeError(
+            "Agentic chat/workspace flows are not yet wired for OPENAI. "
+            "Use LLM_PROVIDER=anthropic or LLM_PROVIDER=claude-sdk for those routes, "
+            "or keep using OpenAI for the broader analysis/reporting system."
+        )
+    return get_llm_client()
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:
@@ -112,7 +154,11 @@ def require_tier(*allowed_tiers: str):
 async def get_llm_harness(
     session: AsyncSession = Depends(get_session),
 ) -> LLMHarness:
-    return LLMHarness(db_session=session, client=get_anthropic_client())
+    try:
+        client = get_llm_client()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return LLMHarness(db_session=session, client=client)
 
 
 def require_org(auth: AuthContext) -> uuid.UUID:

@@ -93,12 +93,41 @@ export default function CollectionDetailPage({
     <div className="mx-auto max-w-5xl px-4 py-8">
       <Link href="/collections" className="inline-flex items-center gap-1 text-sm text-primary hover:underline mb-4">
         <ArrowLeft className="h-4 w-4" />
-        Back to collections
+        Back to investigations
       </Link>
       <h1 className="text-2xl font-bold mb-2">{collection.name}</h1>
-      {collection.description && (
-        <p className="text-muted-foreground mb-6">{collection.description}</p>
+      <p className="mb-2 text-sm font-medium text-muted-foreground">Investigation workspace</p>
+      {collection.description ? (
+        <p className="text-muted-foreground mb-4">{collection.description}</p>
+      ) : (
+        <p className="text-muted-foreground mb-4">No investigation summary yet.</p>
       )}
+      <div className="mb-6 rounded-lg border bg-muted/20 p-4">
+        <p className="text-sm text-foreground">
+          Use this investigation to track a policy question, save the most relevant bills,
+          and move from discovery into comparison, notes, and deeper research.
+        </p>
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span className="rounded-full border px-2 py-1">Working set: {collection.items.length} bill{collection.items.length === 1 ? "" : "s"}</span>
+          <span className="rounded-full border px-2 py-1">Question → compare → synthesize</span>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Link href="/search" className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent">
+            Continue Search
+          </Link>
+          <Link href={`/assistant?collection_id=${collectionId}`} className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent">
+            Ask Assistant
+          </Link>
+          {collection.items.length >= 2 && (
+            <Link href={`/compare?collection_id=${collectionId}`} className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent">
+              Compare Bills
+            </Link>
+          )}
+          <Link href={`/reports?collection_id=${collectionId}`} className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent">
+            Generate Memo
+          </Link>
+        </div>
+      </div>
 
       {error && (
         <div className="mb-4 rounded-md bg-destructive/10 px-4 py-3 text-sm text-destructive">
@@ -106,10 +135,36 @@ export default function CollectionDetailPage({
         </div>
       )}
 
+      <div className="mb-6 rounded-lg border p-4 text-sm">
+        <p className="font-medium">Suggested next step</p>
+        {collection.items.length === 0 ? (
+          <p className="mt-1 text-muted-foreground">
+            Start by adding 2-5 relevant bills from search so this investigation has a usable working set.
+          </p>
+        ) : collection.items.length === 1 ? (
+          <p className="mt-1 text-muted-foreground">
+            You have one bill saved. Add at least one more related bill so you can compare approaches and ask stronger investigation questions.
+          </p>
+        ) : (
+          <p className="mt-1 text-muted-foreground">
+            Compare <span className="font-medium text-foreground">{collection.items[0].bill_identifier || collection.items[0].bill_id}</span> with <span className="font-medium text-foreground">{collection.items[1].bill_identifier || collection.items[1].bill_id}</span> or ask the assistant for the biggest differences across the current working set.
+          </p>
+        )}
+      </div>
+
       {collection.items.length === 0 ? (
-        <p className="text-muted-foreground text-center py-8">
-          No bills in this collection yet. Use the search to find and add bills.
-        </p>
+        <div className="py-8 text-center">
+          <p className="text-muted-foreground">
+            No bills in this investigation yet. Use search to find relevant bills and
+            build your working set.
+          </p>
+          <Link
+            href="/search"
+            className="mt-4 inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent"
+          >
+            Go to Search
+          </Link>
+        </div>
       ) : (
         <div className="space-y-3">
           {collection.items.map((item) => (
@@ -118,9 +173,16 @@ export default function CollectionDetailPage({
                 <div className="flex-1">
                   <Link href={`/bills/${encodeURIComponent(item.bill_id)}`}>
                     <CardTitle className="text-base hover:underline">
-                      {item.bill_id}
+                      {item.bill_identifier || item.bill_id}
                     </CardTitle>
                   </Link>
+                  {(item.bill_title || item.jurisdiction_id || item.status) && (
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {item.bill_title || item.bill_id}
+                      {item.jurisdiction_id ? ` • ${item.jurisdiction_id}` : ""}
+                      {item.status ? ` • ${item.status}` : ""}
+                    </p>
+                  )}
                   {/* Notes */}
                   {editingNotes[item.bill_id] !== undefined ? (
                     <div className="flex gap-2 mt-2">

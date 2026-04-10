@@ -46,3 +46,4 @@ class CollectionItem(Base):
     added_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     collection: Mapped["Collection"] = relationship(back_populates="items")
+    bill: Mapped["Bill"] = relationship()

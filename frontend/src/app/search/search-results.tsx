@@ -8,6 +8,7 @@ interface SearchResultsProps {
   jurisdiction?: string;
   mode: "keyword" | "semantic" | "hybrid";
   page: number;
+  collectionId?: number;
 }
 
 export async function SearchResults({
@@ -15,6 +16,7 @@ export async function SearchResults({
   jurisdiction,
   mode,
   page,
+  collectionId,
 }: SearchResultsProps) {
   let data;
   try {
@@ -49,6 +51,7 @@ export async function SearchResults({
             status={result.status}
             score={result.score}
             snippet={result.snippet}
+            collectionId={collectionId}
           />
         ))}
       </div>

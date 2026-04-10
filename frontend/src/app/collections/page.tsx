@@ -60,7 +60,7 @@ export default function CollectionsPage() {
   if (loading) {
     return (
       <div className="mx-auto max-w-5xl px-4 py-8">
-        <h1 className="text-2xl font-bold mb-6">Research Collections</h1>
+        <h1 className="text-2xl font-bold mb-6">Investigations</h1>
         <div className="space-y-3">
           {Array.from({ length: 3 }).map((_, i) => (
             <div key={i} className="h-20 animate-pulse rounded-lg bg-muted/30" />
@@ -72,7 +72,11 @@ export default function CollectionsPage() {
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
-      <h1 className="text-2xl font-bold mb-6">Research Collections</h1>
+      <h1 className="text-2xl font-bold mb-2">Investigations</h1>
+      <p className="mb-6 max-w-2xl text-muted-foreground">
+        Create and revisit working sets of bills around a policy question, then move
+        from discovery into comparison, notes, and deeper research.
+      </p>
 
       {error && (
         <div className="mb-4 rounded-md bg-destructive/10 px-4 py-3 text-sm text-destructive">
@@ -80,10 +84,9 @@ export default function CollectionsPage() {
         </div>
       )}
 
-      {/* Create new collection */}
       <div className="flex gap-2 mb-6">
         <Input
-          placeholder="New collection name..."
+          placeholder="New investigation name..."
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleCreate()}
@@ -99,7 +102,8 @@ export default function CollectionsPage() {
         <div className="text-center py-12">
           <FolderOpen className="mx-auto h-12 w-12 text-muted-foreground/50 mb-4" />
           <p className="text-muted-foreground">
-            No collections yet. Create one to start saving bills for your research.
+            No investigations yet. Create one to start building a working set around a
+            policy question.
           </p>
         </div>
       ) : (
@@ -114,7 +118,7 @@ export default function CollectionsPage() {
                   )}
                 </Link>
                 <div className="flex items-center gap-2">
-                  <Badge variant="secondary">{c.item_count} bills</Badge>
+                  <Badge variant="secondary">{c.item_count} bills in working set</Badge>
                   <Button
                     variant="ghost"
                     size="sm"

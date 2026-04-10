@@ -44,7 +44,7 @@ import type {
 } from "@/types/api";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
-const API_KEY = process.env.API_KEY ?? "";
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY ?? "";
 
 class ApiError extends Error {
   constructor(
@@ -391,6 +391,17 @@ export async function generateReport(
       jurisdiction: jurisdiction ?? null,
       max_bills: maxBills,
     }),
+    signal,
+  });
+}
+
+export async function generateCollectionReport(
+  collectionId: number,
+  signal?: AbortSignal,
+): Promise<ReportOutput> {
+  return fetchApi<ReportOutput>(`/collections/${collectionId}/report`, {
+    method: "POST",
+    headers: clientHeaders(),
     signal,
   });
 }

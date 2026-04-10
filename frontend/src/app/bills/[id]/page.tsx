@@ -1,4 +1,5 @@
 import { Suspense, cache } from "react";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import type { Metadata } from "next";
 import { ApiError, getBill, getBillBriefUrl } from "@/lib/api";
@@ -37,10 +38,14 @@ export async function generateMetadata({
 
 export default async function BillDetailPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { id } = await params;
+  const qp = await searchParams;
+  const collectionId = typeof qp.collection_id === "string" ? qp.collection_id : undefined;
   let bill;
   try {
     bill = await getBillCached(id);
@@ -53,9 +58,15 @@ export default async function BillDetailPage({
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
-      {/* Header */}
+      {collectionId && (
+        <div className="mb-4">
+          <Link href={`/collections/${collectionId}`} className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent">
+            Back to Investigation
+          </Link>
+        </div>
+      )}
       <div className="mb-6">
-        <div className="flex flex-wrap items-center gap-2 mb-2">
+        <div className="mb-2 flex flex-wrap items-center gap-2">
           <Badge variant="outline" className="font-mono">
             {bill.identifier}
           </Badge>
@@ -99,7 +110,6 @@ export default async function BillDetailPage({
         )}
       </div>
 
-      {/* Tabs */}
       <Tabs defaultValue="summary">
         <TabsList>
           <TabsTrigger value="summary">Summary</TabsTrigger>
@@ -147,7 +157,7 @@ export default async function BillDetailPage({
               </div>
             }
           >
-            <SimilarTab billId={id} />
+            <SimilarTab billId={id} collectionId={collectionId} />
           </Suspense>
         </TabsContent>
 

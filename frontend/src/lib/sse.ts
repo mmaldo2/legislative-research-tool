@@ -9,7 +9,7 @@
  */
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1";
-const API_KEY = process.env.API_KEY ?? "";
+const API_KEY = process.env.NEXT_PUBLIC_API_KEY ?? "";
 
 // --- Event types ---
 

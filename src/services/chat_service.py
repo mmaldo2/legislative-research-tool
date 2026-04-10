@@ -518,8 +518,13 @@ async def stream_sdk_agentic_chat(
     except Exception:
         logger.exception("Agent SDK query with MCP failed")
         yield _sse_event("error", {
-            "message": "The research assistant encountered an error. Please try again.",
+            "message": (
+                "The research assistant is unavailable right now. "
+                "Configure ANTHROPIC_API_KEY or Claude SDK auth and try again."
+            ),
             "retryable": True,
+            "error_type": "server",
+            "detail": "Claude Agent SDK/MCP execution failed.",
         })
         return
 

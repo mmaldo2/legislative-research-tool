@@ -27,6 +27,7 @@ interface ChatPanelProps {
   className?: string;
   placeholder?: string;
   emptyMessage?: string;
+  contextPrefix?: string;
   /** Callback when the assistant suggests language (blockquote pattern) */
   onSuggestion?: (text: string) => void;
 }
@@ -36,6 +37,7 @@ export function ChatPanel({
   className = "",
   placeholder = "Ask about legislation...",
   emptyMessage,
+  contextPrefix,
   onSuggestion,
 }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessageResponse[]>([]);
@@ -85,6 +87,9 @@ export function ChatPanel({
   const handleSend = useCallback(async (overrideText?: string) => {
     const text = (overrideText ?? input).trim();
     if (!text || loading) return;
+    const effectiveMessage = contextPrefix
+      ? `${contextPrefix}\n\nUser question: ${text}`
+      : text;
 
     const userMsg: ChatMessageResponse = {
       role: "user",
@@ -105,8 +110,8 @@ export function ChatPanel({
 
     try {
       const stream = workspaceId
-        ? streamWorkspaceChat(workspaceId, text, conversationId, controller.signal)
-        : streamChat(text, conversationId, controller.signal);
+        ? streamWorkspaceChat(workspaceId, effectiveMessage, conversationId, controller.signal)
+        : streamChat(effectiveMessage, conversationId, controller.signal);
 
       let accumulatedText = "";
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -204,7 +209,7 @@ export function ChatPanel({
       setLoading(false);
       abortControllerRef.current = null;
     }
-  }, [input, loading, workspaceId, conversationId, onSuggestion]);
+  }, [input, loading, workspaceId, conversationId, onSuggestion, contextPrefix]);
 
   const handleRetry = useCallback(() => {
     const lastMsg = lastUserMessageRef.current;

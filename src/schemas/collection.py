@@ -29,6 +29,10 @@ class CollectionItemUpdate(BaseModel):
 class CollectionItemResponse(BaseModel):
     id: int
     bill_id: str
+    bill_identifier: str | None = None
+    bill_title: str | None = None
+    jurisdiction_id: str | None = None
+    status: str | None = None
     notes: str | None = None
     added_at: datetime | None = None
 

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { compareBills, getBill } from "@/lib/api";
 import { ApiErrorBanner } from "@/components/api-error";
 import { Badge } from "@/components/ui/badge";
@@ -7,9 +8,10 @@ import { formatJurisdiction, formatStatus, statusVariant } from "@/lib/format";
 interface ComparisonViewProps {
   billIdA: string;
   billIdB: string;
+  collectionId?: string;
 }
 
-export async function ComparisonView({ billIdA, billIdB }: ComparisonViewProps) {
+export async function ComparisonView({ billIdA, billIdB, collectionId }: ComparisonViewProps) {
   let billA, billB, comparison;
   try {
     [billA, billB, comparison] = await Promise.all([
@@ -28,28 +30,42 @@ export async function ComparisonView({ billIdA, billIdB }: ComparisonViewProps) 
 
   return (
     <div className="space-y-6">
-      {/* Bill headers side by side */}
       <div className="grid gap-4 md:grid-cols-2">
-        {[billA, billB].map((bill) => (
-          <Card key={bill.id}>
-            <CardHeader>
-              <div className="flex items-center gap-2 flex-wrap mb-1">
-                <Badge variant="outline" className="font-mono text-xs">
-                  {bill.identifier}
-                </Badge>
-                <Badge variant="secondary" className="text-xs">
-                  {formatJurisdiction(bill.jurisdiction_id)}
-                </Badge>
-                {bill.status && (
-                  <Badge variant={statusVariant(bill.status)} className="text-xs">
-                    {formatStatus(bill.status)}
+        {[billA, billB].map((bill) => {
+          const billHref = collectionId
+            ? `/bills/${encodeURIComponent(bill.id)}?collection_id=${collectionId}`
+            : `/bills/${encodeURIComponent(bill.id)}`;
+          return (
+            <Card key={bill.id}>
+              <CardHeader>
+                <div className="mb-1 flex items-center gap-2 flex-wrap">
+                  <Badge variant="outline" className="font-mono text-xs">
+                    {bill.identifier}
                   </Badge>
-                )}
-              </div>
-              <CardTitle className="text-base">{bill.title}</CardTitle>
-            </CardHeader>
-          </Card>
-        ))}
+                  <Badge variant="secondary" className="text-xs">
+                    {formatJurisdiction(bill.jurisdiction_id)}
+                  </Badge>
+                  {bill.status && (
+                    <Badge variant={statusVariant(bill.status)} className="text-xs">
+                      {formatStatus(bill.status)}
+                    </Badge>
+                  )}
+                </div>
+                <CardTitle className="text-base">{bill.title}</CardTitle>
+                <div className="mt-3 flex gap-2">
+                  <Link href={billHref} className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent">
+                    Open Bill
+                  </Link>
+                  {collectionId && (
+                    <Link href={`/collections/${collectionId}`} className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent">
+                      Back to Investigation
+                    </Link>
+                  )}
+                </div>
+              </CardHeader>
+            </Card>
+          );
+        })}
       </div>
 
       {/* Similarity score */}

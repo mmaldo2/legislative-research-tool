@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.api.deps import get_anthropic_client, get_session, limiter
+from src.api.deps import get_agentic_client, get_llm_client, get_session, limiter
 from src.database import async_session_factory
 from src.llm.harness import LLMHarness
 from src.llm.prompts import research_assistant_v1
@@ -397,6 +397,13 @@ _TOOL_HANDLERS: dict[str, _ToolHandler] = {
     "get_govinfo_document": _tool_get_govinfo_document,
 }
 
+_HARNESS_REQUIRED_TOOLS = {
+    "analyze_version_diff",
+    "analyze_constitutional",
+    "analyze_patterns",
+    "predict_bill_passage",
+}
+
 
 async def execute_tool(
     tool_name: str,
@@ -408,8 +415,8 @@ async def execute_tool(
     handler = _TOOL_HANDLERS.get(tool_name)
     if handler is None:
         return json.dumps({"error": f"Unknown tool: {tool_name}"})
-    if harness is None:
-        harness = LLMHarness(db_session=db, client=get_anthropic_client())
+    if harness is None and tool_name in _HARNESS_REQUIRED_TOOLS:
+        harness = LLMHarness(db_session=db, client=get_llm_client())
     return await handler(arguments, db, harness)
 
 
@@ -482,11 +489,12 @@ async def chat(
 
     # 3. Build message history from conversation (with budget trimming)
     messages: list[dict] = []
-    for msg in conversation.messages:
-        if msg.role == "user":
-            messages.append({"role": "user", "content": msg.content})
-        elif msg.role == "assistant":
-            messages.append({"role": "assistant", "content": msg.content})
+    if req.conversation_id:
+        for msg in conversation.messages:
+            if msg.role == "user":
+                messages.append({"role": "user", "content": msg.content})
+            elif msg.role == "assistant":
+                messages.append({"role": "assistant", "content": msg.content})
 
     # Commit user message and release DB connection before agentic loop
     conversation_id = conversation.id
@@ -495,7 +503,10 @@ async def chat(
     # 4. Run agentic loop — no DB connection held during LLM calls
     from src.services.chat_service import HISTORY_CHAR_BUDGET, run_agentic_chat, trim_history
 
-    client = get_anthropic_client()
+    try:
+        client = get_agentic_client()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     trimmed = trim_history(messages, HISTORY_CHAR_BUDGET)
 
     final_text, all_tool_calls = await run_agentic_chat(
@@ -601,7 +612,10 @@ async def chat_stream(
         trim_history,
     )
 
-    client = get_anthropic_client()
+    try:
+        client = get_agentic_client()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     trimmed = trim_history(messages, HISTORY_CHAR_BUDGET)
     use_sdk = isinstance(client, ClaudeSDKClient)
 

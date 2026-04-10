@@ -438,6 +438,10 @@ export interface CollectionResponse {
 export interface CollectionItemResponse {
   id: number;
   bill_id: string;
+  bill_identifier: string | null;
+  bill_title: string | null;
+  jurisdiction_id: string | null;
+  status: string | null;
   notes: string | null;
   added_at: string | null;
 }

@@ -17,12 +17,14 @@ interface SearchFormProps {
   defaultQuery: string;
   defaultJurisdiction: string;
   defaultMode: string;
+  collectionId?: number;
 }
 
 export function SearchForm({
   defaultQuery,
   defaultJurisdiction,
   defaultMode,
+  collectionId,
 }: SearchFormProps) {
   const router = useRouter();
   const [query, setQuery] = useState(defaultQuery);
@@ -37,6 +39,7 @@ export function SearchForm({
     params.set("q", query.trim());
     if (jurisdiction) params.set("jurisdiction", jurisdiction);
     if (mode && mode !== "hybrid") params.set("mode", mode);
+    if (collectionId) params.set("collection_id", String(collectionId));
     params.set("page", "1");
     router.push(`/search?${params.toString()}`);
   }

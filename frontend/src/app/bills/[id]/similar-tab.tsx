@@ -6,9 +6,10 @@ import { formatJurisdiction, truncate } from "@/lib/format";
 
 interface SimilarTabProps {
   billId: string;
+  collectionId?: string;
 }
 
-export async function SimilarTab({ billId }: SimilarTabProps) {
+export async function SimilarTab({ billId, collectionId }: SimilarTabProps) {
   let data;
   try {
     data = await getSimilarBills(billId, { top_k: 10, min_score: 0.3 });
@@ -27,26 +28,36 @@ export async function SimilarTab({ billId }: SimilarTabProps) {
   return (
     <div className="space-y-3">
       {data.data.map((bill) => (
-        <Link key={bill.bill_id} href={`/bills/${encodeURIComponent(bill.bill_id)}`}>
-          <Card className="transition-colors hover:bg-accent/50">
-            <CardHeader className="gap-2">
-              <div className="flex items-center gap-2 flex-wrap">
-                <Badge variant="outline" className="font-mono text-xs">
-                  {bill.identifier}
-                </Badge>
-                <Badge variant="secondary" className="text-xs">
-                  {formatJurisdiction(bill.jurisdiction_id)}
-                </Badge>
-                <span className="ml-auto text-xs text-muted-foreground">
-                  {(bill.similarity_score * 100).toFixed(0)}% similar
-                </span>
-              </div>
-              <CardTitle className="text-base leading-snug">
-                {truncate(bill.title, 200)}
-              </CardTitle>
-            </CardHeader>
-          </Card>
-        </Link>
+        <div key={bill.bill_id} className="space-y-2">
+          <Link href={collectionId ? `/bills/${encodeURIComponent(bill.bill_id)}?collection_id=${collectionId}` : `/bills/${encodeURIComponent(bill.bill_id)}`}>
+            <Card className="transition-colors hover:bg-accent/50">
+              <CardHeader className="gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <Badge variant="outline" className="font-mono text-xs">
+                    {bill.identifier}
+                  </Badge>
+                  <Badge variant="secondary" className="text-xs">
+                    {formatJurisdiction(bill.jurisdiction_id)}
+                  </Badge>
+                  <span className="ml-auto text-xs text-muted-foreground">
+                    {(bill.similarity_score * 100).toFixed(0)}% similar
+                  </span>
+                </div>
+                <CardTitle className="text-base leading-snug">
+                  {truncate(bill.title, 200)}
+                </CardTitle>
+              </CardHeader>
+            </Card>
+          </Link>
+          <div className="flex justify-end">
+            <Link
+              href={collectionId ? `/compare?a=${encodeURIComponent(billId)}&b=${encodeURIComponent(bill.bill_id)}&collection_id=${collectionId}` : `/compare?a=${encodeURIComponent(billId)}&b=${encodeURIComponent(bill.bill_id)}`}
+              className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent"
+            >
+              Compare with current bill
+            </Link>
+          </div>
+        </div>
       ))}
     </div>
   );

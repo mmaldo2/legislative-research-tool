@@ -7,6 +7,7 @@ import { getExportCsvUrl } from "@/lib/api";
 import { SearchForm } from "./search-form";
 import { SearchResults } from "./search-results";
 import { SaveSearchButton } from "./save-search-button";
+import { SearchContextBanner } from "./search-context-banner";
 
 export const metadata: Metadata = {
   title: "Search Bills | Legislative Research Tool",
@@ -23,6 +24,7 @@ export default async function SearchPage({
     typeof params.jurisdiction === "string" ? params.jurisdiction : "";
   const mode = parseSearchMode(params.mode);
   const page = parsePageParam(params.page);
+  const collectionId = typeof params.collection_id === "string" ? parseInt(params.collection_id, 10) : NaN;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
@@ -36,10 +38,12 @@ export default async function SearchPage({
           Saved Searches
         </Link>
       </div>
+      <SearchContextBanner collectionId={collectionId} />
       <SearchForm
         defaultQuery={q}
         defaultJurisdiction={jurisdiction}
         defaultMode={mode}
+        collectionId={collectionId}
       />
 
       {q && (
@@ -70,6 +74,7 @@ export default async function SearchPage({
             jurisdiction={jurisdiction || undefined}
             mode={mode}
             page={page}
+            collectionId={collectionId}
           />
         </Suspense>
       )}

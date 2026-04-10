@@ -3,9 +3,9 @@ import {
   Search,
   Building2,
   Bot,
-  FilePenLine,
-  BarChart3,
-  Shield,
+  FolderOpen,
+  FileText,
+  GitCompareArrows,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -13,46 +13,44 @@ import { Card, CardDescription, CardHeader, CardTitle } from "@/components/ui/ca
 export default function HomePage() {
   return (
     <div className="mx-auto max-w-5xl px-4 py-16">
-      {/* Hero */}
       <div className="flex flex-col items-center text-center">
         <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-xl bg-primary/10">
-          <FilePenLine className="h-8 w-8 text-primary" />
+          <FolderOpen className="h-8 w-8 text-primary" />
         </div>
         <h1 className="text-4xl font-bold tracking-tight sm:text-5xl">
-          The Policy Drafting IDE
+          The Policy Research Workspace
         </h1>
         <p className="mt-4 max-w-2xl text-lg text-muted-foreground">
-          Draft model legislation grounded in real legislative data, AI analysis,
-          and ML-powered predictions across 50 states and Congress. Research and
-          write in one integrated environment.
+          Search across jurisdictions, build investigations around the bills that matter,
+          compare legislative approaches, and generate grounded research outputs in one
+          environment.
         </p>
         <div className="mt-8 flex gap-3">
           <Button asChild size="lg">
-            <Link href="/composer">
-              <FilePenLine className="mr-2 h-4 w-4" />
-              Start Drafting
+            <Link href="/collections">
+              <FolderOpen className="mr-2 h-4 w-4" />
+              Open Investigations
             </Link>
           </Button>
           <Button asChild variant="outline" size="lg">
             <Link href="/search">
               <Search className="mr-2 h-4 w-4" />
-              Explore Research
+              Explore Search
             </Link>
           </Button>
         </div>
       </div>
 
-      {/* How it works — Composer workflow */}
       <div className="mt-20">
         <h2 className="mb-8 text-center text-2xl font-semibold tracking-tight">
           How It Works
         </h2>
         <div className="grid gap-4 sm:grid-cols-4">
           {[
-            { step: "1", title: "Select Precedents", desc: "Choose real bills as the foundation for your draft" },
-            { step: "2", title: "Generate Outline", desc: "AI synthesizes a jurisdiction-aware bill structure" },
-            { step: "3", title: "Draft & Analyze", desc: "Compose sections with AI, analyze for constitutional risks" },
-            { step: "4", title: "Research & Refine", desc: "Ask the research assistant questions as you write" },
+            { step: "1", title: "Start an Investigation", desc: "Create a working set for a policy question or issue area" },
+            { step: "2", title: "Search Across Jurisdictions", desc: "Find relevant bills, versions, and analogs across states and Congress" },
+            { step: "3", title: "Compare and Analyze", desc: "Use the copilot and comparison tools to understand substantive differences" },
+            { step: "4", title: "Generate a Research Output", desc: "Turn your working set into a memo, brief, or issue summary" },
           ].map((item) => (
             <div key={item.step} className="flex flex-col items-center text-center p-4">
               <div className="mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-primary text-primary-foreground font-bold text-sm">
@@ -65,37 +63,44 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Feature cards — reordered: Composer first */}
       <div className="mt-16 grid gap-6 sm:grid-cols-2 xl:grid-cols-3">
         <Card>
           <CardHeader>
-            <FilePenLine className="mb-2 h-8 w-8 text-primary" />
-            <CardTitle>Policy Composer</CardTitle>
+            <FolderOpen className="mb-2 h-8 w-8 text-primary" />
+            <CardTitle>Investigations</CardTitle>
             <CardDescription>
-              Build jurisdiction-aware drafting workspaces from precedent bills.
-              AI-generated outlines, section-by-section composition, constitutional
-              analysis, and an embedded research assistant.
+              Build working sets of relevant bills around a policy question, keep notes,
+              and return to the same investigation as your research evolves.
+            </CardDescription>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader>
+            <GitCompareArrows className="mb-2 h-8 w-8 text-primary" />
+            <CardTitle>Cross-Jurisdiction Comparison</CardTitle>
+            <CardDescription>
+              Compare similar bills, inspect version changes, and surface the differences
+              that actually matter across states and sessions.
             </CardDescription>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader>
             <Bot className="mb-2 h-8 w-8 text-primary" />
-            <CardTitle>Research Assistant</CardTitle>
+            <CardTitle>Grounded Research Assistant</CardTitle>
             <CardDescription>
-              10-tool agentic assistant that searches bills, analyzes constitutionality,
-              detects cross-jurisdictional patterns, and suggests statutory language
-              grounded in real precedents.
+              Use a tool-backed assistant to search bills, inspect details, find analogs,
+              and answer follow-up questions over your active research context.
             </CardDescription>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader>
-            <BarChart3 className="mb-2 h-8 w-8 text-primary" />
-            <CardTitle>Bill Outcome Prediction</CardTitle>
+            <FileText className="mb-2 h-8 w-8 text-primary" />
+            <CardTitle>Research Outputs</CardTitle>
             <CardDescription>
-              ML stacking ensemble (0.997 AUROC) trained on 119K bills predicts committee
-              passage probability. Top contributing factors shown per bill.
+              Turn a search or investigation into a memo, comparative brief, or issue
+              summary without leaving the workspace.
             </CardDescription>
           </CardHeader>
         </Card>
@@ -104,28 +109,18 @@ export default function HomePage() {
             <Search className="mb-2 h-8 w-8 text-primary" />
             <CardTitle>Hybrid Search</CardTitle>
             <CardDescription>
-              Keyword + semantic search powered by BM25 and legal embeddings
-              with Reciprocal Rank Fusion across all 50 states and Congress.
-            </CardDescription>
-          </CardHeader>
-        </Card>
-        <Card>
-          <CardHeader>
-            <Shield className="mb-2 h-8 w-8 text-primary" />
-            <CardTitle>Constitutional Analysis</CardTitle>
-            <CardDescription>
-              AI-powered analysis of First Amendment, Due Process, Equal Protection,
-              Commerce Clause, and preemption concerns for any bill or draft.
+              Search across all 50 states and Congress with keyword and semantic retrieval
+              fused into one ranked result set.
             </CardDescription>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader>
             <Building2 className="mb-2 h-8 w-8 text-primary" />
-            <CardTitle>50-State Coverage</CardTitle>
+            <CardTitle>50-State Legislative Coverage</CardTitle>
             <CardDescription>
-              Federal and all 50 state legislatures with bill text, sponsors,
-              actions, votes, and committee hearings.
+              Federal and state bills with text, sponsors, actions, versions, and related
+              legislative context ready for deeper investigation.
             </CardDescription>
           </CardHeader>
         </Card>

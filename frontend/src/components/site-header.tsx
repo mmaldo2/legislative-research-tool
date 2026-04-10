@@ -16,17 +16,26 @@ import {
   FilePenLine,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Sheet, SheetContent, SheetTrigger, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
-const navItems = [
+const primaryNavItems = [
+  { href: "/collections", label: "Investigations", icon: FolderOpen },
   { href: "/search", label: "Search", icon: Search },
+  { href: "/assistant", label: "Assistant", icon: Bot },
+];
+
+const secondaryNavItems = [
+  { href: "/reports", label: "Reports", icon: FileText },
+  { href: "/composer", label: "Composer", icon: FilePenLine },
   { href: "/jurisdictions", label: "Jurisdictions", icon: Building2 },
   { href: "/legislators", label: "Legislators", icon: Users },
-  { href: "/collections", label: "Collections", icon: FolderOpen },
-  { href: "/composer", label: "Composer", icon: FilePenLine },
-  { href: "/reports", label: "Reports", icon: FileText },
-  { href: "/assistant", label: "Assistant", icon: Bot },
 ];
 
 export function SiteHeader() {
@@ -42,9 +51,8 @@ export function SiteHeader() {
           <span className="hidden sm:inline">LegisResearch</span>
         </Link>
 
-        {/* Desktop nav */}
         <nav className="hidden md:flex md:items-center md:gap-1">
-          {navItems.map((item) => (
+          {primaryNavItems.map((item) => (
             <Link
               key={item.href}
               href={item.href}
@@ -59,6 +67,23 @@ export function SiteHeader() {
               {item.label}
             </Link>
           ))}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="text-muted-foreground">
+                More
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start">
+              {secondaryNavItems.map((item) => (
+                <DropdownMenuItem key={item.href} asChild>
+                  <Link href={item.href} className="flex items-center gap-2">
+                    <item.icon className="h-4 w-4" />
+                    {item.label}
+                  </Link>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </nav>
 
         <div className="flex-1" />
@@ -74,7 +99,7 @@ export function SiteHeader() {
           <SheetContent side="right" className="w-64">
             <SheetTitle className="sr-only">Navigation</SheetTitle>
             <nav className="mt-6 flex flex-col gap-2">
-              {navItems.map((item) => (
+              {[...primaryNavItems, ...secondaryNavItems].map((item) => (
                 <Link
                   key={item.href}
                   href={item.href}

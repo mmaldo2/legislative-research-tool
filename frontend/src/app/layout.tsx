@@ -14,9 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Legislative Research Tool",
+  title: "Cursor for Public Policy",
   description:
-    "AI-native legislative research platform for policy researchers and advocacy organizations.",
+    "Investigation-driven legislative research workspace for policy researchers, advocates, and analysts.",
 };
 
 export default function RootLayout({
@@ -32,7 +32,7 @@ export default function RootLayout({
         <SiteHeader />
         <main className="flex-1">{children}</main>
         <footer className="border-t py-4 text-center text-sm text-muted-foreground">
-          Legislative Research Tool &mdash; AI-native policy analysis
+          Cursor for Public Policy &mdash; investigation-driven policy research
         </footer>
       </body>
     </html>

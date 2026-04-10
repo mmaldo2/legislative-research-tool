@@ -3,6 +3,8 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://legis:legis_dev@localhost:5432/legis"
+    llm_provider: str = "openai"  # openai | anthropic | claude-sdk
+    openai_api_key: str = ""
     anthropic_api_key: str = ""
     anthropic_auth_token: str = ""  # OAuth token (subscription auth via claude login)
     voyage_api_key: str = ""
@@ -16,8 +18,8 @@ class Settings(BaseSettings):
     webhook_encryption_key: str = ""  # Fernet key for encrypting webhook secrets at rest
 
     # LLM defaults
-    summary_model: str = "claude-sonnet-4-6"
-    classify_model: str = "claude-haiku-4-5"
+    summary_model: str = "gpt-4o-mini"
+    classify_model: str = "gpt-4o-mini"
 
     # Search
     bm25_max_corpus: int = 100_000  # Max bills to load into BM25 index

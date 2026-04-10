@@ -11,6 +11,7 @@ interface BillCardProps {
   status: string | null;
   score?: number;
   snippet?: string | null;
+  collectionId?: number;
 }
 
 export function BillCard({
@@ -21,9 +22,14 @@ export function BillCard({
   status,
   score,
   snippet,
+  collectionId,
 }: BillCardProps) {
+  const href = collectionId
+    ? `/bills/${encodeURIComponent(id)}?collection_id=${collectionId}`
+    : `/bills/${encodeURIComponent(id)}`;
+
   return (
-    <Link href={`/bills/${encodeURIComponent(id)}`}>
+    <Link href={href}>
       <Card className="transition-colors hover:bg-accent/50">
         <CardHeader className="gap-2">
           <div className="flex items-center gap-2 flex-wrap">

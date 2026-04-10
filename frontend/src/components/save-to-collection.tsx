@@ -69,7 +69,7 @@ export function SaveToCollection({ billId }: SaveToCollectionProps) {
           ) : (
             <Bookmark className="mr-1.5 h-4 w-4" />
           )}
-          {saved ? "Saved" : "Save"}
+          {saved ? "Added" : "Add to Investigation"}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent>
@@ -85,7 +85,7 @@ export function SaveToCollection({ billId }: SaveToCollectionProps) {
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleCreateAndAdd()}
-              placeholder="Name..."
+              placeholder="Investigation name..."
               className="h-8 text-sm"
               autoFocus
             />
@@ -101,7 +101,7 @@ export function SaveToCollection({ billId }: SaveToCollectionProps) {
         ) : (
           <DropdownMenuItem onClick={() => setShowNewInput(true)}>
             <Plus className="mr-1.5 h-4 w-4" />
-            New collection...
+            New investigation...
           </DropdownMenuItem>
         )}
       </DropdownMenuContent>

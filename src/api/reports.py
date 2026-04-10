@@ -72,14 +72,24 @@ async def generate_report(
     report_key = f"report:{req.query}:{req.jurisdiction or 'all'}:{req.max_bills}"
     report_id = hashlib.sha256(report_key.encode()).hexdigest()[:16]
 
-    output = await harness.generate_report(
-        report_id=report_id,
-        query=req.query,
-        bills_text=bills_text,
-        bill_count=len(bills),
-        jurisdiction_count=len(jurisdictions),
-        jurisdiction_filter=req.jurisdiction,
-    )
+    try:
+        output = await harness.generate_report(
+            report_id=report_id,
+            query=req.query,
+            bills_text=bills_text,
+            bill_count=len(bills),
+            jurisdiction_count=len(jurisdictions),
+            jurisdiction_filter=req.jurisdiction,
+        )
+    except Exception as exc:
+        logger.exception("Report generation failed")
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "LLM backend unavailable. Configure OPENAI_API_KEY or choose another explicit "
+                "LLM_PROVIDER before generating reports."
+            ),
+        ) from exc
 
     await db.commit()
     return output

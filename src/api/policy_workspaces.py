@@ -11,7 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.api.deps import get_anthropic_client, get_llm_harness, get_session, limiter
+from src.api.deps import get_agentic_client, get_llm_client, get_llm_harness, get_session, limiter
 from src.database import async_session_factory
 from src.llm.harness import LLMHarness
 from src.models.conversation import Conversation, ConversationMessage
@@ -753,7 +753,10 @@ async def workspace_chat(
     await db.commit()
 
     # 6. Run agentic loop (no DB connection held)
-    client = get_anthropic_client()
+    try:
+        client = get_agentic_client()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     trimmed = trim_history(messages, HISTORY_CHAR_BUDGET)
 
     final_text, all_tool_calls = await run_agentic_chat(
@@ -874,7 +877,10 @@ async def workspace_chat_stream(
     await db.commit()
 
     # 3. Stream agentic loop (no DB held)
-    client = get_anthropic_client()
+    try:
+        client = get_agentic_client()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     trimmed = trim_history(messages, HISTORY_CHAR_BUDGET)
     use_sdk = isinstance(client, ClaudeSDKClient)
 
@@ -954,7 +960,7 @@ async def compose_policy_section_stream(
             action_type=body.action_type,
             instruction_text=body.instruction_text,
             selected_text=body.selected_text,
-            client=get_anthropic_client(),
+            client=get_llm_client(),
         )
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=str(exc)) from exc

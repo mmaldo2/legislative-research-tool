@@ -1,5 +1,7 @@
 import { Suspense } from "react";
+import Link from "next/link";
 import type { Metadata } from "next";
+import CompareClientPage from "./page-client";
 import { ComparisonView } from "./comparison-view";
 
 export const metadata: Metadata = {
@@ -9,27 +11,35 @@ export const metadata: Metadata = {
 export default async function ComparePage({
   searchParams,
 }: {
-  searchParams: Promise<{ a?: string; b?: string }>;
+  searchParams: Promise<{ a?: string; b?: string; collection_id?: string }>;
 }) {
-  const { a, b } = await searchParams;
+  const { a, b, collection_id } = await searchParams;
 
   if (!a || !b) {
     return (
-      <div className="mx-auto max-w-5xl px-4 py-8">
-        <h1 className="text-2xl font-bold mb-4">Compare Bills</h1>
-        <p className="text-muted-foreground">
-          Select two bills to compare. Use the &ldquo;Similar Bills&rdquo; tab on any bill detail page
-          to find related legislation, then click &ldquo;Compare&rdquo; to see a side-by-side analysis.
-        </p>
-      </div>
+      <Suspense fallback={<div className="mx-auto max-w-5xl px-4 py-8 text-sm text-muted-foreground">Loading comparison…</div>}>
+        <CompareClientPage collectionIdParam={collection_id} />
+      </Suspense>
     );
   }
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-8">
-      <h1 className="text-2xl font-bold mb-6">Bill Comparison</h1>
+      {collection_id && (
+        <div className="mb-4">
+          <Link href={`/collections/${collection_id}`} className="inline-flex items-center rounded-md border px-3 py-1.5 text-sm font-medium transition-colors hover:bg-accent">
+            Back to Investigation
+          </Link>
+        </div>
+      )}
+      <h1 className="mb-2 text-2xl font-bold">Bill Comparison</h1>
+      <p className="mb-6 text-muted-foreground">
+        {collection_id
+          ? "Comparing bills from the active investigation. Use the results to refine your working set or continue into memo generation."
+          : "Compare two bills side by side and inspect their shared provisions, differences, and overall similarity."}
+      </p>
       <Suspense fallback={<ComparisonSkeleton />}>
-        <ComparisonView billIdA={a} billIdB={b} />
+        <ComparisonView billIdA={a} billIdB={b} collectionId={collection_id} />
       </Suspense>
     </div>
   );

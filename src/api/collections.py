@@ -1,15 +1,19 @@
 """Research collections CRUD endpoints — curate and organize bills."""
 
 from datetime import UTC, datetime
+import logging
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.api.deps import get_session, limiter
+from src.api.deps import get_llm_harness, get_session, limiter
+from src.llm.harness import LLMHarness
 from src.models.bill import Bill
+from src.models.bill_text import texts_without_markup
 from src.models.collection import Collection, CollectionItem
+from src.schemas.analysis import ReportOutput
 from src.schemas.collection import (
     CollectionCreate,
     CollectionDetailResponse,
@@ -21,6 +25,9 @@ from src.schemas.collection import (
     CollectionUpdate,
 )
 from src.schemas.common import MetaResponse
+from src.services.bill_service import extract_bill_text
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -40,7 +47,7 @@ async def _get_collection_or_404(
     """Fetch a collection by ID, enforcing ownership. Raises 404 or 403."""
     stmt = select(Collection).where(Collection.id == collection_id)
     if load_items:
-        stmt = stmt.options(selectinload(Collection.items))
+        stmt = stmt.options(selectinload(Collection.items).selectinload(CollectionItem.bill))
     result = await db.execute(stmt)
     collection = result.scalar_one_or_none()
     if not collection:
@@ -148,6 +155,10 @@ async def get_collection(
         CollectionItemResponse(
             id=item.id,
             bill_id=item.bill_id,
+            bill_identifier=item.bill.identifier if getattr(item, "bill", None) else None,
+            bill_title=item.bill.title if getattr(item, "bill", None) else None,
+            jurisdiction_id=item.bill.jurisdiction_id if getattr(item, "bill", None) else None,
+            status=item.bill.status if getattr(item, "bill", None) else None,
             notes=item.notes,
             added_at=item.added_at,
         )
@@ -209,6 +220,71 @@ async def delete_collection(
     collection = await _get_collection_or_404(db, collection_id, client_id)
     await db.delete(collection)
     await db.commit()
+
+
+@router.post("/collections/{collection_id}/report", response_model=ReportOutput)
+@limiter.limit("5/minute")
+async def generate_collection_report(
+    request: Request,
+    collection_id: int,
+    client_id: str = Depends(get_client_id),
+    db: AsyncSession = Depends(get_session),
+    harness: LLMHarness = Depends(get_llm_harness),
+) -> ReportOutput:
+    """Generate a research report from the bills currently saved in a collection."""
+    collection = await _get_collection_or_404(db, collection_id, client_id, load_items=True)
+    if not collection.items:
+        raise HTTPException(status_code=400, detail="Collection has no bills to analyze")
+
+    bill_ids = [item.bill_id for item in collection.items]
+    stmt = (
+        select(Bill)
+        .where(Bill.id.in_(bill_ids))
+        .options(texts_without_markup(Bill.texts))
+    )
+    result = await db.execute(stmt)
+    bills = result.scalars().all()
+    if not bills:
+        raise HTTPException(status_code=400, detail="No bill data available for this collection")
+
+    notes_by_bill_id = {item.bill_id: item.notes for item in collection.items}
+    jurisdictions: set[str] = set()
+    bill_parts: list[str] = []
+    for bill in bills:
+        jurisdictions.add(bill.jurisdiction_id)
+        item_notes = notes_by_bill_id.get(bill.id)
+        note_block = f"Research notes: {item_notes}\n" if item_notes else ""
+        text = extract_bill_text(bill)
+        bill_parts.append(
+            f"Bill: {bill.identifier}\n"
+            f"Jurisdiction: {bill.jurisdiction_id}\n"
+            f"Title: {bill.title}\n"
+            f"Status: {bill.status or 'unknown'}\n"
+            f"{note_block}"
+            f"Text:\n{text[:5000]}\n"
+        )
+
+    bills_text = "\n---\n".join(bill_parts)
+    try:
+        output = await harness.generate_report(
+            report_id=f"collection-{collection.id}",
+            query=collection.name,
+            bills_text=bills_text,
+            bill_count=len(bills),
+            jurisdiction_count=len(jurisdictions),
+            jurisdiction_filter=None,
+        )
+    except Exception as exc:
+        logger.exception("Collection report generation failed for collection %s", collection.id)
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "LLM backend unavailable. Configure OPENAI_API_KEY or choose another explicit "
+                "LLM_PROVIDER before generating investigation memos."
+            ),
+        ) from exc
+    await db.commit()
+    return output
 
 
 @router.post(

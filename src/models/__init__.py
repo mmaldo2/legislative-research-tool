@@ -8,6 +8,7 @@ from src.models.bill_embedding import BillEmbedding
 from src.models.bill_similarity import BillSimilarity
 from src.models.bill_text import BillText
 from src.models.collection import Collection, CollectionItem
+from src.models.collection_artifact import CollectionArtifact
 from src.models.conversation import Conversation, ConversationMessage
 from src.models.crs_report import CrsReport
 from src.models.ingestion_run import IngestionRun
@@ -54,6 +55,7 @@ __all__ = [
     "IngestionRun",
     "Collection",
     "CollectionItem",
+    "CollectionArtifact",
     "Conversation",
     "ConversationMessage",
     "CrsReport",
