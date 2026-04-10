@@ -3,7 +3,8 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://legis:legis_dev@localhost:5432/legis"
-    llm_provider: str = "openai"  # openai | anthropic | claude-sdk
+    llm_provider: str = "claude-sdk"  # openai | anthropic | claude-sdk
+    agentic_provider: str = "codex-local"  # codex-local | empty = use llm_provider path
     openai_api_key: str = ""
     anthropic_api_key: str = ""
     anthropic_auth_token: str = ""  # OAuth token (subscription auth via claude login)

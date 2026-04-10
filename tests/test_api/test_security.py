@@ -82,3 +82,19 @@ class TestAuthConfig:
 
         s = Settings()
         assert "localhost" in s.cors_origins
+
+    def test_llm_provider_defaults_to_claude_sdk(self, monkeypatch):
+        """Local/dev default should use the subscription-auth Claude SDK path."""
+        from src.config import Settings
+
+        monkeypatch.delenv("LLM_PROVIDER", raising=False)
+        s = Settings()
+        assert s.llm_provider == "claude-sdk"
+
+    def test_agentic_provider_defaults_to_codex_local(self, monkeypatch):
+        """Local/dev default should route assistant/report/compare flows through Codex."""
+        from src.config import Settings
+
+        monkeypatch.delenv("AGENTIC_PROVIDER", raising=False)
+        s = Settings()
+        assert s.agentic_provider == "codex-local"

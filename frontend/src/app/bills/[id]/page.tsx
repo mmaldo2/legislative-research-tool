@@ -88,7 +88,7 @@ export default async function BillDetailPage({
         <div className="flex items-start gap-3">
           <h1 className="flex-1 text-2xl font-bold leading-tight">{bill.title}</h1>
           <div className="flex shrink-0 items-center gap-2">
-            <SaveToCollection billId={id} />
+            <SaveToCollection billId={id} collectionId={collectionId ? Number(collectionId) : undefined} />
             <a
               href={getBillBriefUrl(id)}
               target="_blank"

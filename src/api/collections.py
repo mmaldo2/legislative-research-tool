@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.api.deps import get_llm_harness, get_session, limiter
+from src.config import settings
+from src.llm.codex_report_adapter import generate_report_via_codex
 from src.llm.harness import LLMHarness
 from src.models.bill import Bill
 from src.models.bill_text import texts_without_markup
@@ -266,21 +268,30 @@ async def generate_collection_report(
 
     bills_text = "\n---\n".join(bill_parts)
     try:
-        output = await harness.generate_report(
-            report_id=f"collection-{collection.id}",
-            query=collection.name,
-            bills_text=bills_text,
-            bill_count=len(bills),
-            jurisdiction_count=len(jurisdictions),
-            jurisdiction_filter=None,
-        )
+        if settings.agentic_provider.strip().lower() == "codex-local":
+            output = await generate_report_via_codex(
+                query=collection.name,
+                bills_text=bills_text,
+                bill_count=len(bills),
+                jurisdiction_count=len(jurisdictions),
+                source_label=f"collection-{collection.id}",
+            )
+        else:
+            output = await harness.generate_report(
+                report_id=f"collection-{collection.id}",
+                query=collection.name,
+                bills_text=bills_text,
+                bill_count=len(bills),
+                jurisdiction_count=len(jurisdictions),
+                jurisdiction_filter=None,
+            )
     except Exception as exc:
         logger.exception("Collection report generation failed for collection %s", collection.id)
         raise HTTPException(
             status_code=503,
             detail=(
-                "LLM backend unavailable. Configure OPENAI_API_KEY or choose another explicit "
-                "LLM_PROVIDER before generating investigation memos."
+                "LLM backend unavailable. Configure the selected LLM provider "
+                "before generating investigation memos."
             ),
         ) from exc
     await db.commit()

@@ -91,16 +91,9 @@ def get_llm_client() -> Any:
 def get_agentic_client() -> Any:
     """Return a client suitable for the tool-using chat/workspace flows.
 
-    Today those flows still depend on Anthropic-style tool use or the Claude SDK MCP loop.
-    OpenAI is intentionally not wired into that path yet.
+    Anthropic-compatible providers and the OpenAI compatibility adapter can both
+    power the current app-managed research loop.
     """
-    provider = settings.llm_provider.strip().lower()
-    if provider == "openai":
-        raise RuntimeError(
-            "Agentic chat/workspace flows are not yet wired for OPENAI. "
-            "Use LLM_PROVIDER=anthropic or LLM_PROVIDER=claude-sdk for those routes, "
-            "or keep using OpenAI for the broader analysis/reporting system."
-        )
     return get_llm_client()
 
 

@@ -7,6 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_llm_harness, get_session, limiter
+from src.config import settings
+from src.llm.codex_compare_adapter import generate_compare_via_codex
 from src.llm.harness import LLMHarness
 from src.models.bill import Bill
 from src.models.bill_text import texts_without_markup
@@ -119,15 +121,25 @@ async def compare_bills(
     bill_a_text = extract_bill_text(bill_a)
     bill_b_text = extract_bill_text(bill_b)
 
-    output = await harness.compare(
-        bill_id_a=bill_a.id,
-        bill_id_b=bill_b.id,
-        bill_a_text=bill_a_text,
-        bill_a_identifier=bill_a.identifier,
-        bill_a_title=bill_a.title,
-        bill_b_text=bill_b_text,
-        bill_b_identifier=bill_b.identifier,
-        bill_b_title=bill_b.title,
-    )
+    if settings.agentic_provider.strip().lower() == "codex-local":
+        output = await generate_compare_via_codex(
+            bill_a_identifier=bill_a.identifier,
+            bill_a_title=bill_a.title,
+            bill_a_text=bill_a_text,
+            bill_b_identifier=bill_b.identifier,
+            bill_b_title=bill_b.title,
+            bill_b_text=bill_b_text,
+        )
+    else:
+        output = await harness.compare(
+            bill_id_a=bill_a.id,
+            bill_id_b=bill_b.id,
+            bill_a_text=bill_a_text,
+            bill_a_identifier=bill_a.identifier,
+            bill_a_title=bill_a.title,
+            bill_b_text=bill_b_text,
+            bill_b_identifier=bill_b.identifier,
+            bill_b_title=bill_b.title,
+        )
     await db.commit()
     return output
