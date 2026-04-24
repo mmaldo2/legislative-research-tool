@@ -1,16 +1,36 @@
+# Python
 __pycache__/
 *.py[cod]
 *.egg-info/
 dist/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Local env and config
 .venv/
+.venv-*/
 venv/
 .env
+
+# Local data, exports, caches, and logs
 data/raw/
 data/exports/
 *.db
-.ruff_cache/
-.pytest_cache/
-.mypy_cache/
+*.log
 .npm-cache/
 .tmp/
 src/prediction/models/
+
+# Hermes/local agent state
+.hermes/
+
+# LegalLM generated model artifacts and bulky run outputs
+legal_lm/results/**
+!legal_lm/results/
+!legal_lm/results/student_runs/
+!legal_lm/results/student_runs/preserved_candidates/
+!legal_lm/results/student_runs/preserved_candidates/**
+!legal_lm/results/teacher_runs/
+!legal_lm/results/teacher_runs/.gitkeep

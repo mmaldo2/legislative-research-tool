@@ -1,0 +1,182 @@
+{
+  "adapter_path": "legal_lm/results/student_runs/family4_floor10_v1/qwen3_4b_2507_lora/adapter",
+  "base_mean_answer_score": 1.042,
+  "base_meta_reasoning_count": 0,
+  "base_predictions_path": "legal_lm/results/student_runs/family4_floor10_v1/base_qwen3_4b_2507_predictions_annotated.jsonl",
+  "base_total_answer_score": 6.25,
+  "fine_tuned_mean_answer_score": 1.75,
+  "fine_tuned_meta_reasoning_count": 6,
+  "fine_tuned_predictions_path": "legal_lm/results/student_runs/family4_floor10_v1/fine_tuned_qwen3_4b_2507_predictions_annotated.jsonl",
+  "fine_tuned_total_answer_score": 10.5,
+  "full_credit_rows": [
+    "rule-eval-001",
+    "rule-eval-003",
+    "rule-eval-006"
+  ],
+  "material_remaining_gaps": [
+    "rule-eval-002: preliminary-injunction answer omits public interest and says three factors.",
+    "rule-eval-004: APA answer omits final rule concise general statement of basis and purpose.",
+    "rule-eval-005: consideration answer should explicitly mention legal value on both sides.",
+    "fine-tuned rule_reasoning reasoning lines are meta-rubric in all 6 rows."
+  ],
+  "max_total_answer_score": 12.0,
+  "model_name_or_path": "Qwen/Qwen3-4B-Instruct-2507",
+  "partial_credit_rows": [
+    "rule-eval-002",
+    "rule-eval-004",
+    "rule-eval-005"
+  ],
+  "recommendation": "Do not bless rule_reasoning as final yet. Keep Qwen3 as the leading student candidate, but create a cleaned rule-reasoning-target v2 and retrain/rerun before calling open-ended answers healthy.",
+  "reviewed_at": "2026-04-23T19:36:21-04:00",
+  "reviewer": "Hermes Devin / OpenAI Codex gpt-5.5 manual rubric pass",
+  "root_cause_evidence": {
+    "fine_tuned_rule_reasoning_meta_style_generated_rows": 6,
+    "interpretation": "The model learned the meta-rubric reasoning style from rule_reasoning teacher_reasoning_short targets.",
+    "student_pilot_dev_meta_style_reasoning_rows": 2,
+    "student_pilot_dev_rule_reasoning_rows": 2,
+    "student_pilot_train_meta_style_reasoning_rows": 9,
+    "student_pilot_train_rule_reasoning_rows": 10
+  },
+  "row_count": 6,
+  "rows": [
+    {
+      "base_answer_score": 1.5,
+      "base_findings": "Correct substantial-outweighing standard and several central dangers; narrower than reference because it omits undue delay, wasting time, and cumulative evidence.",
+      "base_parsed_answer": "A court may exclude relevant evidence under Rule 403 if its probative value is substantially outweighed by the risk of unfair prejudice, confusion of the issues, or misleading the jury.",
+      "base_reasoning": "Rule 403 of the Federal Rules of Evidence allows a court to exclude relevant evidence when its admission would create undue prejudice, confuse the issues, or mislead the jury, even if the evidence is otherwise relevant. The decision must be based on a balancing test between relevance and potential harm to the trial's fairness.",
+      "base_reasoning_is_meta": false,
+      "delta": 0.5,
+      "doctrine": "Evidence",
+      "fine_tuned_answer_score": 2.0,
+      "fine_tuned_findings": "Answer matches the reference rule and includes the main listed Rule 403 dangers.",
+      "fine_tuned_parsed_answer": "A court may exclude relevant evidence if its probative value is substantially outweighed by dangers such as unfair prejudice, confusing the issues, misleading the jury, undue delay, wasting time, or needlessly presenting cumulative evidence.",
+      "fine_tuned_reasoning": "The answer should quote the specific Rule 403 exception and keep reasoning concise and legally grounded.",
+      "fine_tuned_reasoning_is_meta": true,
+      "id": "rule-eval-001",
+      "max_answer_score": 2.0,
+      "prompt": "Under Rule 403, when may a court keep out relevant evidence?",
+      "reference_answer": "A court may exclude relevant evidence if its probative value is substantially outweighed by dangers such as unfair prejudice, confusing the issues, misleading the jury, undue delay, wasting time, or needlessly presenting cumulative evidence.",
+      "remaining_issue": "Fine-tuned reasoning is meta-rubric text rather than an explanation.",
+      "rubric_points": [
+        "States the substantial-outweighing standard",
+        "Mentions the principal Rule 403 dangers"
+      ]
+    },
+    {
+      "base_answer_score": 1.0,
+      "base_findings": "Names likelihood of success and irreparable injury but omits equities and public interest.",
+      "base_parsed_answer": "A showing of both irreparable injury and a likelihood of success on the merits.",
+      "base_reasoning": "Under the standard established in *Perry v. United States*, a plaintiff must demonstrate that they will suffer irreparable harm absent a preliminary injunction and that there is a substantial probability that they will succeed on the merits of their claim. This ensures that the injunction is granted only when necessary and justified by the balance of equities.",
+      "base_reasoning_is_meta": false,
+      "delta": 0.5,
+      "doctrine": "Civil Procedure",
+      "fine_tuned_answer_score": 1.5,
+      "fine_tuned_findings": "Adds balance of equities but still omits the public-interest factor and incorrectly describes the standard as three factors.",
+      "fine_tuned_parsed_answer": "A preliminary injunction is generally granted when a party shows a likelihood of success on the merits, a likelihood of irreparable harm, and a balance of equities favoring the moving party.",
+      "fine_tuned_reasoning": "The answer should identify the three traditional preliminary injunction factors.",
+      "fine_tuned_reasoning_is_meta": true,
+      "id": "rule-eval-002",
+      "max_answer_score": 2.0,
+      "prompt": "What showing is needed for a preliminary injunction in federal court?",
+      "reference_answer": "A plaintiff generally must show a likelihood of success on the merits, a likelihood of irreparable harm without preliminary relief, that the balance of equities favors relief, and that an injunction is in the public interest.",
+      "remaining_issue": "Needs public interest and should not call the test three-factor.",
+      "rubric_points": [
+        "Lists the core preliminary-injunction factors",
+        "Includes irreparable harm and likelihood of success"
+      ]
+    },
+    {
+      "base_answer_score": 0.5,
+      "base_findings": "Confuses strict scrutiny with intermediate scrutiny by using substantially related / important interest, though it mentions least restrictive means.",
+      "base_parsed_answer": "Under strict scrutiny, the government must show that the law is substantially related to an important governmental interest and is the least restrictive means of achieving that interest.",
+      "base_reasoning": "Strict scrutiny is the highest level of judicial review applied to laws that significantly affect fundamental rights or involve suspect classifications. The government must meet a high burden by demonstrating both the importance of the interest and the minimal impact on individual rights.",
+      "base_reasoning_is_meta": false,
+      "delta": 1.5,
+      "doctrine": "Constitutional Law",
+      "fine_tuned_answer_score": 2.0,
+      "fine_tuned_findings": "Correctly states compelling governmental interest and narrow tailoring.",
+      "fine_tuned_parsed_answer": "Under strict scrutiny, the government must show that the challenged law serves a compelling governmental interest and is narrowly tailored to achieve that interest.",
+      "fine_tuned_reasoning": "The answer should identify both the compelling interest requirement and the narrowly tailored requirement.",
+      "fine_tuned_reasoning_is_meta": true,
+      "id": "rule-eval-003",
+      "max_answer_score": 2.0,
+      "prompt": "Under strict scrutiny, what must the government show?",
+      "reference_answer": "To satisfy strict scrutiny, the government generally must show that the challenged law or action serves a compelling governmental interest and is narrowly tailored to achieve that interest using the least restrictive means or an equally exacting fit.",
+      "remaining_issue": "Fine-tuned answer is good; reasoning remains meta-rubric.",
+      "rubric_points": [
+        "States the compelling-interest requirement",
+        "States the narrow-tailoring requirement"
+      ]
+    },
+    {
+      "base_answer_score": 1.5,
+      "base_findings": "Correctly names notice, public comment, and consideration/finalization, and keeps the legislative-rule frame, but omits the concise basis-and-purpose statement.",
+      "base_parsed_answer": "Under the Administrative Procedure Act (APA), legislative rules generally require notice and comment procedures, including publication of a proposed rule in the Federal Register, providing an opportunity for public comment, and considering those comments before finalizing the rule.",
+      "base_reasoning": "The APA mandates that agencies follow notice-and-comment procedures for most rules to ensure transparency, public participation, and judicial review, as outlined in 5 U.S.C. \u00a7 553. This applies to legislative rules, which are rules adopted by a legislative body or agency under its authority.",
+      "base_reasoning_is_meta": false,
+      "delta": 0.0,
+      "doctrine": "Administrative Law",
+      "fine_tuned_answer_score": 1.5,
+      "fine_tuned_findings": "Names NPRM, comment period, and final rule, but also omits the concise basis-and-purpose statement.",
+      "fine_tuned_parsed_answer": "Under the APA, notice-and-comment rulemaking generally requires a notice of proposed rulemaking, a comment period, and a final rule published in the Federal Register.",
+      "fine_tuned_reasoning": "The answer should identify the three standard notice-and-comment steps required by the APA for legislative rules.",
+      "fine_tuned_reasoning_is_meta": true,
+      "id": "rule-eval-004",
+      "max_answer_score": 2.0,
+      "prompt": "Under the APA, what notice-and-comment steps are generally required for legislative rules?",
+      "reference_answer": "For legislative rules, the Administrative Procedure Act generally requires an agency to publish notice of proposed rulemaking, give interested persons an opportunity to comment, and then issue a final rule with a concise general statement of basis and purpose, subject to certain exceptions.",
+      "remaining_issue": "Needs basis-and-purpose statement in the answer line.",
+      "rubric_points": [
+        "States the notice-and-comment core steps accurately",
+        "Makes clear the rule concerns legislative rules"
+      ]
+    },
+    {
+      "base_answer_score": 1.0,
+      "base_findings": "Recognizes exchange of value but does not state the bargained-for requirement clearly.",
+      "base_parsed_answer": "Consideration in contract law means something of value that is exchanged between parties, demonstrating mutual agreement and intent to be bound.",
+      "base_reasoning": "It is a fundamental element of a valid contract, ensuring that neither party is bound by a promise without giving something in return, thus preventing gratuitous or one-sided agreements.",
+      "base_reasoning_is_meta": false,
+      "delta": 0.5,
+      "doctrine": "Contracts",
+      "fine_tuned_answer_score": 1.5,
+      "fine_tuned_findings": "States bargained-for exchange of value; could be stronger by saying each party gives or promises legal value.",
+      "fine_tuned_parsed_answer": "Consideration is a bargained-for exchange of value between the parties.",
+      "fine_tuned_reasoning": "A legal answer should identify the bargained-for exchange of value between the parties.",
+      "fine_tuned_reasoning_is_meta": true,
+      "id": "rule-eval-005",
+      "max_answer_score": 2.0,
+      "prompt": "What does contract law mean by consideration?",
+      "reference_answer": "Consideration is a bargained-for exchange in which each party gives or promises something of legal value in return for the other's promise or performance.",
+      "remaining_issue": "Needs explicit legal value on both sides for a fully complete answer.",
+      "rubric_points": [
+        "States the bargained-for exchange concept",
+        "Mentions legal value on both sides"
+      ]
+    },
+    {
+      "base_answer_score": 0.75,
+      "base_findings": "Correct general direction but incorrectly includes later statements and does not clearly anchor the bar to prior/contemporaneous agreements and a final integrated writing.",
+      "base_parsed_answer": "The parol evidence rule generally bars the introduction of oral or written statements made before or after a written contract to contradict, modify, or add to the terms of the written agreement.",
+      "base_reasoning": "The rule applies to prevent inconsistent prior or subsequent statements from undermining the finality and clarity of a written contract, assuming the contract was fully integrated and executed with mutual assent.",
+      "base_reasoning_is_meta": false,
+      "delta": 1.25,
+      "doctrine": "Contracts",
+      "fine_tuned_answer_score": 2.0,
+      "fine_tuned_findings": "Correctly states prior or contemporaneous agreements, variation/contradiction, and final written integrated contract.",
+      "fine_tuned_parsed_answer": "The parol evidence rule generally bars the introduction of prior or contemporaneous agreements to vary or contradict a final written integrated contract.",
+      "fine_tuned_reasoning": "The answer should identify the rule's general effect and scope.",
+      "fine_tuned_reasoning_is_meta": true,
+      "id": "rule-eval-006",
+      "max_answer_score": 2.0,
+      "prompt": "In contract law, what does the parol evidence rule generally bar?",
+      "reference_answer": "The parol evidence rule generally bars the use of prior or contemporaneous extrinsic agreements to vary or contradict the terms of a final written agreement, subject to recognized exceptions.",
+      "remaining_issue": "Fine-tuned answer is strong; reasoning remains meta-rubric.",
+      "rubric_points": [
+        "States the final-written-agreement premise",
+        "States the bar on varying or contradicting with prior or contemporaneous terms"
+      ]
+    }
+  ],
+  "score_scale": "Manual answer-line rubric score, 0 to 2 per row. Reasoning style is tracked separately so meta-rubric reasoning does not hide answer-quality gains."
+}

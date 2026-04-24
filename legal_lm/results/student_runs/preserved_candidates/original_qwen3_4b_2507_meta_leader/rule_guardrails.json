@@ -1,0 +1,95 @@
+{
+  "issue_count": 8,
+  "known_gap_count": 2,
+  "meta_reasoning_count": 6,
+  "passed": false,
+  "row_issues": [
+    {
+      "doctrine": "Evidence",
+      "id": "rule-eval-001",
+      "issues": [
+        {
+          "key": "meta_rubric_reasoning",
+          "message": "Reasoning line is rubric/meta guidance rather than substantive legal reasoning."
+        }
+      ],
+      "parsed_answer": "A court may exclude relevant evidence if its probative value is substantially outweighed by dangers such as unfair prejudice, confusing the issues, misleading the jury, undue delay, wasting time, or needlessly presenting cumulative evidence.",
+      "prompt": "Under Rule 403, when may a court keep out relevant evidence?",
+      "reasoning": "The answer should quote the specific Rule 403 exception and keep reasoning concise and legally grounded."
+    },
+    {
+      "doctrine": "Civil Procedure",
+      "id": "rule-eval-002",
+      "issues": [
+        {
+          "key": "meta_rubric_reasoning",
+          "message": "Reasoning line is rubric/meta guidance rather than substantive legal reasoning."
+        },
+        {
+          "key": "missing_public_interest",
+          "message": "Preliminary-injunction answer should include the public-interest factor."
+        }
+      ],
+      "parsed_answer": "A preliminary injunction is generally granted when a party shows a likelihood of success on the merits, a likelihood of irreparable harm, and a balance of equities favoring the moving party.",
+      "prompt": "What showing is needed for a preliminary injunction in federal court?",
+      "reasoning": "The answer should identify the three traditional preliminary injunction factors."
+    },
+    {
+      "doctrine": "Constitutional Law",
+      "id": "rule-eval-003",
+      "issues": [
+        {
+          "key": "meta_rubric_reasoning",
+          "message": "Reasoning line is rubric/meta guidance rather than substantive legal reasoning."
+        }
+      ],
+      "parsed_answer": "Under strict scrutiny, the government must show that the challenged law serves a compelling governmental interest and is narrowly tailored to achieve that interest.",
+      "prompt": "Under strict scrutiny, what must the government show?",
+      "reasoning": "The answer should identify both the compelling interest requirement and the narrowly tailored requirement."
+    },
+    {
+      "doctrine": "Administrative Law",
+      "id": "rule-eval-004",
+      "issues": [
+        {
+          "key": "meta_rubric_reasoning",
+          "message": "Reasoning line is rubric/meta guidance rather than substantive legal reasoning."
+        },
+        {
+          "key": "missing_basis_and_purpose",
+          "message": "APA notice-and-comment answer should include a final rule with a basis-and-purpose statement or equivalent explanation."
+        }
+      ],
+      "parsed_answer": "Under the APA, notice-and-comment rulemaking generally requires a notice of proposed rulemaking, a comment period, and a final rule published in the Federal Register.",
+      "prompt": "Under the APA, what notice-and-comment steps are generally required for legislative rules?",
+      "reasoning": "The answer should identify the three standard notice-and-comment steps required by the APA for legislative rules."
+    },
+    {
+      "doctrine": "Contracts",
+      "id": "rule-eval-005",
+      "issues": [
+        {
+          "key": "meta_rubric_reasoning",
+          "message": "Reasoning line is rubric/meta guidance rather than substantive legal reasoning."
+        }
+      ],
+      "parsed_answer": "Consideration is a bargained-for exchange of value between the parties.",
+      "prompt": "What does contract law mean by consideration?",
+      "reasoning": "A legal answer should identify the bargained-for exchange of value between the parties."
+    },
+    {
+      "doctrine": "Contracts",
+      "id": "rule-eval-006",
+      "issues": [
+        {
+          "key": "meta_rubric_reasoning",
+          "message": "Reasoning line is rubric/meta guidance rather than substantive legal reasoning."
+        }
+      ],
+      "parsed_answer": "The parol evidence rule generally bars the introduction of prior or contemporaneous agreements to vary or contradict a final written integrated contract.",
+      "prompt": "In contract law, what does the parol evidence rule generally bar?",
+      "reasoning": "The answer should identify the rule's general effect and scope."
+    }
+  ],
+  "rule_reasoning_row_count": 6
+}

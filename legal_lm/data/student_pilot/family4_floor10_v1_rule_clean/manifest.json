@@ -1,0 +1,61 @@
+{
+  "artifact_hashes": {
+    "dev.jsonl": "69897b993369e5e4280a0940672fc721af5a5aec8e22a264c77b20f58ecd0906",
+    "dev_messages.jsonl": "03781c803345ba11814599fb036d6a9edf8ce2d7cb679d9f2ca6a0109609beab",
+    "rule_reasoning_reasoning_overrides.json": "47ec3de1dc93eff4c810eea25d6f842e80111c64a7c69c14a471ac8f6ac08946",
+    "test.jsonl": "f6fcc703244a1c8299d9a19858ef49ee119162de44d3c4aa3d9b541a1297d765",
+    "test_prompts.jsonl": "d63e4a3902d03712eb1274f23e8e1bf7db6424ee5bcb5490229435fd02272c0d",
+    "train.jsonl": "01398d1b8c78d0a37fe3ec3648960a625f12d7cac4763160f4e624f553861db8",
+    "train_messages.jsonl": "28d453b99dd2bccd222e1c0e87eb51181b8d6ddef04130aa027bfd4d0f58e5fb"
+  },
+  "base_dataset": "legal_lm/data/student_pilot/family4_floor10_v1",
+  "changed_rule_reasoning_ids": [
+    "rule-seed-001",
+    "rule-seed-002",
+    "rule-seed-003",
+    "rule-seed-004",
+    "rule-seed-007",
+    "rule-seed-013",
+    "rule-seed-018",
+    "rule-seed-021",
+    "rule-seed-025",
+    "rule-seed-026",
+    "rule-seed-028",
+    "rule-seed-030"
+  ],
+  "created_at": "2026-04-23T19:36:21-04:00",
+  "family_counts": {
+    "dev": {
+      "definition_classification": 2,
+      "policy_regulatory_qa": 2,
+      "rule_reasoning": 2,
+      "sara_entailment": 2
+    },
+    "test": {
+      "definition_classification": 6,
+      "policy_regulatory_qa": 6,
+      "rule_reasoning": 6,
+      "sara_entailment": 6
+    },
+    "train": {
+      "definition_classification": 10,
+      "policy_regulatory_qa": 10,
+      "rule_reasoning": 10,
+      "sara_entailment": 10
+    }
+  },
+  "purpose": "Non-destructive cleaned-target rerun for rule_reasoning: replace meta-rubric teacher_reasoning_short text with substantive legal reasoning while preserving prompts and answer labels.",
+  "source_artifact_hashes": {
+    "dev.jsonl": "9e304e5bd96780d61ace17a182074b9338bb7696d92f3321843545fb01b2d8de",
+    "dev_messages.jsonl": "ad0569ef0134a13af61cc7b20db3cbeeb47824fec833696a773be4215d6490c4",
+    "test.jsonl": "f6fcc703244a1c8299d9a19858ef49ee119162de44d3c4aa3d9b541a1297d765",
+    "test_prompts.jsonl": "d63e4a3902d03712eb1274f23e8e1bf7db6424ee5bcb5490229435fd02272c0d",
+    "train.jsonl": "36f14bd09f79544f2c94ad560164de4c5ef18cd58c43c7a28f536ec1fec513b2",
+    "train_messages.jsonl": "198ff0d4cf2b949e1eb225af885097806ac778069178a829e1c195c9ef1b6060"
+  },
+  "split_counts": {
+    "dev": 8,
+    "test": 24,
+    "train": 40
+  }
+}

@@ -1,0 +1,130 @@
+{
+  "artifact_hashes": {
+    "dev": "9e304e5bd96780d61ace17a182074b9338bb7696d92f3321843545fb01b2d8de",
+    "dev_messages": "ad0569ef0134a13af61cc7b20db3cbeeb47824fec833696a773be4215d6490c4",
+    "test": "f6fcc703244a1c8299d9a19858ef49ee119162de44d3c4aa3d9b541a1297d765",
+    "test_prompts": "d63e4a3902d03712eb1274f23e8e1bf7db6424ee5bcb5490229435fd02272c0d",
+    "train": "36f14bd09f79544f2c94ad560164de4c5ef18cd58c43c7a28f536ec1fec513b2",
+    "train_messages": "198ff0d4cf2b949e1eb225af885097806ac778069178a829e1c195c9ef1b6060"
+  },
+  "dev_selection_policy": {
+    "per_family": 2,
+    "selection": "prefer distinct closed-label answers when available; otherwise source-order head",
+    "source": "leftover curated source rows not present in the blessed train batch"
+  },
+  "family_counts": {
+    "dev": {
+      "definition_classification": 2,
+      "policy_regulatory_qa": 2,
+      "rule_reasoning": 2,
+      "sara_entailment": 2
+    },
+    "test": {
+      "definition_classification": 6,
+      "policy_regulatory_qa": 6,
+      "rule_reasoning": 6,
+      "sara_entailment": 6
+    },
+    "train": {
+      "definition_classification": 10,
+      "policy_regulatory_qa": 10,
+      "rule_reasoning": 10,
+      "sara_entailment": 10
+    }
+  },
+  "input_hashes": {
+    "source_pool": "0db59bdba52b8b7c280eb97a2e89977a9ac551bc969c01e018d7fb01b9809874",
+    "test_eval": "f6fcc703244a1c8299d9a19858ef49ee119162de44d3c4aa3d9b541a1297d765",
+    "train_batch": "36f14bd09f79544f2c94ad560164de4c5ef18cd58c43c7a28f536ec1fec513b2"
+  },
+  "input_paths": {
+    "source_pool": "legal_lm/data/sources/core_mixed_sources.jsonl",
+    "test_eval": "legal_lm/results/teacher_runs/core_mixed_family4_sara_floor10_v1/core_mixed_smoke_eval.jsonl",
+    "train_batch": "legal_lm/results/teacher_runs/core_mixed_family4_sara_floor10_v1/best_floor10_batch.jsonl"
+  },
+  "split_counts": {
+    "dev": 8,
+    "test": 24,
+    "train": 40
+  },
+  "split_ids": {
+    "dev": [
+      "def-src-004",
+      "def-src-015",
+      "policy-qa-src-001",
+      "policy-qa-src-006",
+      "rule-seed-002",
+      "rule-seed-004",
+      "sara-src-003",
+      "sara-src-008"
+    ],
+    "test": [
+      "rule-eval-001",
+      "def-eval-001",
+      "policy-qa-eval-001",
+      "sara-eval-001",
+      "rule-eval-002",
+      "def-eval-002",
+      "policy-qa-eval-002",
+      "sara-eval-002",
+      "rule-eval-003",
+      "def-eval-003",
+      "policy-qa-eval-003",
+      "sara-eval-003",
+      "rule-eval-004",
+      "def-eval-004",
+      "policy-qa-eval-004",
+      "sara-eval-004",
+      "rule-eval-005",
+      "def-eval-005",
+      "policy-qa-eval-005",
+      "sara-eval-005",
+      "rule-eval-006",
+      "def-eval-006",
+      "policy-qa-eval-006",
+      "sara-eval-006"
+    ],
+    "train": [
+      "def-src-008",
+      "def-src-003",
+      "def-src-013",
+      "def-src-011",
+      "def-src-001",
+      "def-src-002",
+      "def-src-012",
+      "def-src-014",
+      "def-src-010",
+      "def-src-020",
+      "policy-qa-src-007",
+      "policy-qa-src-024",
+      "policy-qa-src-011",
+      "policy-qa-src-009",
+      "policy-qa-src-012",
+      "policy-qa-src-004",
+      "policy-qa-src-015",
+      "policy-qa-src-025",
+      "policy-qa-src-021",
+      "policy-qa-src-019",
+      "rule-seed-026",
+      "rule-seed-013",
+      "rule-seed-003",
+      "rule-seed-001",
+      "rule-seed-007",
+      "rule-seed-030",
+      "rule-seed-025",
+      "rule-seed-021",
+      "rule-seed-018",
+      "rule-seed-028",
+      "sara-src-015",
+      "sara-src-014",
+      "sara-src-006",
+      "sara-src-020",
+      "sara-src-016",
+      "sara-src-002",
+      "sara-src-011",
+      "sara-src-001",
+      "sara-src-004",
+      "sara-src-019"
+    ]
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "adapter_output_dir": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/qwen3_4b_2507_lora_seed23/adapter",
+  "best_model_checkpoint": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/qwen3_4b_2507_lora_seed23/checkpoint-36",
+  "cuda_is_available": true,
+  "device_name": "NVIDIA GeForce RTX 5080",
+  "dry_run": false,
+  "eval_rows": 8,
+  "load_in_4bit": true,
+  "model_name_or_path": "Qwen/Qwen3-4B-Instruct-2507",
+  "output_dir": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/qwen3_4b_2507_lora_seed23",
+  "peft_config": {
+    "bias": "none",
+    "lora_alpha": 32,
+    "lora_dropout": 0.05,
+    "r": 16,
+    "target_modules": "all-linear",
+    "task_type": "CAUSAL_LM"
+  },
+  "sft_config": {
+    "dataset_text_field": "text",
+    "eval_strategy": "epoch",
+    "gradient_accumulation_steps": 1,
+    "gradient_checkpointing": true,
+    "greater_is_better": false,
+    "learning_rate": 0.0002,
+    "load_best_model_at_end": true,
+    "logging_steps": 1,
+    "max_length": 512,
+    "metric_for_best_model": "eval_loss",
+    "num_train_epochs": 3.0,
+    "output_dir": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/qwen3_4b_2507_lora_seed23",
+    "packing": false,
+    "per_device_eval_batch_size": 4,
+    "per_device_train_batch_size": 4,
+    "remove_unused_columns": false,
+    "report_to": "none",
+    "save_strategy": "epoch",
+    "save_total_limit": 1,
+    "seed": 23,
+    "warmup_ratio": 0.1,
+    "weight_decay": 0.0
+  },
+  "train_metrics": {
+    "total_flos": 486733461120000.0,
+    "train_loss": 1.3188741703828175,
+    "train_runtime": 17.871,
+    "train_samples_per_second": 7.89,
+    "train_steps_per_second": 2.014
+  },
+  "train_rows": 47,
+  "training_stack": {
+    "available_modules": [
+      "torch",
+      "transformers",
+      "datasets",
+      "peft",
+      "trl",
+      "bitsandbytes"
+    ],
+    "missing_modules": [],
+    "ready": true
+  },
+  "trust_remote_code": false
+}

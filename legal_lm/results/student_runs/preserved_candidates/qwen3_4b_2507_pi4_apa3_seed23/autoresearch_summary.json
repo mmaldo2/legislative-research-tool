@@ -1,0 +1,807 @@
+{
+  "all_candidates": [
+    {
+      "closed_label_accuracy": 0.944444,
+      "closed_label_correct_count": 17,
+      "closed_label_misses": [
+        {
+          "id": "policy-qa-eval-006",
+          "parsed_answer": "Permitted",
+          "reference_answer": "Conditional",
+          "task_family": "policy_regulatory_qa"
+        }
+      ],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug2/fine_tuned_qwen3_4b_2507_seed17_rule_guardrails.json",
+      "manual_rule_score": null,
+      "passed_all_gates": false,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug2/fine_tuned_qwen3_4b_2507_seed17_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug2/base_vs_qwen3_4b_2507_seed17_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "rule_guardrail_issues": [
+        {
+          "doctrine": "Civil Procedure",
+          "id": "rule-eval-002",
+          "issues": [
+            {
+              "key": "missing_public_interest",
+              "message": "Preliminary-injunction answer should include the public-interest factor."
+            }
+          ],
+          "parsed_answer": "A preliminary injunction is generally granted only when the movant shows a likelihood of success on the merits and a likelihood of irreparable harm without preliminary relief.",
+          "prompt": "What showing is needed for a preliminary injunction in federal court?",
+          "reasoning": "The movant must show a likelihood of success on the merits and a likelihood of irreparable harm without preliminary relief."
+        },
+        {
+          "doctrine": "Administrative Law",
+          "id": "rule-eval-004",
+          "issues": [
+            {
+              "key": "missing_basis_and_purpose",
+              "message": "APA notice-and-comment answer should include a final rule with a basis-and-purpose statement or equivalent explanation."
+            }
+          ],
+          "parsed_answer": "The APA generally requires a rulemaking agency to publish a notice of proposed rulemaking in the Federal Register, solicit public comment, and issue a final rule after considering the comments.",
+          "prompt": "Under the APA, what notice-and-comment steps are generally required for legislative rules?",
+          "reasoning": "The APA mandates these steps to ensure transparency and public participation in the rulemaking process."
+        }
+      ],
+      "rule_guardrails_passed": false,
+      "rule_known_gap_count": 2,
+      "rule_meta_reasoning_count": 0,
+      "seed": 17,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug2/fine_tuned_qwen3_4b_2507_seed17_summary.json",
+      "variant": "pi_aug2"
+    },
+    {
+      "closed_label_accuracy": 1.0,
+      "closed_label_correct_count": 18,
+      "closed_label_misses": [],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug2/fine_tuned_qwen3_4b_2507_seed23_rule_guardrails.json",
+      "manual_rule_score": null,
+      "passed_all_gates": false,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug2/fine_tuned_qwen3_4b_2507_seed23_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug2/base_vs_qwen3_4b_2507_seed23_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "rule_guardrail_issues": [
+        {
+          "doctrine": "Administrative Law",
+          "id": "rule-eval-004",
+          "issues": [
+            {
+              "key": "missing_basis_and_purpose",
+              "message": "APA notice-and-comment answer should include a final rule with a basis-and-purpose statement or equivalent explanation."
+            }
+          ],
+          "parsed_answer": "The agency must publish a notice in the Federal Register, provide a reasonable opportunity for public comment, and issue a final rule with a published notice.",
+          "prompt": "Under the APA, what notice-and-comment steps are generally required for legislative rules?",
+          "reasoning": "The APA requires notice-and-comment rulemaking for most legislative rules."
+        }
+      ],
+      "rule_guardrails_passed": false,
+      "rule_known_gap_count": 1,
+      "rule_meta_reasoning_count": 0,
+      "seed": 23,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug2/fine_tuned_qwen3_4b_2507_seed23_summary.json",
+      "variant": "pi_aug2"
+    },
+    {
+      "closed_label_accuracy": 1.0,
+      "closed_label_correct_count": 18,
+      "closed_label_misses": [],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug2/fine_tuned_qwen3_4b_2507_seed31_rule_guardrails.json",
+      "manual_rule_score": null,
+      "passed_all_gates": false,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug2/fine_tuned_qwen3_4b_2507_seed31_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug2/base_vs_qwen3_4b_2507_seed31_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "rule_guardrail_issues": [
+        {
+          "doctrine": "Administrative Law",
+          "id": "rule-eval-004",
+          "issues": [
+            {
+              "key": "missing_basis_and_purpose",
+              "message": "APA notice-and-comment answer should include a final rule with a basis-and-purpose statement or equivalent explanation."
+            }
+          ],
+          "parsed_answer": "The APA generally requires notice-and-comment rulemaking for most legislative rules.",
+          "prompt": "Under the APA, what notice-and-comment steps are generally required for legislative rules?",
+          "reasoning": "The APA mandates public notice and comment periods before final rules are issued."
+        }
+      ],
+      "rule_guardrails_passed": false,
+      "rule_known_gap_count": 1,
+      "rule_meta_reasoning_count": 0,
+      "seed": 31,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug2/fine_tuned_qwen3_4b_2507_seed31_summary.json",
+      "variant": "pi_aug2"
+    },
+    {
+      "closed_label_accuracy": 0.944444,
+      "closed_label_correct_count": 17,
+      "closed_label_misses": [
+        {
+          "id": "sara-eval-003",
+          "parsed_answer": "Contradiction",
+          "reference_answer": "Entailment",
+          "task_family": "sara_entailment"
+        }
+      ],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4/fine_tuned_qwen3_4b_2507_seed17_rule_guardrails.json",
+      "manual_rule_score": null,
+      "passed_all_gates": false,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4/fine_tuned_qwen3_4b_2507_seed17_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4/base_vs_qwen3_4b_2507_seed17_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "rule_guardrail_issues": [
+        {
+          "doctrine": "Administrative Law",
+          "id": "rule-eval-004",
+          "issues": [
+            {
+              "key": "missing_basis_and_purpose",
+              "message": "APA notice-and-comment answer should include a final rule with a basis-and-purpose statement or equivalent explanation."
+            }
+          ],
+          "parsed_answer": "The APA generally requires notice-and-comment rulemaking for most legislative rules.",
+          "prompt": "Under the APA, what notice-and-comment steps are generally required for legislative rules?",
+          "reasoning": "The APA mandates notice-and-comment procedures for most legislative rules, including publication in the Federal Register, public comment periods, and final rule promulgation."
+        }
+      ],
+      "rule_guardrails_passed": false,
+      "rule_known_gap_count": 1,
+      "rule_meta_reasoning_count": 0,
+      "seed": 17,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4/fine_tuned_qwen3_4b_2507_seed17_summary.json",
+      "variant": "pi_aug4"
+    },
+    {
+      "closed_label_accuracy": 1.0,
+      "closed_label_correct_count": 18,
+      "closed_label_misses": [],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4/fine_tuned_qwen3_4b_2507_seed23_rule_guardrails.json",
+      "manual_rule_score": null,
+      "passed_all_gates": false,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4/fine_tuned_qwen3_4b_2507_seed23_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4/base_vs_qwen3_4b_2507_seed23_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "rule_guardrail_issues": [
+        {
+          "doctrine": "Administrative Law",
+          "id": "rule-eval-004",
+          "issues": [
+            {
+              "key": "missing_basis_and_purpose",
+              "message": "APA notice-and-comment answer should include a final rule with a basis-and-purpose statement or equivalent explanation."
+            }
+          ],
+          "parsed_answer": "The agency generally must provide notice of proposed rulemaking, an opportunity for public comment, and a final rulemaking notice.",
+          "prompt": "Under the APA, what notice-and-comment steps are generally required for legislative rules?",
+          "reasoning": "The APA requires notice-and-comment rulemaking for most legislative rules."
+        }
+      ],
+      "rule_guardrails_passed": false,
+      "rule_known_gap_count": 1,
+      "rule_meta_reasoning_count": 0,
+      "seed": 23,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4/fine_tuned_qwen3_4b_2507_seed23_summary.json",
+      "variant": "pi_aug4"
+    },
+    {
+      "closed_label_accuracy": 1.0,
+      "closed_label_correct_count": 18,
+      "closed_label_misses": [],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4/fine_tuned_qwen3_4b_2507_seed31_rule_guardrails.json",
+      "manual_rule_score": null,
+      "passed_all_gates": false,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4/fine_tuned_qwen3_4b_2507_seed31_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4/base_vs_qwen3_4b_2507_seed31_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "rule_guardrail_issues": [
+        {
+          "doctrine": "Administrative Law",
+          "id": "rule-eval-004",
+          "issues": [
+            {
+              "key": "missing_basis_and_purpose",
+              "message": "APA notice-and-comment answer should include a final rule with a basis-and-purpose statement or equivalent explanation."
+            }
+          ],
+          "parsed_answer": "The agency must publish a notice in the Federal Register, provide an opportunity for public comment, and issue a final rule with a published notice.",
+          "prompt": "Under the APA, what notice-and-comment steps are generally required for legislative rules?",
+          "reasoning": "The APA generally requires notice-and-comment rulemaking, including publication, comment periods, and final rule publication."
+        }
+      ],
+      "rule_guardrails_passed": false,
+      "rule_known_gap_count": 1,
+      "rule_meta_reasoning_count": 0,
+      "seed": 31,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4/fine_tuned_qwen3_4b_2507_seed31_summary.json",
+      "variant": "pi_aug4"
+    },
+    {
+      "closed_label_accuracy": 0.833333,
+      "closed_label_correct_count": 15,
+      "closed_label_misses": [
+        {
+          "id": "sara-eval-001",
+          "parsed_answer": "Contradiction",
+          "reference_answer": "Entailment",
+          "task_family": "sara_entailment"
+        },
+        {
+          "id": "sara-eval-003",
+          "parsed_answer": "Contradiction",
+          "reference_answer": "Entailment",
+          "task_family": "sara_entailment"
+        },
+        {
+          "id": "policy-qa-eval-006",
+          "parsed_answer": "Permitted",
+          "reference_answer": "Conditional",
+          "task_family": "policy_regulatory_qa"
+        }
+      ],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4_factor_system/fine_tuned_qwen3_4b_2507_seed17_rule_guardrails.json",
+      "manual_rule_score": null,
+      "passed_all_gates": false,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4_factor_system/fine_tuned_qwen3_4b_2507_seed17_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4_factor_system/base_vs_qwen3_4b_2507_seed17_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "rule_guardrail_issues": [
+        {
+          "doctrine": "Administrative Law",
+          "id": "rule-eval-004",
+          "issues": [
+            {
+              "key": "missing_basis_and_purpose",
+              "message": "APA notice-and-comment answer should include a final rule with a basis-and-purpose statement or equivalent explanation."
+            }
+          ],
+          "parsed_answer": "The APA generally requires both notice-and-comment rulemaking and a final rule publication.",
+          "prompt": "Under the APA, what notice-and-comment steps are generally required for legislative rules?",
+          "reasoning": "The APA mandates notice-and-comment procedures before final rule publication."
+        }
+      ],
+      "rule_guardrails_passed": false,
+      "rule_known_gap_count": 1,
+      "rule_meta_reasoning_count": 0,
+      "seed": 17,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4_factor_system/fine_tuned_qwen3_4b_2507_seed17_summary.json",
+      "variant": "pi_aug4_factor_system"
+    },
+    {
+      "closed_label_accuracy": 0.944444,
+      "closed_label_correct_count": 17,
+      "closed_label_misses": [
+        {
+          "id": "policy-qa-eval-006",
+          "parsed_answer": "Permitted",
+          "reference_answer": "Conditional",
+          "task_family": "policy_regulatory_qa"
+        }
+      ],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4_factor_system/fine_tuned_qwen3_4b_2507_seed23_rule_guardrails.json",
+      "manual_rule_score": null,
+      "passed_all_gates": false,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4_factor_system/fine_tuned_qwen3_4b_2507_seed23_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4_factor_system/base_vs_qwen3_4b_2507_seed23_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "rule_guardrail_issues": [],
+      "rule_guardrails_passed": true,
+      "rule_known_gap_count": 0,
+      "rule_meta_reasoning_count": 0,
+      "seed": 23,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4_factor_system/fine_tuned_qwen3_4b_2507_seed23_summary.json",
+      "variant": "pi_aug4_factor_system"
+    },
+    {
+      "closed_label_accuracy": 0.944444,
+      "closed_label_correct_count": 17,
+      "closed_label_misses": [
+        {
+          "id": "sara-eval-001",
+          "parsed_answer": "Contradiction",
+          "reference_answer": "Entailment",
+          "task_family": "sara_entailment"
+        }
+      ],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4_factor_system/fine_tuned_qwen3_4b_2507_seed31_rule_guardrails.json",
+      "manual_rule_score": null,
+      "passed_all_gates": false,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4_factor_system/fine_tuned_qwen3_4b_2507_seed31_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4_factor_system/base_vs_qwen3_4b_2507_seed31_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "rule_guardrail_issues": [
+        {
+          "doctrine": "Administrative Law",
+          "id": "rule-eval-004",
+          "issues": [
+            {
+              "key": "missing_basis_and_purpose",
+              "message": "APA notice-and-comment answer should include a final rule with a basis-and-purpose statement or equivalent explanation."
+            }
+          ],
+          "parsed_answer": "The APA generally requires an agency to publish a notice of proposed rulemaking, solicit public comment, and issue a final rule with a published notice after considering public comments.",
+          "prompt": "Under the APA, what notice-and-comment steps are generally required for legislative rules?",
+          "reasoning": "The APA mandates these steps for most rulemaking, with some exceptions for emergency rules or rules that are not likely to have significant economic impact."
+        }
+      ],
+      "rule_guardrails_passed": false,
+      "rule_known_gap_count": 1,
+      "rule_meta_reasoning_count": 0,
+      "seed": 31,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_v1/pi_aug4_factor_system/fine_tuned_qwen3_4b_2507_seed31_summary.json",
+      "variant": "pi_aug4_factor_system"
+    },
+    {
+      "closed_label_accuracy": 0.888889,
+      "closed_label_correct_count": 16,
+      "closed_label_misses": [
+        {
+          "id": "sara-eval-003",
+          "parsed_answer": "Contradiction",
+          "reference_answer": "Entailment",
+          "task_family": "sara_entailment"
+        },
+        {
+          "id": "policy-qa-eval-006",
+          "parsed_answer": "Permitted",
+          "reference_answer": "Conditional",
+          "task_family": "policy_regulatory_qa"
+        }
+      ],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi2_apa2/fine_tuned_qwen3_4b_2507_seed17_rule_guardrails.json",
+      "manual_rule_score": null,
+      "passed_all_gates": false,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi2_apa2/fine_tuned_qwen3_4b_2507_seed17_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi2_apa2/base_vs_qwen3_4b_2507_seed17_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "rule_guardrail_issues": [
+        {
+          "doctrine": "Civil Procedure",
+          "id": "rule-eval-002",
+          "issues": [
+            {
+              "key": "missing_public_interest",
+              "message": "Preliminary-injunction answer should include the public-interest factor."
+            }
+          ],
+          "parsed_answer": "A preliminary injunction is generally granted only when the movant shows a likelihood of success on the merits and a likelihood of irreparable harm without preliminary relief.",
+          "prompt": "What showing is needed for a preliminary injunction in federal court?",
+          "reasoning": "The movant must show a likelihood of success on the merits and a likelihood of irreparable harm without preliminary relief."
+        }
+      ],
+      "rule_guardrails_passed": false,
+      "rule_known_gap_count": 1,
+      "rule_meta_reasoning_count": 0,
+      "seed": 17,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi2_apa2/fine_tuned_qwen3_4b_2507_seed17_summary.json",
+      "variant": "pi2_apa2"
+    },
+    {
+      "closed_label_accuracy": 1.0,
+      "closed_label_correct_count": 18,
+      "closed_label_misses": [],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi2_apa2/fine_tuned_qwen3_4b_2507_seed23_rule_guardrails.json",
+      "manual_rule_score": null,
+      "passed_all_gates": false,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi2_apa2/fine_tuned_qwen3_4b_2507_seed23_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi2_apa2/base_vs_qwen3_4b_2507_seed23_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "rule_guardrail_issues": [
+        {
+          "doctrine": "Civil Procedure",
+          "id": "rule-eval-002",
+          "issues": [
+            {
+              "key": "missing_public_interest",
+              "message": "Preliminary-injunction answer should include the public-interest factor."
+            }
+          ],
+          "parsed_answer": "A movant generally must show a likelihood of success on the merits and a likelihood of irreparable harm without preliminary relief.",
+          "prompt": "What showing is needed for a preliminary injunction in federal court?",
+          "reasoning": "Preliminary relief is generally granted only when both success on the merits and irreparable harm are likely."
+        },
+        {
+          "doctrine": "Administrative Law",
+          "id": "rule-eval-004",
+          "issues": [
+            {
+              "key": "missing_basis_and_purpose",
+              "message": "APA notice-and-comment answer should include a final rule with a basis-and-purpose statement or equivalent explanation."
+            }
+          ],
+          "parsed_answer": "The agency generally must provide notice of proposed rulemaking, an opportunity for public comment, and a final rule notice with a concise general statement of the rule's purpose and legal basis.",
+          "prompt": "Under the APA, what notice-and-comment steps are generally required for legislative rules?",
+          "reasoning": "The APA requires these steps to ensure transparency and public input before final rules are issued."
+        }
+      ],
+      "rule_guardrails_passed": false,
+      "rule_known_gap_count": 2,
+      "rule_meta_reasoning_count": 0,
+      "seed": 23,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi2_apa2/fine_tuned_qwen3_4b_2507_seed23_summary.json",
+      "variant": "pi2_apa2"
+    },
+    {
+      "closed_label_accuracy": 0.944444,
+      "closed_label_correct_count": 17,
+      "closed_label_misses": [
+        {
+          "id": "policy-qa-eval-006",
+          "parsed_answer": "Permitted",
+          "reference_answer": "Conditional",
+          "task_family": "policy_regulatory_qa"
+        }
+      ],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi2_apa2/fine_tuned_qwen3_4b_2507_seed31_rule_guardrails.json",
+      "manual_rule_score": null,
+      "passed_all_gates": false,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi2_apa2/fine_tuned_qwen3_4b_2507_seed31_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi2_apa2/base_vs_qwen3_4b_2507_seed31_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "rule_guardrail_issues": [
+        {
+          "doctrine": "Civil Procedure",
+          "id": "rule-eval-002",
+          "issues": [
+            {
+              "key": "missing_public_interest",
+              "message": "Preliminary-injunction answer should include the public-interest factor."
+            }
+          ],
+          "parsed_answer": "A preliminary injunction is generally granted only when the movant shows a likelihood of success on the merits and a likelihood of irreparable harm without preliminary relief.",
+          "prompt": "What showing is needed for a preliminary injunction in federal court?",
+          "reasoning": "The movant must show a likelihood of success on the merits and a likelihood of irreparable harm without preliminary relief."
+        }
+      ],
+      "rule_guardrails_passed": false,
+      "rule_known_gap_count": 1,
+      "rule_meta_reasoning_count": 0,
+      "seed": 31,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi2_apa2/fine_tuned_qwen3_4b_2507_seed31_summary.json",
+      "variant": "pi2_apa2"
+    },
+    {
+      "closed_label_accuracy": 0.944444,
+      "closed_label_correct_count": 17,
+      "closed_label_misses": [
+        {
+          "id": "policy-qa-eval-006",
+          "parsed_answer": "Permitted",
+          "reference_answer": "Conditional",
+          "task_family": "policy_regulatory_qa"
+        }
+      ],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa2/fine_tuned_qwen3_4b_2507_seed17_rule_guardrails.json",
+      "manual_rule_score": null,
+      "passed_all_gates": false,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa2/fine_tuned_qwen3_4b_2507_seed17_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa2/base_vs_qwen3_4b_2507_seed17_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "rule_guardrail_issues": [
+        {
+          "doctrine": "Administrative Law",
+          "id": "rule-eval-004",
+          "issues": [
+            {
+              "key": "missing_basis_and_purpose",
+              "message": "APA notice-and-comment answer should include a final rule with a basis-and-purpose statement or equivalent explanation."
+            }
+          ],
+          "parsed_answer": "The agency generally must give notice of proposed rulemaking, an opportunity for public comment, and a final rule notice.",
+          "prompt": "Under the APA, what notice-and-comment steps are generally required for legislative rules?",
+          "reasoning": "The APA notice-and-comment rulemaking procedure generally includes these three steps."
+        }
+      ],
+      "rule_guardrails_passed": false,
+      "rule_known_gap_count": 1,
+      "rule_meta_reasoning_count": 0,
+      "seed": 17,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa2/fine_tuned_qwen3_4b_2507_seed17_summary.json",
+      "variant": "pi4_apa2"
+    },
+    {
+      "closed_label_accuracy": 0.944444,
+      "closed_label_correct_count": 17,
+      "closed_label_misses": [
+        {
+          "id": "policy-qa-eval-006",
+          "parsed_answer": "Permitted",
+          "reference_answer": "Conditional",
+          "task_family": "policy_regulatory_qa"
+        }
+      ],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa2/fine_tuned_qwen3_4b_2507_seed23_rule_guardrails.json",
+      "manual_rule_score": null,
+      "passed_all_gates": false,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa2/fine_tuned_qwen3_4b_2507_seed23_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa2/base_vs_qwen3_4b_2507_seed23_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "rule_guardrail_issues": [],
+      "rule_guardrails_passed": true,
+      "rule_known_gap_count": 0,
+      "rule_meta_reasoning_count": 0,
+      "seed": 23,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa2/fine_tuned_qwen3_4b_2507_seed23_summary.json",
+      "variant": "pi4_apa2"
+    },
+    {
+      "closed_label_accuracy": 0.944444,
+      "closed_label_correct_count": 17,
+      "closed_label_misses": [
+        {
+          "id": "policy-qa-eval-006",
+          "parsed_answer": "Permitted",
+          "reference_answer": "Conditional",
+          "task_family": "policy_regulatory_qa"
+        }
+      ],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa2/fine_tuned_qwen3_4b_2507_seed31_rule_guardrails.json",
+      "manual_rule_score": null,
+      "passed_all_gates": false,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa2/fine_tuned_qwen3_4b_2507_seed31_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa2/base_vs_qwen3_4b_2507_seed31_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "rule_guardrail_issues": [],
+      "rule_guardrails_passed": true,
+      "rule_known_gap_count": 0,
+      "rule_meta_reasoning_count": 0,
+      "seed": 31,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa2/fine_tuned_qwen3_4b_2507_seed31_summary.json",
+      "variant": "pi4_apa2"
+    },
+    {
+      "closed_label_accuracy": 1.0,
+      "closed_label_correct_count": 18,
+      "closed_label_misses": [],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/fine_tuned_qwen3_4b_2507_seed17_rule_guardrails.json",
+      "manual_rule_score": 11.25,
+      "passed_all_gates": true,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/fine_tuned_qwen3_4b_2507_seed17_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/base_vs_qwen3_4b_2507_seed17_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "rule_guardrail_issues": [],
+      "rule_guardrails_passed": true,
+      "rule_known_gap_count": 0,
+      "rule_meta_reasoning_count": 0,
+      "seed": 17,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/fine_tuned_qwen3_4b_2507_seed17_summary.json",
+      "variant": "pi4_apa3"
+    },
+    {
+      "closed_label_accuracy": 1.0,
+      "closed_label_correct_count": 18,
+      "closed_label_misses": [],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/fine_tuned_qwen3_4b_2507_seed23_rule_guardrails.json",
+      "manual_rule_score": 11.75,
+      "passed_all_gates": true,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/fine_tuned_qwen3_4b_2507_seed23_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/base_vs_qwen3_4b_2507_seed23_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "rule_guardrail_issues": [],
+      "rule_guardrails_passed": true,
+      "rule_known_gap_count": 0,
+      "rule_meta_reasoning_count": 0,
+      "seed": 23,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/fine_tuned_qwen3_4b_2507_seed23_summary.json",
+      "variant": "pi4_apa3"
+    },
+    {
+      "closed_label_accuracy": 1.0,
+      "closed_label_correct_count": 18,
+      "closed_label_misses": [],
+      "closed_label_row_count": 18,
+      "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/fine_tuned_qwen3_4b_2507_seed31_rule_guardrails.json",
+      "manual_rule_score": 10.25,
+      "passed_all_gates": true,
+      "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/fine_tuned_qwen3_4b_2507_seed31_predictions.jsonl",
+      "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/base_vs_qwen3_4b_2507_seed31_rule_review.md",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "rule_guardrail_issues": [],
+      "rule_guardrails_passed": true,
+      "rule_known_gap_count": 0,
+      "rule_meta_reasoning_count": 0,
+      "seed": 31,
+      "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/fine_tuned_qwen3_4b_2507_seed31_summary.json",
+      "variant": "pi4_apa3"
+    }
+  ],
+  "best_candidate": {
+    "closed_label_accuracy": 1.0,
+    "closed_label_correct_count": 18,
+    "closed_label_misses": [],
+    "closed_label_row_count": 18,
+    "guardrails_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/fine_tuned_qwen3_4b_2507_seed23_rule_guardrails.json",
+    "manual_rule_score": 11.75,
+    "passed_all_gates": true,
+    "predictions_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/fine_tuned_qwen3_4b_2507_seed23_predictions.jsonl",
+    "review_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/base_vs_qwen3_4b_2507_seed23_rule_review.md",
+    "round": "autoresearch_rule_reasoning_pi_apa_v1",
+    "rule_guardrail_issues": [],
+    "rule_guardrails_passed": true,
+    "rule_known_gap_count": 0,
+    "rule_meta_reasoning_count": 0,
+    "seed": 23,
+    "summary_path": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/fine_tuned_qwen3_4b_2507_seed23_summary.json",
+    "variant": "pi4_apa3"
+  },
+  "candidate_count": 18,
+  "created_at": "2026-04-23T21:10:00-04:00",
+  "goal": "Autoresearch targeted toward beating original Qwen3 closed-label leader while removing bad rule_reasoning meta-rubric reasoning.",
+  "keep_discard": [
+    {
+      "decision": "discard",
+      "reason": "Failed closed-label and/or rule guardrail gates.",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "seed": 17,
+      "variant": "pi_aug2"
+    },
+    {
+      "decision": "discard",
+      "reason": "Failed closed-label and/or rule guardrail gates.",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "seed": 23,
+      "variant": "pi_aug2"
+    },
+    {
+      "decision": "discard",
+      "reason": "Failed closed-label and/or rule guardrail gates.",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "seed": 31,
+      "variant": "pi_aug2"
+    },
+    {
+      "decision": "discard",
+      "reason": "Failed closed-label and/or rule guardrail gates.",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "seed": 17,
+      "variant": "pi_aug4"
+    },
+    {
+      "decision": "discard",
+      "reason": "Failed closed-label and/or rule guardrail gates.",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "seed": 23,
+      "variant": "pi_aug4"
+    },
+    {
+      "decision": "discard",
+      "reason": "Failed closed-label and/or rule guardrail gates.",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "seed": 31,
+      "variant": "pi_aug4"
+    },
+    {
+      "decision": "discard",
+      "reason": "Failed closed-label and/or rule guardrail gates.",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "seed": 17,
+      "variant": "pi_aug4_factor_system"
+    },
+    {
+      "decision": "discard",
+      "reason": "Failed closed-label and/or rule guardrail gates.",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "seed": 23,
+      "variant": "pi_aug4_factor_system"
+    },
+    {
+      "decision": "discard",
+      "reason": "Failed closed-label and/or rule guardrail gates.",
+      "round": "autoresearch_rule_reasoning_pi_v1",
+      "seed": 31,
+      "variant": "pi_aug4_factor_system"
+    },
+    {
+      "decision": "discard",
+      "reason": "Failed closed-label and/or rule guardrail gates.",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "seed": 17,
+      "variant": "pi2_apa2"
+    },
+    {
+      "decision": "discard",
+      "reason": "Failed closed-label and/or rule guardrail gates.",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "seed": 23,
+      "variant": "pi2_apa2"
+    },
+    {
+      "decision": "discard",
+      "reason": "Failed closed-label and/or rule guardrail gates.",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "seed": 31,
+      "variant": "pi2_apa2"
+    },
+    {
+      "decision": "discard",
+      "reason": "Failed closed-label and/or rule guardrail gates.",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "seed": 17,
+      "variant": "pi4_apa2"
+    },
+    {
+      "decision": "discard",
+      "reason": "Failed closed-label and/or rule guardrail gates.",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "seed": 23,
+      "variant": "pi4_apa2"
+    },
+    {
+      "decision": "discard",
+      "reason": "Failed closed-label and/or rule guardrail gates.",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "seed": 31,
+      "variant": "pi4_apa2"
+    },
+    {
+      "decision": "candidate-pass",
+      "reason": "Passed all gates but lower manual rule quality than seed 23.",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "seed": 17,
+      "variant": "pi4_apa3"
+    },
+    {
+      "decision": "keep",
+      "reason": "Best pass: 18/18 closed labels, rule guardrails pass, no meta reasoning, strongest manual rule score.",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "seed": 23,
+      "variant": "pi4_apa3"
+    },
+    {
+      "decision": "candidate-pass",
+      "reason": "Passed all gates but lower manual rule quality than seed 23.",
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "seed": 31,
+      "variant": "pi4_apa3"
+    }
+  ],
+  "original_leader": {
+    "closed_label_correct_count": 18,
+    "closed_label_row_count": 18,
+    "manual_rule_score": 10.5,
+    "path": "legal_lm/results/student_runs/family4_floor10_v1/fine_tuned_qwen3_4b_2507_predictions.jsonl",
+    "rule_guardrails_passed": false,
+    "rule_meta_reasoning_count": 6
+  },
+  "passed_all_gates": [
+    {
+      "manual_rule_score": 11.25,
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "seed": 17,
+      "variant": "pi4_apa3"
+    },
+    {
+      "manual_rule_score": 11.75,
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "seed": 23,
+      "variant": "pi4_apa3"
+    },
+    {
+      "manual_rule_score": 10.25,
+      "round": "autoresearch_rule_reasoning_pi_apa_v1",
+      "seed": 31,
+      "variant": "pi4_apa3"
+    }
+  ],
+  "passed_all_gates_count": 3
+}

@@ -1,0 +1,64 @@
+{
+  "artifacts": {
+    "autoresearch_summary.json": {
+      "path": "legal_lm/results/student_runs/preserved_candidates/qwen3_4b_2507_pi4_apa3_seed23/autoresearch_summary.json",
+      "sha256": "2cac3cc980320d2056c4a99449c05bfa8cdf5ff7e21634dab028c414a38592d1"
+    },
+    "autoresearch_summary.md": {
+      "path": "legal_lm/results/student_runs/preserved_candidates/qwen3_4b_2507_pi4_apa3_seed23/autoresearch_summary.md",
+      "sha256": "bf67d82ed16e3418e3a150a506dbd3cbf10abc96df8a133b49813df5246c85ea"
+    },
+    "predictions.jsonl": {
+      "path": "legal_lm/results/student_runs/preserved_candidates/qwen3_4b_2507_pi4_apa3_seed23/predictions.jsonl",
+      "sha256": "6b6687ecad75c9f60ad4248e8bf71da3d204abf6a4f553ed5369b8804b746106"
+    },
+    "predictions_annotated.jsonl": {
+      "path": "legal_lm/results/student_runs/preserved_candidates/qwen3_4b_2507_pi4_apa3_seed23/predictions_annotated.jsonl",
+      "sha256": "2c28bd45abbec96d6437bdc2325ebaac6ad04a37db7a189fcd67edf57ba5aeb7"
+    },
+    "rule_guardrails.json": {
+      "path": "legal_lm/results/student_runs/preserved_candidates/qwen3_4b_2507_pi4_apa3_seed23/rule_guardrails.json",
+      "sha256": "6875643fbf0b3b1efbd7096e2471f3bf5a7486ee4cc880aba81982c1af5138b8"
+    },
+    "rule_review.md": {
+      "path": "legal_lm/results/student_runs/preserved_candidates/qwen3_4b_2507_pi4_apa3_seed23/rule_review.md",
+      "sha256": "0eac310dfbff840d5bddad01a471c848564001cade016c63f1edc17021ee5643"
+    },
+    "summary.json": {
+      "path": "legal_lm/results/student_runs/preserved_candidates/qwen3_4b_2507_pi4_apa3_seed23/summary.json",
+      "sha256": "bf26966fc103fbb2214983c8635cef6819262f3a78b789adfa838f00ea9f12bb"
+    },
+    "train_summary.json": {
+      "path": "legal_lm/results/student_runs/preserved_candidates/qwen3_4b_2507_pi4_apa3_seed23/train_summary.json",
+      "sha256": "3be423a5c75ef5bc9546b9e51d0910643e2365b330b393543f078f4dee278668"
+    }
+  },
+  "candidate": "qwen3_4b_2507_pi4_apa3_seed23",
+  "commit_scope_note": "Compact predictions, summaries, guardrails, reviews, and train_summary are preserved here. Bulky LoRA adapter/checkpoint files remain on disk but are ignored by .gitignore.",
+  "dataset_path": "legal_lm/data/student_pilot/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3",
+  "local_adapter_path_ignored_from_git": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/qwen3_4b_2507_lora_seed23/adapter",
+  "local_checkpoint_path_ignored_from_git": "legal_lm/results/student_runs/autoresearch_rule_reasoning_pi_apa_v1/pi4_apa3/qwen3_4b_2507_lora_seed23/checkpoint-36",
+  "model_name_or_path": "Qwen/Qwen3-4B-Instruct-2507",
+  "original_leader_artifacts": {
+    "manual_rule_review.md": {
+      "path": "legal_lm/results/student_runs/preserved_candidates/original_qwen3_4b_2507_meta_leader/manual_rule_review.md",
+      "sha256": "a888d44a06b10be53a396cb7e3be1bcfde5be265df676bf66c32cb45714d38a9"
+    },
+    "manual_rule_score.json": {
+      "path": "legal_lm/results/student_runs/preserved_candidates/original_qwen3_4b_2507_meta_leader/manual_rule_score.json",
+      "sha256": "76cfe23d1fcbf64454fa3f0730149c7386c5de151a000ed9505b99774c2f5030"
+    },
+    "rule_guardrails.json": {
+      "path": "legal_lm/results/student_runs/preserved_candidates/original_qwen3_4b_2507_meta_leader/rule_guardrails.json",
+      "sha256": "c5c3a1625dc76904dde980fd66a094e6fd6964056f7adb4e21a37784b57acdbc"
+    },
+    "rule_review.md": {
+      "path": "legal_lm/results/student_runs/preserved_candidates/original_qwen3_4b_2507_meta_leader/rule_review.md",
+      "sha256": "d2738d53b57793d665ee75b8e43034c65491a387f826a17787d3e5c4123f7e4a"
+    },
+    "summary.json": {
+      "path": "legal_lm/results/student_runs/preserved_candidates/original_qwen3_4b_2507_meta_leader/summary.json",
+      "sha256": "2f7ed5e720810d18a3e96b07f90e6f6bb526541161c496e7272cc85e6eb81c79"
+    }
+  }
+}

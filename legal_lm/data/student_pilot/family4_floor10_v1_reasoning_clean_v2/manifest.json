@@ -1,0 +1,69 @@
+{
+  "artifact_hashes": {
+    "dev": "cbf98ba4af2f7ae13d4f99407840d2a73d5c122e827c14eedee278ed9d00012b",
+    "dev_messages": "fcff54d87ae2778c2599c8c69b136f30059400923d3ea8774031328584a9b0eb",
+    "reasoning_overrides": "c4e50ee3ce2a0f7c3ba619b620db3fbd54ed15e6dd8e3aad73cc169527bab294",
+    "test": "f6fcc703244a1c8299d9a19858ef49ee119162de44d3c4aa3d9b541a1297d765",
+    "test_prompts": "d63e4a3902d03712eb1274f23e8e1bf7db6424ee5bcb5490229435fd02272c0d",
+    "train": "d60e2c24768866952c808ec1e496a2aa35142f9e1b75d8d001964a7a37672477",
+    "train_messages": "3c93657dd7ebee03eee60210517e597d21d34f269af18f9263d45e4f42df8178"
+  },
+  "base_dataset": "legal_lm/data/student_pilot/family4_floor10_v1",
+  "changed_ids": [
+    "rule-seed-001",
+    "rule-seed-002",
+    "rule-seed-003",
+    "rule-seed-004",
+    "rule-seed-007",
+    "rule-seed-013",
+    "rule-seed-018",
+    "rule-seed-021",
+    "rule-seed-025",
+    "rule-seed-026",
+    "rule-seed-028",
+    "rule-seed-030",
+    "sara-src-001",
+    "sara-src-002",
+    "sara-src-003",
+    "sara-src-004",
+    "sara-src-006",
+    "sara-src-008",
+    "sara-src-011",
+    "sara-src-014",
+    "sara-src-015",
+    "sara-src-016",
+    "sara-src-019",
+    "sara-src-020"
+  ],
+  "family_counts": {
+    "dev": {
+      "definition_classification": 2,
+      "policy_regulatory_qa": 2,
+      "rule_reasoning": 2,
+      "sara_entailment": 2
+    },
+    "test": {
+      "definition_classification": 6,
+      "policy_regulatory_qa": 6,
+      "rule_reasoning": 6,
+      "sara_entailment": 6
+    },
+    "train": {
+      "definition_classification": 10,
+      "policy_regulatory_qa": 10,
+      "rule_reasoning": 10,
+      "sara_entailment": 10
+    }
+  },
+  "purpose": "Non-destructive cleaned teacher-reasoning target dataset: replaces rubric/meta or generic teacher_reasoning_short rows while preserving prompts, answers, labels, and held-out test prompts.",
+  "source_artifact_hashes": {
+    "dev": "9e304e5bd96780d61ace17a182074b9338bb7696d92f3321843545fb01b2d8de",
+    "test": "f6fcc703244a1c8299d9a19858ef49ee119162de44d3c4aa3d9b541a1297d765",
+    "train": "36f14bd09f79544f2c94ad560164de4c5ef18cd58c43c7a28f536ec1fec513b2"
+  },
+  "split_counts": {
+    "dev": 8,
+    "test": 24,
+    "train": 40
+  }
+}

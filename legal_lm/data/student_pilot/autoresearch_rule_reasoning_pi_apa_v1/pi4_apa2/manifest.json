@@ -1,0 +1,26 @@
+{
+  "artifact_hashes": {
+    "dev": "cbf98ba4af2f7ae13d4f99407840d2a73d5c122e827c14eedee278ed9d00012b",
+    "dev_messages": "fcff54d87ae2778c2599c8c69b136f30059400923d3ea8774031328584a9b0eb",
+    "test": "f6fcc703244a1c8299d9a19858ef49ee119162de44d3c4aa3d9b541a1297d765",
+    "test_prompts": "d63e4a3902d03712eb1274f23e8e1bf7db6424ee5bcb5490229435fd02272c0d",
+    "train": "cbe403c0037d703e248ce0a710ef62746dcefdc4f8c2c8b219e38c878941d11b",
+    "train_messages": "4e2437b1a31ffa6c77eff93f661b2d3f2ddb2b924eac14e74749da30aae4a08f"
+  },
+  "augment_ids": [
+    "rule-aug-pi-001",
+    "rule-aug-pi-002",
+    "rule-aug-pi-003",
+    "rule-aug-pi-004",
+    "rule-aug-apa-001",
+    "rule-aug-apa-002"
+  ],
+  "base_dataset": "legal_lm/data/student_pilot/family4_floor10_v1_reasoning_clean_v2",
+  "description": "Four PI rows plus two APA basis-and-purpose rows; default system prompt.",
+  "split_counts": {
+    "dev": 8,
+    "test": 24,
+    "train": 46
+  },
+  "variant": "pi4_apa2"
+}

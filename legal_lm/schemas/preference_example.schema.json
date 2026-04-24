@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PreferenceExample",
+  "type": "object",
+  "required": ["id", "prompt", "chosen", "rejected", "why_chosen"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "prompt": {"type": "string", "minLength": 1},
+    "chosen": {"type": "string", "minLength": 1},
+    "rejected": {"type": "string", "minLength": 1},
+    "why_chosen": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": true
+}
