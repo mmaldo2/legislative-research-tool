@@ -1,0 +1,147 @@
+"""Tests for the VotesIngester (mocked HTTP + DB session, no network)."""
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from src.ingestion.normalizer import generate_bill_id
+from src.ingestion.vote_parsers import normalize_vote_ref
+from src.ingestion.votes import VotesIngester
+
+SAMPLE_HOUSE_ROLL = """<?xml version="1.0" encoding="UTF-8"?>
+<rollcall-vote>
+<vote-metadata>
+<congress>118</congress>
+<session>2nd</session>
+<rollcall-num>517</rollcall-num>
+<legis-num>H R 10545</legis-num>
+<vote-question>On Motion to Suspend the Rules and Pass</vote-question>
+<vote-type>2/3 YEA-AND-NAY</vote-type>
+<vote-result>Passed</vote-result>
+<action-date>20-Dec-2024</action-date>
+<vote-totals>
+<totals-by-vote>
+<yea-total>2</yea-total>
+<nay-total>1</nay-total>
+<present-total>0</present-total>
+<not-voting-total>1</not-voting-total>
+</totals-by-vote>
+</vote-totals>
+</vote-metadata>
+<vote-data>
+<recorded-vote>
+<legislator name-id="A000001">Alpha</legislator><vote>Yea</vote>
+</recorded-vote>
+<recorded-vote>
+<legislator name-id="B000002">Bravo</legislator><vote>Yea</vote>
+</recorded-vote>
+<recorded-vote>
+<legislator name-id="C000003">Charlie</legislator><vote>Nay</vote>
+</recorded-vote>
+<recorded-vote>
+<legislator name-id="D000004">Delta</legislator><vote>Not Voting</vote>
+</recorded-vote>
+</vote-data>
+</rollcall-vote>"""
+
+SAMPLE_QUORUM_ROLL = SAMPLE_HOUSE_ROLL.replace(
+    "<legis-num>H R 10545</legis-num>", "<legis-num>QUORUM</legis-num>"
+)
+
+BILL_ID = generate_bill_id("us", "us-118", normalize_vote_ref("H R 10545"))
+MEMBER_MAP = {
+    "A000001": "A000001",
+    "B000002": "B000002",
+    "C000003": "C000003",
+    "D000004": "D000004",
+}
+
+
+@pytest.fixture
+def mock_session():
+    session = AsyncMock()
+    session.execute = AsyncMock()
+    session.commit = AsyncMock()
+    session.flush = AsyncMock()
+    session.add = MagicMock()
+    # begin_nested() returns an async context manager
+    cm = AsyncMock()
+    cm.__aenter__ = AsyncMock(return_value=None)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    session.begin_nested = MagicMock(return_value=cm)
+    return session
+
+
+@pytest.fixture
+def ingester(mock_session):
+    ing = VotesIngester(mock_session, congress=118, chamber="house")
+    ing._bill_ids = frozenset({BILL_ID})
+    ing._member_map = dict(MEMBER_MAP)
+    return ing
+
+
+def test_source_name(ingester):
+    assert ingester.source_name == "votes"
+
+
+def test_init_defaults():
+    ing = VotesIngester(AsyncMock())
+    assert ing.congress == 119
+    assert ing.chamber == "house"
+
+
+class TestResolveMember:
+    def test_resolves_known(self, ingester):
+        assert ingester._resolve_member("A000001") == "A000001"
+
+    def test_absent_returns_none(self, ingester):
+        assert ingester._resolve_member("Z999999") is None
+
+    def test_collision_returns_none(self, ingester):
+        ingester._member_map.pop("C000003")  # simulate excluded (collision) member
+        assert ingester._resolve_member("C000003") is None
+
+
+class TestProcessHouseRoll:
+    @pytest.mark.asyncio
+    async def test_happy_path_upserts_event_and_records(self, ingester, mock_session):
+        await ingester._process_house_roll(2024, 517, SAMPLE_HOUSE_ROLL, "us-118")
+        assert ingester.metrics["events_created"] == 1
+        assert ingester.metrics["records_created"] == 4  # all 4 members resolved
+        assert ingester.metrics["members_resolved"] == 4
+        # event upsert + records upsert both executed inside the savepoint
+        assert mock_session.execute.call_count == 2
+        assert mock_session.begin_nested.called
+
+    @pytest.mark.asyncio
+    async def test_out_of_scope_sentinel_skipped(self, ingester, mock_session):
+        await ingester._process_house_roll(2024, 1, SAMPLE_QUORUM_ROLL, "us-118")
+        assert ingester.metrics["skipped_out_of_scope"] == 1
+        assert ingester.metrics["events_created"] == 0
+        mock_session.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unresolved_bill_skipped(self, ingester, mock_session):
+        ingester._bill_ids = frozenset()  # bill not in DB
+        await ingester._process_house_roll(2024, 517, SAMPLE_HOUSE_ROLL, "us-118")
+        assert ingester.metrics["skipped_unresolved_bill"] == 1
+        assert ingester.metrics["events_created"] == 0
+        mock_session.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_dropped_member_still_reconciles(self, ingester, mock_session):
+        """Dropping an unresolved member keeps the event (official counts authoritative)
+        because reconcile buckets the drop by its parsed option."""
+        ingester._member_map.pop("D000004")  # the 'Not Voting' member becomes unresolved
+        await ingester._process_house_roll(2024, 517, SAMPLE_HOUSE_ROLL, "us-118")
+        assert ingester.metrics["events_created"] == 1
+        assert ingester.metrics["records_created"] == 3
+        assert ingester.metrics["members_dropped"] == 1
+        assert "D000004" in ingester._unresolved_bios
+
+
+@pytest.mark.asyncio
+async def test_close(ingester):
+    ingester.client.aclose = AsyncMock()
+    await ingester.close()
+    ingester.client.aclose.assert_called_once()

@@ -16,6 +16,7 @@ import sys
 
 from src.database import async_session_factory
 from src.ingestion.govinfo import GovInfoIngester
+from src.ingestion.votes import VotesIngester
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,14 +26,23 @@ logger = logging.getLogger(__name__)
 
 
 async def backfill(
-    start: int, end: int, enrich: bool, enrich_only: bool, bulk_zip: bool
+    start: int,
+    end: int,
+    enrich: bool,
+    enrich_only: bool,
+    bulk_zip: bool,
+    votes: bool = False,
+    chamber: str = "house",
 ) -> None:
-    """Run GovInfo ingestion for each congress in the range."""
+    """Run GovInfo (bills) or roll-call vote ingestion for each congress in the range."""
     for congress in range(start, end + 1):
         logger.info("=" * 60)
         progress = congress - start + 1
         total = end - start + 1
-        mode = "bulk ZIP" if bulk_zip else ("enrichment" if enrich_only else "backfill")
+        if votes:
+            mode = f"roll-call votes ({chamber})"
+        else:
+            mode = "bulk ZIP" if bulk_zip else ("enrichment" if enrich_only else "backfill")
         logger.info(
             "Starting %s for Congress %d (%d of %d)",
             mode, congress, progress, total,
@@ -41,18 +51,27 @@ async def backfill(
 
         try:
             async with async_session_factory() as session:
-                ingester = GovInfoIngester(session, congress=congress)
-                try:
-                    if bulk_zip:
-                        await ingester.ingest_from_bulk_zip()
-                    elif enrich_only:
-                        await ingester._ensure_jurisdiction()
-                        await ingester._ensure_session()
-                        await ingester.enrich_bills()
-                    else:
-                        await ingester.ingest(enrich=enrich)
-                finally:
-                    await ingester.close()
+                if votes:
+                    chambers = ["house", "senate"] if chamber == "both" else [chamber]
+                    for ch in chambers:
+                        vote_ingester = VotesIngester(session, congress=congress, chamber=ch)
+                        try:
+                            await vote_ingester.ingest()
+                        finally:
+                            await vote_ingester.close()
+                else:
+                    ingester = GovInfoIngester(session, congress=congress)
+                    try:
+                        if bulk_zip:
+                            await ingester.ingest_from_bulk_zip()
+                        elif enrich_only:
+                            await ingester._ensure_jurisdiction()
+                            await ingester._ensure_session()
+                            await ingester.enrich_bills()
+                        else:
+                            await ingester.ingest(enrich=enrich)
+                    finally:
+                        await ingester.close()
             logger.info("Completed Congress %d successfully", congress)
         except Exception:
             logger.exception("Failed Congress %d", congress)
@@ -88,6 +107,17 @@ def main() -> None:
         help="Skip detail enrichment (list fetch only)",
     )
     parser.add_argument(
+        "--votes",
+        action="store_true",
+        help="Ingest roll-call votes (vote_events/vote_records) instead of bills",
+    )
+    parser.add_argument(
+        "--chamber",
+        choices=["house", "senate", "both"],
+        default="house",
+        help="Chamber for --votes (default: house; senate is Phase 2)",
+    )
+    parser.add_argument(
         "--api-key",
         type=str,
         default=None,
@@ -115,6 +145,10 @@ def main() -> None:
         print("Error: --bulk-zip, --enrich-only, --no-enrich are mutually exclusive",
               file=sys.stderr)
         sys.exit(1)
+    if args.votes and any(modes):
+        print("Error: --votes cannot be combined with bill modes "
+              "(--bulk-zip/--enrich-only/--no-enrich)", file=sys.stderr)
+        sys.exit(1)
 
     asyncio.run(
         backfill(
@@ -122,6 +156,8 @@ def main() -> None:
             enrich=not args.no_enrich,
             enrich_only=args.enrich_only,
             bulk_zip=args.bulk_zip,
+            votes=args.votes,
+            chamber=args.chamber,
         )
     )
 
