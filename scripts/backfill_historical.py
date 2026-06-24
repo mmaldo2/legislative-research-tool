@@ -57,12 +57,14 @@ async def backfill(
                 if votes:
                     chambers = ["house", "senate"] if chamber == "both" else [chamber]
                     for ch in chambers:
-                        # senate.gov throttles harder than clerk.house.gov — be politer.
+                        # senate.gov's Akamai WAF blocks the IP on burst load: fetch the
+                        # Senate serially with a delay; clerk.house.gov tolerates concurrency.
                         vote_ingester = VotesIngester(
                             session,
                             congress=congress,
                             chamber=ch,
-                            concurrency=4 if ch == "senate" else 8,
+                            concurrency=1 if ch == "senate" else 8,
+                            request_delay=0.4 if ch == "senate" else 0.0,
                         )
                         try:
                             await vote_ingester.ingest()

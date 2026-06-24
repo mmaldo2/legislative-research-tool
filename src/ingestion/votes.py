@@ -58,6 +58,7 @@ class VotesIngester(BaseIngester):
         congress: int = 119,
         chamber: str = "house",
         concurrency: int = 8,
+        request_delay: float = 0.0,
     ):
         super().__init__(session)
         self.congress = congress
@@ -68,6 +69,9 @@ class VotesIngester(BaseIngester):
             headers={"User-Agent": settings.vote_ingester_user_agent},
         )
         self._sem = asyncio.Semaphore(concurrency)
+        # Politeness throttle (seconds slept per request). senate.gov's WAF blocks
+        # the IP on burst load; a small delay + low concurrency avoids tripping it.
+        self._request_delay = request_delay
         # resolution caches (loaded once per run)
         self._bill_ids: frozenset[str] = frozenset()
         self._member_map: dict[str, str] = {}
@@ -352,6 +356,8 @@ class VotesIngester(BaseIngester):
             f"vote_menu_{self.congress}_{session}.xml"
         )
         async with self._sem:
+            if self._request_delay:
+                await asyncio.sleep(self._request_delay)
             for attempt in range(4):
                 try:
                     resp = await self.client.get(url)
@@ -386,6 +392,8 @@ class VotesIngester(BaseIngester):
             f"vote{self.congress}{session}/vote_{self.congress}_{session}_{vote_num:05d}.xml"
         )
         async with self._sem:
+            if self._request_delay:
+                await asyncio.sleep(self._request_delay)
             for attempt in range(3):
                 try:
                     resp = await self.client.get(url)
