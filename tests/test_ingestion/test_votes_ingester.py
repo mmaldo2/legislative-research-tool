@@ -1,6 +1,6 @@
 """Tests for the VotesIngester (mocked HTTP + DB session, no network)."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -201,6 +201,27 @@ class TestSenate:
         assert ingester.metrics["skipped_out_of_scope"] == 1
         assert ingester.metrics["events_created"] == 0
         mock_session.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_senate_menu_retries_on_throttle(self, ingester):
+        """A throttled (non-200) menu response must be retried, not silently dropped."""
+        menu = (
+            "<vote_summary><votes>"
+            "<vote><vote_number>00339</vote_number></vote>"
+            "<vote><vote_number>00338</vote_number></vote>"
+            "</votes></vote_summary>"
+        )
+        throttled = MagicMock(status_code=503)
+        ok = MagicMock(status_code=200)
+        ok.text = menu
+        with (
+            patch.object(ingester.client, "get", new_callable=AsyncMock) as mock_get,
+            patch("src.ingestion.votes.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            mock_get.side_effect = [throttled, ok]
+            nums = await ingester._senate_vote_numbers(2)
+        assert nums == [338, 339]
+        assert mock_get.call_count == 2
 
 
 @pytest.mark.asyncio

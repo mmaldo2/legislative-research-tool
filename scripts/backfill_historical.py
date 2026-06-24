@@ -45,7 +45,10 @@ async def backfill(
             mode = "bulk ZIP" if bulk_zip else ("enrichment" if enrich_only else "backfill")
         logger.info(
             "Starting %s for Congress %d (%d of %d)",
-            mode, congress, progress, total,
+            mode,
+            congress,
+            progress,
+            total,
         )
         logger.info("=" * 60)
 
@@ -54,7 +57,13 @@ async def backfill(
                 if votes:
                     chambers = ["house", "senate"] if chamber == "both" else [chamber]
                     for ch in chambers:
-                        vote_ingester = VotesIngester(session, congress=congress, chamber=ch)
+                        # senate.gov throttles harder than clerk.house.gov — be politer.
+                        vote_ingester = VotesIngester(
+                            session,
+                            congress=congress,
+                            chamber=ch,
+                            concurrency=4 if ch == "senate" else 8,
+                        )
                         try:
                             await vote_ingester.ingest()
                         finally:
@@ -75,9 +84,7 @@ async def backfill(
             logger.info("Completed Congress %d successfully", congress)
         except Exception:
             logger.exception("Failed Congress %d", congress)
-            logger.info(
-                "Resume with: python -m scripts.backfill_historical --start %d", congress
-            )
+            logger.info("Resume with: python -m scripts.backfill_historical --start %d", congress)
             raise
 
     logger.info("Complete: Congress %d-%d", start, end)
@@ -85,12 +92,8 @@ async def backfill(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Backfill historical federal bills")
-    parser.add_argument(
-        "--start", type=int, default=110, help="First congress (default: 110)"
-    )
-    parser.add_argument(
-        "--end", type=int, default=118, help="Last congress (default: 118)"
-    )
+    parser.add_argument("--start", type=int, default=110, help="First congress (default: 110)")
+    parser.add_argument("--end", type=int, default=118, help="Last congress (default: 118)")
     parser.add_argument(
         "--bulk-zip",
         action="store_true",
@@ -142,17 +145,22 @@ def main() -> None:
 
     modes = [args.bulk_zip, args.enrich_only, args.no_enrich]
     if sum(modes) > 1:
-        print("Error: --bulk-zip, --enrich-only, --no-enrich are mutually exclusive",
-              file=sys.stderr)
+        print(
+            "Error: --bulk-zip, --enrich-only, --no-enrich are mutually exclusive", file=sys.stderr
+        )
         sys.exit(1)
     if args.votes and any(modes):
-        print("Error: --votes cannot be combined with bill modes "
-              "(--bulk-zip/--enrich-only/--no-enrich)", file=sys.stderr)
+        print(
+            "Error: --votes cannot be combined with bill modes "
+            "(--bulk-zip/--enrich-only/--no-enrich)",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     asyncio.run(
         backfill(
-            args.start, args.end,
+            args.start,
+            args.end,
             enrich=not args.no_enrich,
             enrich_only=args.enrich_only,
             bulk_zip=args.bulk_zip,

@@ -343,17 +343,37 @@ class VotesIngester(BaseIngester):
         return self._member_map.get(bioguide) if bioguide else None
 
     async def _senate_vote_numbers(self, session: int) -> list[int]:
+        """Fetch + parse a Senate vote menu, with retry/backoff. Every Senate session in
+        range has votes, so a non-200 OR an empty parse is treated as a transient failure
+        (senate.gov throttles under load) and retried — never silently dropped (a silent
+        empty would drop a whole session of Senate votes)."""
         url = (
             f"{settings.senate_lis_base_url}/roll_call_lists/"
             f"vote_menu_{self.congress}_{session}.xml"
         )
-        try:
-            resp = await self.client.get(url)
-            if resp.status_code == 200:
-                return parse_senate_vote_numbers(resp.text)
-        except httpx.HTTPError as e:
-            logger.warning("Failed to fetch Senate menu %d-%d: %s", self.congress, session, e)
-        return []
+        async with self._sem:
+            for attempt in range(4):
+                try:
+                    resp = await self.client.get(url)
+                    if resp.status_code == 404:
+                        return []  # session does not exist
+                    if resp.status_code == 200:
+                        nums = parse_senate_vote_numbers(resp.text)
+                        if nums:
+                            return nums
+                    # non-200, or 200-but-empty -> retryable throttle/transient
+                except httpx.HTTPError:
+                    pass
+                if attempt < 3:
+                    await asyncio.sleep(2 ** (attempt + 1) + random.uniform(0, 2))
+            logger.warning(
+                "Senate menu fetch failed after retries for Congress %d session %d "
+                "(possible under-coverage — surface for re-run)",
+                self.congress,
+                session,
+            )
+            self.metrics["senate_menu_failures"] += 1
+            return []
 
     async def _fetch_senate_details(self, session: int, vote_nums: list[int]) -> list[str | None]:
         tasks = [self._fetch_senate_detail(session, v) for v in vote_nums]

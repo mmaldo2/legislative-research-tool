@@ -150,8 +150,9 @@ House pure functions + `normalize_vote_ref` + `normalize_vote_option` + `vote_ev
 ### Phase 2 — Senate ingester + lis→bioguide crosswalk — ✅ DONE (2026-06-24)
 `build_lis_bioguide_map` (327 entries); Senate menu+detail parsers; Senate full-date parse; document→bill resolution; nomination(`PN`)/amendment skip; shared `_process_vote` across chambers; `--chamber senate`; tests. **Pilot Congress 118 Senate: 145 events / 14,498 records, 100% resolution, 0% bill-skip, 0 mismatch, 0 orphans; 541 correctly out-of-scope.** Senate vote 339 (HR10545, 85/11/4) hand-matches; both chambers now linked to HR10545.
 
-### Phase 3 — Full backfill + verification
-`--chamber both`; per-event resumability across 110–119; full backfill; coverage report (events/records per congress, skip buckets, per-congress+chamber resolution rates); hand-verify ~10 events against official totals.
+### Phase 3 — Full backfill + verification — 🟡 PARTIAL (2026-06-24)
+`--chamber both` 110–119, per-event resumability. **House: COMPLETE** — all 10 congresses, ~12,136 events / ~4.7M records, 100% resolution for 110–117, 0 mismatch, **0 orphan rows** across the whole corpus. **119 House: 90.7% resolution + 60 bill-skips** — the expected current-congress gap (new members not yet in `people`; 119 bills still being ingested) — i.e. the **H-D** signal at the newest congress.
+**Senate: BLOCKED at 4/10 congresses** (110/113/115/118 = 358 events). senate.gov's **Akamai WAF returns 403 (IP rate-limit)** after the heavy backfill; per-vote fetching trips it. The menu-fetch fix (retry + loud `senate_menu_failures` warning, never a silent empty) surfaces this rather than hiding it. **To finish Senate:** wait for the WAF cooldown then re-run gently (low concurrency + delay), or add a VoteView-bulk Senate fallback (no per-request fetching). Grand total so far: **12,494 events / 5,264,721 records, 0 orphans.**
 
 ### Future work (out of v1 scope — separate plans)
 Persist `Person.lis_id` (column + migration; **has direct precedent in `openstates_id`/`legiscan_id`** — promote to the critical path if the senator member-resolution gate is missed in Phase 2). VoteView cross-validation pass. Backfill historical `people` if resolution rate falls short (see flags).
