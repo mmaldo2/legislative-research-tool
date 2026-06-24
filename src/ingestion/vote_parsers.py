@@ -203,3 +203,107 @@ def reconcile(computed: dict[str, int], dropped: dict[str, int], official: dict[
         if computed.get(o, 0) + dropped.get(o, 0) != official.get(o, 0):
             return False
     return True
+
+
+# --- Senate (senate.gov LIS) ---
+
+_SENATE_DATE_RE = re.compile(r"^([A-Za-z]+ \d+, \d{4})")
+
+
+def build_lis_bioguide_map(legislators: list[dict]) -> dict[str, str]:
+    """Build {lis_member_id -> bioguide} from congress-legislators JSON objects.
+    Senate roll-call XML keys members by LIS id, not bioguide; this is the crosswalk."""
+    mapping: dict[str, str] = {}
+    for leg in legislators:
+        ids = leg.get("id", {})
+        lis, bioguide = ids.get("lis"), ids.get("bioguide")
+        if lis and bioguide:
+            mapping[lis] = bioguide
+    return mapping
+
+
+def parse_senate_date(raw: str | None) -> date | None:
+    """Parse the Senate detail date 'Month D, YYYY,  HH:MM AM' -> date (date part only,
+    no timezone conversion; the full-year detail date avoids the menu's Dec/Jan ambiguity)."""
+    if not raw:
+        return None
+    m = _SENATE_DATE_RE.match(raw.strip())
+    if not m:
+        return None
+    try:
+        return datetime.strptime(m.group(1), "%B %d, %Y").date()
+    except ValueError:
+        return None
+
+
+def parse_senate_vote_numbers(xml_text: str) -> list[int]:
+    """Extract the sorted, de-duplicated vote numbers from a Senate vote-menu XML."""
+    try:
+        root = SafeET.fromstring(xml_text)
+    except SafeET.ParseError:
+        return []
+    nums: set[int] = set()
+    for vn in root.findall(".//vote_number"):
+        try:
+            nums.add(int((vn.text or "").strip()))
+        except (TypeError, ValueError):
+            continue
+    return sorted(nums)
+
+
+def parse_senate_vote_xml(xml_text: str) -> ParsedVote | None:
+    """Parse one senate.gov roll-call detail XML into a ParsedVote (casts keyed by LIS id)."""
+    try:
+        root = SafeET.fromstring(xml_text)
+    except SafeET.ParseError:
+        return None
+    try:
+        congress = int((root.findtext("congress") or "").strip())
+        vote_number = int((root.findtext("vote_number") or "").strip())
+    except ValueError:
+        return None
+
+    dtype = (root.findtext("document/document_type") or "").strip()
+    dnum = (root.findtext("document/document_number") or "").strip()
+    dname = (root.findtext("document/document_name") or "").strip()
+    legis_num = dname or (f"{dtype} {dnum}".strip() or None)
+
+    official: dict[str, int] = {}
+    count = root.find("count")
+    if count is not None:
+
+        def _ct(tag: str) -> int:
+            t = count.findtext(tag)
+            return int(t) if t and t.strip() else 0
+
+        official = {
+            "yea": _ct("yeas"),
+            "nay": _ct("nays"),
+            "present": _ct("present"),
+            "not_voting": _ct("absent"),
+        }
+
+    casts: list[tuple[str, str]] = []
+    for m in root.findall(".//member"):
+        lis = (m.findtext("lis_member_id") or "").strip()
+        vc = (m.findtext("vote_cast") or "").strip()
+        if lis and vc:
+            casts.append((lis, vc))
+
+    def _opt(tag: str) -> str | None:
+        v = root.findtext(tag)
+        return v.strip() if v else None
+
+    return ParsedVote(
+        chamber=CHAMBER_SENATE,
+        congress=congress,
+        session=(root.findtext("session") or "").strip() or None,
+        rollcall_num=vote_number,
+        legis_num=legis_num,
+        vote_question=_opt("question"),
+        vote_type=None,
+        vote_result=_opt("vote_result"),
+        vote_date=parse_senate_date(root.findtext("vote_date")),
+        official=official,
+        casts=casts,
+    )

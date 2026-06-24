@@ -147,8 +147,8 @@ Fetch one House roll XML live; parse with draft pure functions; resolve its bill
 ### Phase 1 — House ingester (the vertical slice; first-loop "done" = Congress 118 House)
 House pure functions + `normalize_vote_ref` + `normalize_vote_option` + `vote_event_id` + `parse_house_index`; `VotesIngester` House path (concurrent fetch, global caches, per-event resumability, per-bucket reconciliation, skip+log, run accounting); `--votes --chamber house` in `backfill_historical.py`; tests (parsers + mocked-HTTP ingester, idempotent double-run). **Makes Family 1 runnable on the House.**
 
-### Phase 2 — Senate ingester + lis→bioguide crosswalk
-`build_lis_bioguide_map`; Senate menu+detail parsers; Dec/Jan year derivation (H-1); document→bill resolution; nomination(`PN`) skip; `--chamber senate`; tests.
+### Phase 2 — Senate ingester + lis→bioguide crosswalk — ✅ DONE (2026-06-24)
+`build_lis_bioguide_map` (327 entries); Senate menu+detail parsers; Senate full-date parse; document→bill resolution; nomination(`PN`)/amendment skip; shared `_process_vote` across chambers; `--chamber senate`; tests. **Pilot Congress 118 Senate: 145 events / 14,498 records, 100% resolution, 0% bill-skip, 0 mismatch, 0 orphans; 541 correctly out-of-scope.** Senate vote 339 (HR10545, 85/11/4) hand-matches; both chambers now linked to HR10545.
 
 ### Phase 3 — Full backfill + verification
 `--chamber both`; per-event resumability across 110–119; full backfill; coverage report (events/records per congress, skip buckets, per-congress+chamber resolution rates); hand-verify ~10 events against official totals.
@@ -179,8 +179,8 @@ Persist `Person.lis_id` (column + migration; **has direct precedent in `openstat
 - [ ] Unit: `normalize_vote_ref("H R 1234")` → same `bills.id` as the stored `normalize_identifier("hr1234")` form (byte-equal); plus `H.R. 1234`, `HR 1234` (C-1/C-A).
 - [ ] Unit: `S. 5`→`S5`, `H RES 5`→`HRES5`, `H J RES 1`→`HJRES1`, `H CON RES 3`→`HCONRES3`.
 - [ ] Unit: every House (Yea/Nay/Aye/No/Present/Not Voting) + Senate cast maps to canonical `option`; unknown cast **or unknown `<vote-type>`** → skip event (C-4/M-D).
-- [ ] Unit: Senate Dec/Jan rollover → correct calendar year; date stored as date-only, no UTC conversion (H-1/M-A).
-- [ ] Unit: lis→bioguide crosswalk resolves a known senator; absent lis → logged skip.
+- [x] Unit: Senate date parse → correct calendar date (date-only, no UTC); uses full detail date (sidesteps menu Dec/Jan ambiguity) (H-1/M-A).
+- [x] Unit: lis→bioguide crosswalk resolves a known senator; absent lis / unknown bioguide → drop (TestSenate).
 - [ ] Unit: member resolver maps a bioguide to `people.id` when `people.id` is a hash (281-row case); **two rows sharing a bioguide → refuse+log collision** (H-C).
 
 ### Data integrity (no fabrication / no miscount)

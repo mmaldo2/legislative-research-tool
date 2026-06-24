@@ -8,9 +8,11 @@ Phase 2. Mirrors `src/ingestion/govinfo.py` conventions.
 """
 
 import asyncio
+import json
 import logging
 import random
 from collections import Counter
+from collections.abc import Callable
 
 import httpx
 from sqlalchemy import select
@@ -21,6 +23,8 @@ from src.config import settings
 from src.ingestion.base import BaseIngester
 from src.ingestion.normalizer import generate_bill_id
 from src.ingestion.vote_parsers import (
+    ParsedVote,
+    build_lis_bioguide_map,
     build_member_map,
     house_vote_event_id,
     house_years_for_congress,
@@ -29,7 +33,10 @@ from src.ingestion.vote_parsers import (
     normalize_vote_ref,
     parse_house_index,
     parse_house_roll_xml,
+    parse_senate_vote_numbers,
+    parse_senate_vote_xml,
     reconcile,
+    senate_vote_event_id,
 )
 from src.models.bill import Bill
 from src.models.person import Person
@@ -65,6 +72,7 @@ class VotesIngester(BaseIngester):
         self._bill_ids: frozenset[str] = frozenset()
         self._member_map: dict[str, str] = {}
         self._collisions: set[str] = set()
+        self._lis2bio: dict[str, str] = {}
         self._unresolved_bios: set[str] = set()
         self.metrics: dict[str, int] = Counter()
 
@@ -78,7 +86,7 @@ class VotesIngester(BaseIngester):
             if self.chamber == "house":
                 await self._ingest_house()
             elif self.chamber == "senate":
-                raise NotImplementedError("Senate vote ingestion is Phase 2")
+                await self._ingest_senate()
             else:
                 raise ValueError(f"unknown chamber: {self.chamber!r}")
             self._finalize_run()
@@ -148,7 +156,11 @@ class VotesIngester(BaseIngester):
             ]
             logger.info(
                 "Congress %d year %d: %d rolls (max %d), %d to fetch",
-                self.congress, year, max_roll, max_roll, len(roll_nums),
+                self.congress,
+                year,
+                max_roll,
+                max_roll,
+                len(roll_nums),
             )
 
             for i in range(0, len(roll_nums), FETCH_BATCH):
@@ -204,41 +216,57 @@ class VotesIngester(BaseIngester):
         self, year: int, roll_num: int, xml_text: str, session_id: str
     ) -> None:
         parsed = parse_house_roll_xml(xml_text)
+        if not self._resolvable_bill(parsed, session_id):
+            return
+        event_id = house_vote_event_id(self.congress, year, roll_num)
+        bill_id = generate_bill_id("us", session_id, normalize_vote_ref(parsed.legis_num))
+        await self._process_vote(event_id, bill_id, parsed, self._resolve_member)
+
+    def _resolvable_bill(self, parsed: ParsedVote | None, session_id: str) -> bool:
+        """Common scope/bill gate for both chambers. Increments the right skip metric."""
         if parsed is None:
             self.metrics["parse_errors"] += 1
-            return
+            return False
         if parsed.congress != self.congress:
             self.metrics["skipped_other_congress"] += 1
-            return
+            return False
         if not is_bill_ref(parsed.legis_num):
             self.metrics["skipped_out_of_scope"] += 1
-            return
-
+            return False
         bill_id = generate_bill_id("us", session_id, normalize_vote_ref(parsed.legis_num))
         if bill_id not in self._bill_ids:
             self.metrics["skipped_unresolved_bill"] += 1
-            return
+            return False
+        return True
 
-        event_id = house_vote_event_id(self.congress, year, roll_num)
+    async def _process_vote(
+        self,
+        event_id: str,
+        bill_id: str,
+        parsed: ParsedVote,
+        resolve_fn: Callable[[str], str | None],
+    ) -> None:
+        """Resolve casts, reconcile per-bucket, and atomically upsert the event + records.
+        `resolve_fn` maps a source member id (House bioguide / Senate LIS) -> people.id."""
         computed: Counter = Counter()
         dropped: Counter = Counter()
         seen: set[str] = set()
         records: list[dict] = []
-        for name_id, raw_vote in parsed.casts:
+        for member_id, raw_vote in parsed.casts:
             try:
                 option = normalize_vote_option(raw_vote)
             except ValueError:
                 logger.warning("Unknown vote option in %s: %r — quarantining", event_id, raw_vote)
                 self.metrics["reconciliation_mismatch"] += 1
                 return
-            if name_id in seen:
+            if member_id in seen:
                 self.metrics["duplicate_member_in_source"] += 1
                 continue
-            seen.add(name_id)
-            pid = self._resolve_member(name_id)
+            seen.add(member_id)
+            pid = resolve_fn(member_id)
             if pid is None:
                 dropped[option] += 1
-                self._unresolved_bios.add(name_id)
+                self._unresolved_bios.add(member_id)
                 continue
             computed[option] += 1
             records.append({"vote_event_id": event_id, "person_id": pid, "option": option})
@@ -246,7 +274,10 @@ class VotesIngester(BaseIngester):
         if not reconcile(computed, dropped, parsed.official):
             logger.warning(
                 "Reconcile mismatch %s: computed=%s dropped=%s official=%s",
-                event_id, dict(computed), dict(dropped), parsed.official,
+                event_id,
+                dict(computed),
+                dict(dropped),
+                parsed.official,
             )
             self.metrics["reconciliation_mismatch"] += 1
             return
@@ -256,6 +287,113 @@ class VotesIngester(BaseIngester):
         self.metrics["records_created"] += len(records)
         self.metrics["members_resolved"] += sum(computed.values())
         self.metrics["members_dropped"] += sum(dropped.values())
+
+    # ------------------------------------------------------------------
+    # Senate path
+    # ------------------------------------------------------------------
+
+    async def _ingest_senate(self) -> None:
+        session_id = f"us-{self.congress}"
+        await self._load_lis_crosswalk()
+        existing = await self._existing_event_ids()
+        for session in (1, 2):
+            vote_nums = await self._senate_vote_numbers(session)
+            if not vote_nums:
+                logger.info("No Senate votes for Congress %d session %d", self.congress, session)
+                continue
+            to_do = [
+                v
+                for v in vote_nums
+                if senate_vote_event_id(self.congress, session, v) not in existing
+            ]
+            logger.info(
+                "Congress %d Senate session %d: %d votes, %d to fetch",
+                self.congress,
+                session,
+                len(vote_nums),
+                len(to_do),
+            )
+            for i in range(0, len(to_do), FETCH_BATCH):
+                batch = to_do[i : i + FETCH_BATCH]
+                xmls = await self._fetch_senate_details(session, batch)
+                for vnum, xml_text in zip(batch, xmls, strict=True):
+                    if xml_text is None:
+                        self.metrics["rolls_404"] += 1
+                        continue
+                    await self._process_senate_vote(session, vnum, xml_text, session_id)
+                await self.session.commit()
+
+    async def _load_lis_crosswalk(self) -> None:
+        """Build the LIS->bioguide map from congress-legislators (current + historical)."""
+        legislators: list[dict] = []
+        for which in ("current", "historical"):
+            url = f"{settings.congress_legislators_base_url}/legislators-{which}.json"
+            try:
+                resp = await self.client.get(url)
+                resp.raise_for_status()
+                legislators.extend(json.loads(resp.text))
+            except (httpx.HTTPError, json.JSONDecodeError) as e:
+                logger.warning("Failed to load congress-legislators %s: %s", which, e)
+        self._lis2bio = build_lis_bioguide_map(legislators)
+        logger.info("Loaded LIS->bioguide crosswalk: %d entries", len(self._lis2bio))
+
+    def _resolve_senate_member(self, lis_id: str) -> str | None:
+        """LIS id -> bioguide -> people.id; None if either hop is unresolved."""
+        bioguide = self._lis2bio.get(lis_id)
+        return self._member_map.get(bioguide) if bioguide else None
+
+    async def _senate_vote_numbers(self, session: int) -> list[int]:
+        url = (
+            f"{settings.senate_lis_base_url}/roll_call_lists/"
+            f"vote_menu_{self.congress}_{session}.xml"
+        )
+        try:
+            resp = await self.client.get(url)
+            if resp.status_code == 200:
+                return parse_senate_vote_numbers(resp.text)
+        except httpx.HTTPError as e:
+            logger.warning("Failed to fetch Senate menu %d-%d: %s", self.congress, session, e)
+        return []
+
+    async def _fetch_senate_details(self, session: int, vote_nums: list[int]) -> list[str | None]:
+        tasks = [self._fetch_senate_detail(session, v) for v in vote_nums]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        return [None if isinstance(r, BaseException) else r for r in results]
+
+    async def _fetch_senate_detail(self, session: int, vote_num: int) -> str | None:
+        url = (
+            f"{settings.senate_lis_base_url}/roll_call_votes/"
+            f"vote{self.congress}{session}/vote_{self.congress}_{session}_{vote_num:05d}.xml"
+        )
+        async with self._sem:
+            for attempt in range(3):
+                try:
+                    resp = await self.client.get(url)
+                    if resp.status_code == 404:
+                        return None
+                    resp.raise_for_status()
+                    return resp.text
+                except httpx.HTTPError:
+                    if attempt == 2:
+                        logger.warning(
+                            "Fetch failed for Senate vote %d-%d-%d",
+                            self.congress,
+                            session,
+                            vote_num,
+                        )
+                        return None
+                    await asyncio.sleep(2**attempt + random.uniform(0, 1))
+        return None
+
+    async def _process_senate_vote(
+        self, session: int, vote_num: int, xml_text: str, session_id: str
+    ) -> None:
+        parsed = parse_senate_vote_xml(xml_text)
+        if not self._resolvable_bill(parsed, session_id):
+            return
+        event_id = senate_vote_event_id(self.congress, session, vote_num)
+        bill_id = generate_bill_id("us", session_id, normalize_vote_ref(parsed.legis_num))
+        await self._process_vote(event_id, bill_id, parsed, self._resolve_senate_member)
 
     async def _upsert_vote(self, event_id: str, bill_id: str, parsed, records: list[dict]) -> None:
         """Atomic upsert of the event and all its records in one savepoint."""
@@ -299,8 +437,12 @@ class VotesIngester(BaseIngester):
         logger.info(
             "Votes done (Congress %d %s): %d events, %d records, resolution_rate=%s, "
             "skipped_bill=%d skipped_scope=%d mismatch=%d",
-            self.congress, self.chamber,
-            self.metrics["events_created"], self.metrics["records_created"], rate,
-            self.metrics["skipped_unresolved_bill"], self.metrics["skipped_out_of_scope"],
+            self.congress,
+            self.chamber,
+            self.metrics["events_created"],
+            self.metrics["records_created"],
+            rate,
+            self.metrics["skipped_unresolved_bill"],
+            self.metrics["skipped_out_of_scope"],
             self.metrics["reconciliation_mismatch"],
         )

@@ -6,6 +6,7 @@ import pytest
 
 from src.ingestion.normalizer import generate_bill_id, normalize_identifier
 from src.ingestion.vote_parsers import (
+    build_lis_bioguide_map,
     build_member_map,
     house_vote_event_id,
     house_years_for_congress,
@@ -15,7 +16,11 @@ from src.ingestion.vote_parsers import (
     parse_house_action_date,
     parse_house_index,
     parse_house_roll_xml,
+    parse_senate_date,
+    parse_senate_vote_numbers,
+    parse_senate_vote_xml,
     reconcile,
+    senate_vote_event_id,
 )
 
 SAMPLE_HOUSE_ROLL = """<?xml version="1.0" encoding="UTF-8"?>
@@ -138,7 +143,7 @@ class TestHouseHelpers:
         assert parse_house_action_date(None) is None
 
     def test_parse_index(self):
-        html = 'foo rollnumber=12 bar rollnumber=517 baz rollnumber=3'
+        html = "foo rollnumber=12 bar rollnumber=517 baz rollnumber=3"
         assert parse_house_index(html) == 517
         assert parse_house_index("no rolls here") == 0
 
@@ -164,15 +169,15 @@ class TestBuildMemberMap:
     def test_canonical_tiebreak_and_collision(self):
         rows = [
             ("A000001", "A000001"),  # canonical
-            ("hashA", "A000001"),    # duplicate hash row for same member
-            ("hashB", "B000002"),    # lone hash row
-            ("hash1", "X000009"),    # collision: two non-canonical rows, no id==bioguide
+            ("hashA", "A000001"),  # duplicate hash row for same member
+            ("hashB", "B000002"),  # lone hash row
+            ("hash1", "X000009"),  # collision: two non-canonical rows, no id==bioguide
             ("hash2", "X000009"),
         ]
         mapping, collisions = build_member_map(rows)
-        assert mapping["A000001"] == "A000001"   # prefers canonical
-        assert mapping["B000002"] == "hashB"     # lone row
-        assert "X000009" in collisions           # ambiguous -> excluded
+        assert mapping["A000001"] == "A000001"  # prefers canonical
+        assert mapping["B000002"] == "hashB"  # lone row
+        assert "X000009" in collisions  # ambiguous -> excluded
         assert "X000009" not in mapping
 
 
@@ -192,3 +197,87 @@ class TestReconcile:
         official = {"yea": 2, "nay": 1, "present": 0, "not_voting": 1}
         computed = {"yea": 1, "nay": 1, "not_voting": 1}
         assert reconcile(computed, {}, official) is False
+
+
+SAMPLE_SENATE_VOTE = """<?xml version="1.0" encoding="UTF-8"?>
+<roll_call_vote>
+<congress>118</congress>
+<session>2</session>
+<congress_year>2024</congress_year>
+<vote_number>339</vote_number>
+<vote_date>December 21, 2024,  09:00 AM</vote_date>
+<question>On Passage of the Bill</question>
+<vote_result>Bill Passed</vote_result>
+<document>
+<document_type>H.R.</document_type>
+<document_number>10545</document_number>
+<document_name>H.R. 10545</document_name>
+</document>
+<count>
+<yeas>2</yeas>
+<nays>1</nays>
+<present/>
+<absent>1</absent>
+</count>
+<members>
+<member><lis_member_id>S354</lis_member_id><vote_cast>Yea</vote_cast></member>
+<member><lis_member_id>S001</lis_member_id><vote_cast>Yea</vote_cast></member>
+<member><lis_member_id>S002</lis_member_id><vote_cast>Nay</vote_cast></member>
+<member><lis_member_id>S003</lis_member_id><vote_cast>Not Voting</vote_cast></member>
+</members>
+</roll_call_vote>"""
+
+SAMPLE_SENATE_MENU = """<?xml version="1.0" encoding="UTF-8"?>
+<vote_summary>
+<congress>118</congress>
+<session>2</session>
+<votes>
+<vote><vote_number>00339</vote_number><issue>H.R. 10545</issue></vote>
+<vote><vote_number>00338</vote_number><issue>H.R. 82</issue></vote>
+</votes>
+</vote_summary>"""
+
+
+class TestSenateHelpers:
+    def test_event_id_padding(self):
+        assert senate_vote_event_id(118, 2, 339) == "us-senate-118-2-00339"
+
+    def test_parse_date(self):
+        assert parse_senate_date("December 21, 2024,  09:00 AM") == date(2024, 12, 21)
+        assert parse_senate_date("January 8, 2024,  05:27 PM") == date(2024, 1, 8)
+        assert parse_senate_date("garbage") is None
+        assert parse_senate_date(None) is None
+
+    def test_vote_numbers(self):
+        assert parse_senate_vote_numbers(SAMPLE_SENATE_MENU) == [338, 339]
+
+    def test_build_lis_bioguide_map(self):
+        legs = [
+            {"id": {"lis": "S354", "bioguide": "B001230"}},
+            {"id": {"bioguide": "X000001"}},  # no lis -> excluded
+            {"id": {"lis": "S999"}},  # no bioguide -> excluded
+        ]
+        assert build_lis_bioguide_map(legs) == {"S354": "B001230"}
+
+
+class TestParseSenateVoteXml:
+    def test_parses_bill_vote(self):
+        v = parse_senate_vote_xml(SAMPLE_SENATE_VOTE)
+        assert v is not None
+        assert v.chamber == "senate"
+        assert v.congress == 118
+        assert v.session == "2"
+        assert v.rollcall_num == 339
+        assert v.legis_num == "H.R. 10545"
+        assert is_bill_ref(v.legis_num) is True
+        assert v.vote_date == date(2024, 12, 21)
+        assert v.official == {"yea": 2, "nay": 1, "present": 0, "not_voting": 1}
+        assert ("S354", "Yea") in v.casts
+        assert len(v.casts) == 4
+
+    def test_nomination_is_not_bill_ref(self):
+        nom = SAMPLE_SENATE_VOTE.replace(
+            "<document_name>H.R. 10545</document_name>", "<document_name>PN1020</document_name>"
+        )
+        v = parse_senate_vote_xml(nom)
+        assert is_bill_ref(v.legis_num) is False

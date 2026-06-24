@@ -140,6 +140,69 @@ class TestProcessHouseRoll:
         assert "D000004" in ingester._unresolved_bios
 
 
+SAMPLE_SENATE_VOTE = """<?xml version="1.0" encoding="UTF-8"?>
+<roll_call_vote>
+<congress>118</congress>
+<session>2</session>
+<vote_number>339</vote_number>
+<vote_date>December 21, 2024,  09:00 AM</vote_date>
+<question>On Passage of the Bill</question>
+<vote_result>Bill Passed</vote_result>
+<document>
+<document_type>H.R.</document_type>
+<document_number>10545</document_number>
+<document_name>H.R. 10545</document_name>
+</document>
+<count>
+<yeas>2</yeas>
+<nays>1</nays>
+<present/>
+<absent>1</absent>
+</count>
+<members>
+<member><lis_member_id>S354</lis_member_id><vote_cast>Yea</vote_cast></member>
+<member><lis_member_id>S001</lis_member_id><vote_cast>Yea</vote_cast></member>
+<member><lis_member_id>S002</lis_member_id><vote_cast>Nay</vote_cast></member>
+<member><lis_member_id>S003</lis_member_id><vote_cast>Not Voting</vote_cast></member>
+</members>
+</roll_call_vote>"""
+
+
+class TestSenate:
+    def test_resolve_senate_member(self, ingester):
+        ingester._lis2bio = {"S354": "B001230"}
+        ingester._member_map = {"B001230": "B001230"}
+        assert ingester._resolve_senate_member("S354") == "B001230"
+        assert ingester._resolve_senate_member("S999") is None  # lis not in crosswalk
+        ingester._lis2bio["S001"] = "B999999"  # bioguide not in people
+        assert ingester._resolve_senate_member("S001") is None
+
+    @pytest.mark.asyncio
+    async def test_process_senate_vote_happy_path(self, ingester, mock_session):
+        ingester._lis2bio = {
+            "S354": "B001230",
+            "S001": "B000001",
+            "S002": "B000002",
+            "S003": "B000003",
+        }
+        ingester._member_map = {b: b for b in ["B001230", "B000001", "B000002", "B000003"]}
+        ingester._bill_ids = frozenset({BILL_ID})  # H.R. 10545 resolves to the same bill id
+        await ingester._process_senate_vote(2, 339, SAMPLE_SENATE_VOTE, "us-118")
+        assert ingester.metrics["events_created"] == 1
+        assert ingester.metrics["records_created"] == 4
+        assert mock_session.execute.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_process_senate_nomination_skipped(self, ingester, mock_session):
+        nom = SAMPLE_SENATE_VOTE.replace(
+            "<document_name>H.R. 10545</document_name>", "<document_name>PN1020</document_name>"
+        )
+        await ingester._process_senate_vote(2, 1, nom, "us-118")
+        assert ingester.metrics["skipped_out_of_scope"] == 1
+        assert ingester.metrics["events_created"] == 0
+        mock_session.execute.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_close(ingester):
     ingester.client.aclose = AsyncMock()
