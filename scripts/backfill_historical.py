@@ -16,6 +16,7 @@ import sys
 
 from src.database import async_session_factory
 from src.ingestion.govinfo import GovInfoIngester
+from src.ingestion.votes import VotesIngester
 
 logging.basicConfig(
     level=logging.INFO,
@@ -25,40 +26,67 @@ logger = logging.getLogger(__name__)
 
 
 async def backfill(
-    start: int, end: int, enrich: bool, enrich_only: bool, bulk_zip: bool
+    start: int,
+    end: int,
+    enrich: bool,
+    enrich_only: bool,
+    bulk_zip: bool,
+    votes: bool = False,
+    chamber: str = "house",
 ) -> None:
-    """Run GovInfo ingestion for each congress in the range."""
+    """Run GovInfo (bills) or roll-call vote ingestion for each congress in the range."""
     for congress in range(start, end + 1):
         logger.info("=" * 60)
         progress = congress - start + 1
         total = end - start + 1
-        mode = "bulk ZIP" if bulk_zip else ("enrichment" if enrich_only else "backfill")
+        if votes:
+            mode = f"roll-call votes ({chamber})"
+        else:
+            mode = "bulk ZIP" if bulk_zip else ("enrichment" if enrich_only else "backfill")
         logger.info(
             "Starting %s for Congress %d (%d of %d)",
-            mode, congress, progress, total,
+            mode,
+            congress,
+            progress,
+            total,
         )
         logger.info("=" * 60)
 
         try:
             async with async_session_factory() as session:
-                ingester = GovInfoIngester(session, congress=congress)
-                try:
-                    if bulk_zip:
-                        await ingester.ingest_from_bulk_zip()
-                    elif enrich_only:
-                        await ingester._ensure_jurisdiction()
-                        await ingester._ensure_session()
-                        await ingester.enrich_bills()
-                    else:
-                        await ingester.ingest(enrich=enrich)
-                finally:
-                    await ingester.close()
+                if votes:
+                    chambers = ["house", "senate"] if chamber == "both" else [chamber]
+                    for ch in chambers:
+                        # senate.gov's Akamai WAF blocks the IP on burst load: fetch the
+                        # Senate serially with a delay; clerk.house.gov tolerates concurrency.
+                        vote_ingester = VotesIngester(
+                            session,
+                            congress=congress,
+                            chamber=ch,
+                            concurrency=1 if ch == "senate" else 8,
+                            request_delay=0.4 if ch == "senate" else 0.0,
+                        )
+                        try:
+                            await vote_ingester.ingest()
+                        finally:
+                            await vote_ingester.close()
+                else:
+                    ingester = GovInfoIngester(session, congress=congress)
+                    try:
+                        if bulk_zip:
+                            await ingester.ingest_from_bulk_zip()
+                        elif enrich_only:
+                            await ingester._ensure_jurisdiction()
+                            await ingester._ensure_session()
+                            await ingester.enrich_bills()
+                        else:
+                            await ingester.ingest(enrich=enrich)
+                    finally:
+                        await ingester.close()
             logger.info("Completed Congress %d successfully", congress)
         except Exception:
             logger.exception("Failed Congress %d", congress)
-            logger.info(
-                "Resume with: python -m scripts.backfill_historical --start %d", congress
-            )
+            logger.info("Resume with: python -m scripts.backfill_historical --start %d", congress)
             raise
 
     logger.info("Complete: Congress %d-%d", start, end)
@@ -66,12 +94,8 @@ async def backfill(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Backfill historical federal bills")
-    parser.add_argument(
-        "--start", type=int, default=110, help="First congress (default: 110)"
-    )
-    parser.add_argument(
-        "--end", type=int, default=118, help="Last congress (default: 118)"
-    )
+    parser.add_argument("--start", type=int, default=110, help="First congress (default: 110)")
+    parser.add_argument("--end", type=int, default=118, help="Last congress (default: 118)")
     parser.add_argument(
         "--bulk-zip",
         action="store_true",
@@ -86,6 +110,17 @@ def main() -> None:
         "--no-enrich",
         action="store_true",
         help="Skip detail enrichment (list fetch only)",
+    )
+    parser.add_argument(
+        "--votes",
+        action="store_true",
+        help="Ingest roll-call votes (vote_events/vote_records) instead of bills",
+    )
+    parser.add_argument(
+        "--chamber",
+        choices=["house", "senate", "both"],
+        default="house",
+        help="Chamber for --votes (default: house; senate is Phase 2)",
     )
     parser.add_argument(
         "--api-key",
@@ -112,16 +147,27 @@ def main() -> None:
 
     modes = [args.bulk_zip, args.enrich_only, args.no_enrich]
     if sum(modes) > 1:
-        print("Error: --bulk-zip, --enrich-only, --no-enrich are mutually exclusive",
-              file=sys.stderr)
+        print(
+            "Error: --bulk-zip, --enrich-only, --no-enrich are mutually exclusive", file=sys.stderr
+        )
+        sys.exit(1)
+    if args.votes and any(modes):
+        print(
+            "Error: --votes cannot be combined with bill modes "
+            "(--bulk-zip/--enrich-only/--no-enrich)",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
     asyncio.run(
         backfill(
-            args.start, args.end,
+            args.start,
+            args.end,
             enrich=not args.no_enrich,
             enrich_only=args.enrich_only,
             bulk_zip=args.bulk_zip,
+            votes=args.votes,
+            chamber=args.chamber,
         )
     )
 

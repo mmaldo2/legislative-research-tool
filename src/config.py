@@ -35,6 +35,16 @@ class Settings(BaseSettings):
     # Ingestion
     openstates_api_url: str = "https://v3.openstates.org"
 
+    # Roll-call votes (clerk.house.gov + senate.gov LIS)
+    house_clerk_evs_base_url: str = "https://clerk.house.gov/evs"
+    senate_lis_base_url: str = "https://www.senate.gov/legislative/LIS"
+    congress_legislators_base_url: str = "https://unitedstates.github.io/congress-legislators"
+    # clerk.house.gov 403s some default library UAs; send a browser UA (verified 200).
+    vote_ingester_user_agent: str = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    )
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
