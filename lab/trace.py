@@ -60,8 +60,8 @@ def content_hash() -> str:
 def dataset_fingerprint(conn, pre) -> dict:
     """Per-run DRIFT-DETECTION stamp (NOT reproduction — gold is computed against a mutating
     live DB). Engine-portable SQL. NB: vote_events/vote_records have no updated_at, so in-place
-    count/option edits are invisible here; 1e derives the vote_records count from the precompute
-    aggregate to avoid a second full scan."""
+    count/option edits are invisible here. The vote_records count is reused from the precompute
+    aggregate (`pre.total_vote_records`) to avoid a second full scan of the 5.4M-row table."""
     cur = conn.cursor()
 
     def scalar(sql: str) -> Any:
@@ -70,7 +70,7 @@ def dataset_fingerprint(conn, pre) -> dict:
 
     return {
         "vote_events": scalar("SELECT COUNT(*) FROM vote_events"),
-        "vote_records": scalar("SELECT COUNT(*) FROM vote_records"),
+        "vote_records": pre.total_vote_records,
         "people": scalar("SELECT COUNT(*) FROM people"),
         "sessions": scalar("SELECT COUNT(*) FROM sessions"),
         "bills": scalar("SELECT COUNT(*) FROM bills"),
