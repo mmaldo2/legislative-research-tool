@@ -303,14 +303,14 @@ REQUIRED_COLUMNS = {
 - [x] `lab/trace.py`: Pydantic `TraceRecord` + nested `VerdictModel` + `solver_kind`; `write_trace` validates+appends (no per-record hashing); round-trip + `read_json_auto` green; v0 traces deleted.
 - [x] `grading_contract_hash` + `content_hash` (split) + `dataset_fingerprint` (counts + `MAX(people.updated_at)`); stability/flip tests green; hash exclusion rationale documented in `lab/README.md`. *(vote_records count is a direct COUNT for now; the derive-from-precompute-aggregate optimization lands in 1e, once the aggregate exists.)*
 - [x] `precompute`: overcount (`overcount`/`missing_official_count`, explicit `IS NULL` arm, overcount-wins precedence) + completed-congress live + **hermetic DuckDB fixtures land with 1e**; `party_majority` reserved (raises; 3 questions in `docs/condorcet/registry-open-questions.md`); event→congress slot reserved. *(Verified: 10 sessions = 1 row/congress, so the simple identifier path holds; live DB shows 0 excluded events, completed=110–118, total_vote_records matches COUNT(*).)*
-- [ ] Guard: regex determinism scan over all SQL (empty); DuckDB+literals correctness (hermetic, green); fixture-import-isolation test (honestly scoped). Differential deferred to Phase 2 (noted in plan + parent plan).
-- [ ] Drift: `ix_vote_records_person_id` on the model; `REQUIRED_COLUMNS` manifest; ORM-reflection test (L1, hermetic); live `information_schema` test (L2, `requires_pg`); drift comments in 4 model files.
+- [x] Guard: regex determinism scan over all SQL (AST-extracted literals, empty); DuckDB+literals correctness (hermetic, green — incl. the vote_lookup JOIN with unquoted `vr.option`, verified portable); fixture-import-isolation test (honestly scoped). Differential deferred to Phase 2.
+- [x] Drift: `ix_vote_records_person_id` on the model (matches migration 003); `REQUIRED_COLUMNS` manifest; ORM-reflection test (L1, hermetic); live `information_schema` test (L2, `requires_pg`, green vs live DB); drift comments in 4 model files.
 
 ### Non-Functional / Quality Gates
-- [ ] All gold/precompute SQL engine-portable (regex guard + runs on DuckDB); subscores serialize as numbers, not booleans.
-- [ ] Precompute once-per-run (no per-instance scans); fingerprint reuses the precompute aggregate (one heavy pass, not two).
-- [ ] Full `uv run python -m pytest` green; `ruff check`/`ruff format` clean (line length 100); `uv sync --all-extras`; `requires_pg` marker registered.
-- [ ] No hand-authored production gold (literals are test expectations only); the frozen-core edits in this phase are the intended one-time re-freeze (noted in PR).
+- [x] All gold/precompute SQL engine-portable (regex guard + runs on DuckDB); subscores serialize as numbers, not booleans.
+- [x] Precompute once-per-run (no per-instance scans); fingerprint reuses the precompute aggregate (one heavy pass, not two).
+- [x] `ruff check`/`ruff format` clean (line length 100); `requires_pg` marker registered; 44 lab tests + 477 project tests green. *(`test_api`/`test_prediction` collection errors are pre-existing env: `lightgbm` not installed — unrelated to this work.)*
+- [x] No hand-authored production gold (literals are test expectations only); the frozen-core edits in this phase are the intended one-time re-freeze (noted in PR).
 
 ## Alternative Approaches Considered
 - **Graders return `Verdict` directly** — rejected: composing above pure 0/1 primitives keeps "never weaken a grader" structurally clear.

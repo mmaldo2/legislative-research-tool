@@ -6,6 +6,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.database import Base
 
 
+# NOTE: the lab/ benchmark harness (templates.py, precompute.py, trace.py) has hardcoded SQL
+# referencing these columns. Update those consumers if you rename or remove columns here.
 class VoteEvent(Base):
     __tablename__ = "vote_events"
 
@@ -29,7 +31,7 @@ class VoteRecord(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     vote_event_id: Mapped[str] = mapped_column(ForeignKey("vote_events.id"), nullable=False)
-    person_id: Mapped[str] = mapped_column(ForeignKey("people.id"), nullable=False)
+    person_id: Mapped[str] = mapped_column(ForeignKey("people.id"), nullable=False, index=True)
     option: Mapped[str] = mapped_column(String, nullable=False)
 
     vote_event: Mapped["VoteEvent"] = relationship(back_populates="records")
