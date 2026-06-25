@@ -1,7 +1,7 @@
 ---
 title: Federal Roll-Call Vote Ingester (Congress 110–119)
 type: feat
-status: active
+status: completed
 date: 2026-06-24
 origin: docs/scopes/2026-06-24-roll-call-vote-ingester-scope.md
 ---
@@ -150,9 +150,10 @@ House pure functions + `normalize_vote_ref` + `normalize_vote_option` + `vote_ev
 ### Phase 2 — Senate ingester + lis→bioguide crosswalk — ✅ DONE (2026-06-24)
 `build_lis_bioguide_map` (327 entries); Senate menu+detail parsers; Senate full-date parse; document→bill resolution; nomination(`PN`)/amendment skip; shared `_process_vote` across chambers; `--chamber senate`; tests. **Pilot Congress 118 Senate: 145 events / 14,498 records, 100% resolution, 0% bill-skip, 0 mismatch, 0 orphans; 541 correctly out-of-scope.** Senate vote 339 (HR10545, 85/11/4) hand-matches; both chambers now linked to HR10545.
 
-### Phase 3 — Full backfill + verification — 🟡 PARTIAL (2026-06-24)
-`--chamber both` 110–119, per-event resumability. **House: COMPLETE** — all 10 congresses, ~12,136 events / ~4.7M records, 100% resolution for 110–117, 0 mismatch, **0 orphan rows** across the whole corpus. **119 House: 90.7% resolution + 60 bill-skips** — the expected current-congress gap (new members not yet in `people`; 119 bills still being ingested) — i.e. the **H-D** signal at the newest congress.
-**Senate: BLOCKED at 4/10 congresses** (110/113/115/118 = 358 events). senate.gov's **Akamai WAF returns 403 (IP rate-limit)** after the heavy backfill; per-vote fetching trips it. The menu-fetch fix (retry + loud `senate_menu_failures` warning, never a silent empty) surfaces this rather than hiding it. **To finish Senate:** wait for the WAF cooldown then re-run gently (low concurrency + delay), or add a VoteView-bulk Senate fallback (no per-request fetching). Grand total so far: **12,494 events / 5,264,721 records, 0 orphans.**
+### Phase 3 — Full backfill + verification — ✅ COMPLETE (2026-06-24)
+`--chamber both` 110–119, per-event resumability. **House: all 10 congresses** (~12,136 events), 100% resolution for 110–117. **Senate: all 10 congresses** (1,712 events) after the WAF-gentle re-run (serial + 0.4s delay; the burst load tripped senate.gov's Akamai WAF — fixed by lowering concurrency + a request delay, and the menu-fetch now retries + warns loudly instead of silently dropping coverage). **Grand total: 13,848 events / 5,399,568 records, 0 orphan persons, 0 orphan bills, 6,102 distinct bills with votes.**
+- **119 (both chambers) ~90–98% resolution + bill-skips** = expected current-congress gap (new members not yet in `people`; some 119 bills not yet ingested) — the **H-D** signal, at the newest congress.
+- **12 Senate events quarantined** (reconciliation mismatch, ~0.7%) — skipped not miscounted; likely VP tie-breakers (official `<count>` includes the VP, who isn't in the `<member>` list). Follow-up: handle the `<tie_breaker>` element to recover these.
 
 ### Future work (out of v1 scope — separate plans)
 Persist `Person.lis_id` (column + migration; **has direct precedent in `openstates_id`/`legiscan_id`** — promote to the critical path if the senator member-resolution gate is missed in Phase 2). VoteView cross-validation pass. Backfill historical `people` if resolution rate falls short (see flags).
