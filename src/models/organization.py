@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import DateTime, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -12,10 +12,11 @@ from src.database import Base
 
 class Organization(Base):
     __tablename__ = "organizations"
+    __table_args__ = (UniqueConstraint("slug", name="organizations_slug_key"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String, nullable=False)
-    slug: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    slug: Mapped[str] = mapped_column(String, nullable=False, index=True)
     plan: Mapped[str] = mapped_column(String, nullable=False, default="free")  # free|pro|enterprise
     settings: Mapped[dict | None] = mapped_column(JSONB, default=dict)
 

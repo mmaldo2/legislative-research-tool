@@ -26,6 +26,8 @@ class AiAnalysis(Base):
     cost_usd: Mapped[Decimal | None] = mapped_column(Numeric(10, 6))
     confidence: Mapped[Decimal | None] = mapped_column(Numeric(3, 2))
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default="now()", index=True
+    )
 
     bill: Mapped["Bill"] = relationship(back_populates="analyses")

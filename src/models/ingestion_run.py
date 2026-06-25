@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String
+from sqlalchemy import DateTime, Index, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -9,6 +9,7 @@ from src.database import Base
 
 class IngestionRun(Base):
     __tablename__ = "ingestion_runs"
+    __table_args__ = (Index("ix_ingestion_runs_source_started_at", "source", "started_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(String, nullable=False)  # govinfo, openstates, legiscan

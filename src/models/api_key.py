@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -12,6 +12,7 @@ from src.database import Base
 
 class APIKey(Base):
     __tablename__ = "api_keys"
+    __table_args__ = (UniqueConstraint("key_hash", name="api_keys_key_hash_key"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     org_id: Mapped[uuid.UUID] = mapped_column(
@@ -22,7 +23,7 @@ class APIKey(Base):
     )
     name: Mapped[str] = mapped_column(String, nullable=False)
     prefix: Mapped[str] = mapped_column(String, nullable=False, default="sk_live_")
-    key_hash: Mapped[str] = mapped_column(String, nullable=False, unique=True, index=True)
+    key_hash: Mapped[str] = mapped_column(String, nullable=False, index=True)
     key_hint: Mapped[str] = mapped_column(String, nullable=False)  # last 4 chars
     scopes: Mapped[list | None] = mapped_column(JSONB, default=list)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)

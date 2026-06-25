@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import ARRAY, Date, DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import ARRAY, Date, DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -11,7 +11,13 @@ from src.database import Base
 # Update that file if you rename or remove columns here.
 class Bill(Base):
     __tablename__ = "bills"
-    __table_args__ = (UniqueConstraint("jurisdiction_id", "session_id", "identifier"),)
+    __table_args__ = (
+        UniqueConstraint("jurisdiction_id", "session_id", "identifier"),
+        Index("ix_bills_created_at", "created_at"),
+        Index("ix_bills_updated_at", "updated_at"),
+        Index("ix_bills_jurisdiction_created_at", "jurisdiction_id", "created_at"),
+        Index("ix_bills_session_created_at", "session_id", "created_at"),
+    )
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     jurisdiction_id: Mapped[str] = mapped_column(
@@ -33,6 +39,7 @@ class Bill(Base):
 
     source_urls: Mapped[list[str] | None] = mapped_column(JSONB, default=None)
     last_ingested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    enriched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default="now()")
