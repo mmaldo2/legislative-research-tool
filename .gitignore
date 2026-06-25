@@ -14,3 +14,7 @@ data/exports/
 .npm-cache/
 .tmp/
 src/prediction/models/
+
+# Condorcet Lab eval traces are run artifacts (data, not source); keep the dir, ignore traces.
+lab/runs/*.jsonl
+!lab/runs/.gitkeep

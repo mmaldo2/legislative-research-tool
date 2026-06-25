@@ -298,9 +298,9 @@ REQUIRED_COLUMNS = {
 
 ### Functional
 - [x] `lab/scoring.py` frozen: `Verdict` (+`__post_init__`), `Subscores` TypedDict, `score_verdict(... , *, is_refusal)`; six worked rows asserted incl. subscore **types** (`float|None`, never bool). *(feedback-substring assertions deferred to 1b, where `build_verdict` authors feedback.)*
-- [ ] `grade()` returns `Verdict`; pure primitives unchanged; `build_verdict` float-coerces and authors derived feedback.
-- [ ] Atomic 1b+1c: `harness.run()` calls `precompute`→`RunContext`→`generate(...,pre)`→`build_verdict`→`write_trace`; empty-DB raises; `Instance.refusal_reason` wired; `run.py`'s 4 sites use `v.passed`; all three invariants green on live Postgres.
-- [ ] `lab/trace.py`: Pydantic `TraceRecord` + nested `VerdictModel` + `solver_kind`; `write_trace` validates+appends (no per-record hashing); round-trip + `read_json_auto` green; v0 traces deleted.
+- [x] `grade()` returns `Verdict`; pure primitives unchanged; `build_verdict` float-coerces and authors derived feedback.
+- [x] Atomic 1b+1c: `harness.run()` calls `precompute`→`RunContext`→`generate(...,pre)`→`build_verdict`→`write_trace`; empty-DB raises; `Instance.refusal_reason` wired; `run.py`'s 4 sites use `v.passed`; all three invariants green on live Postgres.
+- [x] `lab/trace.py`: Pydantic `TraceRecord` + nested `VerdictModel` + `solver_kind`; `write_trace` validates+appends (no per-record hashing); round-trip + `read_json_auto` green; v0 traces deleted.
 - [ ] `grading_contract_hash` + `content_hash` (split) + `dataset_fingerprint` (counts incl. derived vote_records count + `MAX(people.updated_at)`); stability/flip tests green; hash exclusion rationale documented.
 - [ ] `precompute`: overcount (`overcount`/`missing_official_count`, explicit `IS NULL` arm, overcount-wins precedence) + completed-congress (all-sessions if multi-session) live + **hermetic fixtures land with 1e**; `party_majority` reserved (raises; 3 questions in `docs/condorcet/registry-open-questions.md`); event→congress slot reserved.
 - [ ] Guard: regex determinism scan over all SQL (empty); DuckDB+literals correctness (hermetic, green); fixture-import-isolation test (honestly scoped). Differential deferred to Phase 2 (noted in plan + parent plan).

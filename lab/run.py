@@ -1,8 +1,9 @@
 """CLI: python -m lab.run --n 20 --seed 42
 
 Runs Family-1 Template #1 against the SQL-oracle + wrong-baseline + over-refuse solvers
-on live Postgres, logs a JSONL trace, and asserts the v1 machinery invariants:
-oracle passes 100%, wrong-baseline fails everything, over-refuse fails every answerable item.
+on live Postgres, logs a JSONL trace, and asserts the v1 machinery invariants in Verdict
+terms: oracle passes 100%, wrong-baseline passes nothing (answerable = attempted-but-wrong),
+over-refuse over-refuses every answerable item.
 """
 
 import argparse
@@ -14,9 +15,9 @@ from lab.solvers import OverRefuseSolver, SqlOracleSolver, WrongBaselineSolver
 from src.ingestion.vote_parsers import OPTION_BUCKETS
 
 
-def _counts(rows: list[tuple[str, bool, bool]]) -> tuple[int, int, int, int]:
-    ans = [p for (_id, ref, p) in rows if not ref]
-    ref = [p for (_id, ref, p) in rows if ref]
+def _counts(rows) -> tuple[int, int, int, int]:
+    ans = [v.passed for (_id, ref, v) in rows if not ref]
+    ref = [v.passed for (_id, ref, v) in rows if ref]
     return sum(ans), len(ans), sum(ref), len(ref)
 
 
@@ -32,16 +33,25 @@ def main() -> int:
     print(f"Template #1 (vote_lookup), n={args.n}, seed={args.seed}")
     for name, rows in results.items():
         ap, at, rp, rt = _counts(rows)
-        total_p = sum(p for *_, p in rows)
-        print(f"  {name:14} pass {total_p}/{len(rows)}  (answerable {ap}/{at}, refusal {rp}/{rt})")
+        passed = sum(v.passed for *_, v in rows)
+        mean_score = sum(v.score for *_, v in rows) / len(rows)
+        print(
+            f"  {name:14} pass {passed}/{len(rows)} "
+            f"(answerable {ap}/{at}, refusal {rp}/{rt})  mean_score={mean_score:.2f}"
+        )
 
     oracle = results["oracle"]
     wrong = results["wrong-baseline"]
     over = results["over-refuse"]
-    assert oracle and all(p for *_, p in oracle), "INVARIANT FAIL: oracle must pass 100%"
-    assert not any(p for *_, p in wrong), "INVARIANT FAIL: wrong-baseline must fail every instance"
-    assert not any(p for (_id, ref, p) in over if not ref), (
-        "INVARIANT FAIL: over-refuse must fail every answerable instance"
+    assert oracle and all(v.passed for *_, v in oracle), "INVARIANT FAIL: oracle must pass 100%"
+    assert not any(v.passed for *_, v in wrong), "INVARIANT FAIL: wrong-baseline must pass nothing"
+    assert all(
+        v.subscores["decision_correct"] == 1.0 and v.subscores["answer_correct"] == 0.0
+        for (_id, ref, v) in wrong
+        if not ref
+    ), "INVARIANT FAIL: wrong-baseline answerable must be attempted-but-wrong"
+    assert all(v.subscores["decision_correct"] == 0.0 for (_id, ref, v) in over if not ref), (
+        "INVARIANT FAIL: over-refuse must over-refuse every answerable instance"
     )
     print("INVARIANTS OK: oracle 100% · wrong-baseline 0% · over-refuse fails all answerable")
     return 0

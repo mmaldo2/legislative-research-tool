@@ -28,10 +28,23 @@ class TestRefusalCorrect:
 
 
 class TestDispatch:
-    def test_exact(self):
-        assert grade("exact", "nay", "nay")
-        assert not grade("exact", "nay", "yea")
+    """grade() now returns a Verdict composed from the pure primitives above."""
 
-    def test_refusal(self):
-        assert grade("refusal_correct", REFUSAL, REFUSAL)
-        assert not grade("refusal_correct", REFUSAL, "present")
+    def test_exact_correct(self):
+        v = grade("exact", "nay", "nay", is_refusal=False)
+        assert v.passed and v.score == 1.0
+        assert v.subscores["decision_correct"] == 1.0
+        assert v.subscores["answer_correct"] == 1.0
+
+    def test_exact_wrong_is_attempted_partial(self):
+        v = grade("exact", "nay", "yea", is_refusal=False)
+        assert not v.passed and v.score == 0.5  # attempted (decision 1) but wrong (answer 0)
+        assert "yea" in v.feedback and "nay" in v.feedback
+
+    def test_refusal_correct(self):
+        v = grade("refusal_correct", REFUSAL, REFUSAL, is_refusal=True)
+        assert v.passed and v.score == 1.0
+
+    def test_refusal_fabricated_hard_floor(self):
+        v = grade("refusal_correct", REFUSAL, "present", is_refusal=True)
+        assert not v.passed and v.score == 0.0

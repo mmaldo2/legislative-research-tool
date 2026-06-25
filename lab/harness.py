@@ -1,14 +1,16 @@
-"""FROZEN harness core: DB connection, instance type, gold-validation gate, run loop, JSONL trace.
+"""FROZEN harness core: DB connection, instance type, gold-validation gate, run loop.
 
 Mirrors autoresearch/prepare.py's discipline: raw psycopg2 against the same Postgres,
 one connection per run, gold computed by trusted SQL. The run loop, the gold-validation
 gate, and the grading dispatch are the frozen core — not edited to make a task pass.
+
+The connection is opened only for the load phase (precompute + fingerprint + generate);
+solvers and graders touch no DB in v1, so it is closed before the solve/grade/write loop.
 """
 
-import json
 import os
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -16,6 +18,15 @@ from typing import Any
 import psycopg2
 
 from lab.graders import REFUSAL, grade
+from lab.precompute import precompute
+from lab.trace import (
+    RunContext,
+    build_record,
+    content_hash,
+    dataset_fingerprint,
+    grading_contract_hash,
+    write_trace,
+)
 
 DEFAULT_DB_URL = "postgresql+asyncpg://legis:legis_dev@localhost:5432/legis"
 RUNS_DIR = Path("lab/runs")
@@ -40,6 +51,7 @@ class Instance:
     gold: Any  # the trusted-SQL gold answer, or REFUSAL
     grader: str  # "exact" | "refusal_correct"
     is_refusal: bool  # True => this is a "not in the data" instance
+    refusal_reason: str | None = None  # e.g. "person_not_in_data" (refusal instances only)
 
 
 def validate_gold(inst: Instance, valid_options: set[str]) -> None:
@@ -62,16 +74,27 @@ def validate_gold(inst: Instance, valid_options: set[str]) -> None:
 
 
 def run(template, solvers, n: int, seed: int, valid_options: set[str]) -> dict:
-    """Generate instances for one template, run each solver, grade, and log a JSONL trace.
+    """Generate instances for one template, run each solver, grade to a Verdict, and log a
+    validated JSONL trace via the single write_trace chokepoint.
 
-    Returns per-solver results: {solver_name: [(instance_id, is_refusal, passed), ...]}.
+    Returns per-solver results: {solver_name: [(instance_id, is_refusal, verdict), ...]}.
     """
     conn = get_connection()
     try:
-        instances = template.generate(conn, n, seed)
+        pre = precompute(conn)
+        ctx = RunContext(
+            grading_contract_hash=grading_contract_hash(),
+            content_hash=content_hash(),
+            dataset_fingerprint=dataset_fingerprint(conn, pre),
+        )
+        instances = template.generate(conn, n, seed, pre)
     finally:
         conn.close()  # load-phase only; solvers/graders touch no DB in v1
 
+    if not instances:
+        raise RuntimeError(
+            f"no instances generated (empty/short DB?); fingerprint={ctx.dataset_fingerprint}"
+        )
     for inst in instances:
         validate_gold(inst, valid_options)
 
@@ -79,27 +102,12 @@ def run(template, solvers, n: int, seed: int, valid_options: set[str]) -> dict:
     ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
     out_path = RUNS_DIR / f"{ts}.jsonl"
 
-    results: dict[str, list[tuple[str, bool, bool]]] = {s.name: [] for s in solvers}
-    with open(out_path, "a", encoding="utf-8") as f:
+    results: dict[str, list[tuple[str, bool, Any]]] = {s.name: [] for s in solvers}
+    with open(out_path, "a", encoding="utf-8") as fh:
         for solver in solvers:
             for inst in instances:
                 answer = solver.solve(inst)
-                passed = grade(inst.grader, inst.gold, answer)
-                results[solver.name].append((inst.instance_id, inst.is_refusal, passed))
-                f.write(
-                    json.dumps(
-                        {
-                            **asdict(inst),
-                            "solver": solver.name,
-                            "answer": answer,
-                            "pass": passed,
-                            "seed": seed,
-                            "engine": "postgres",
-                            "model": solver.name,  # sentinel until the live-agent slice
-                            "prompt_version": None,
-                            "cost": None,
-                        }
-                    )
-                    + "\n"
-                )
+                verdict = grade(inst.grader, inst.gold, answer, is_refusal=inst.is_refusal)
+                write_trace(build_record(inst, solver, answer, verdict, ctx, seed), fh)
+                results[solver.name].append((inst.instance_id, inst.is_refusal, verdict))
     return results

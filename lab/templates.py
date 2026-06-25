@@ -19,8 +19,13 @@ def _in_clause(n: int) -> str:
     return ",".join(["%s"] * n)
 
 
-def generate(conn, n: int, seed: int) -> list[Instance]:
-    """Generate ~n answerable + a proportional refusal set for Template #1."""
+def generate(conn, n: int, seed: int, precomputed) -> list[Instance]:
+    """Generate ~n answerable + a proportional refusal set for Template #1.
+
+    `precomputed` is accepted for the frozen run-loop signature but unused here: a single
+    member's recorded option is unambiguous even on an overcounted event, so vote_lookup
+    consults neither the overcount nor the completed-congress sets.
+    """
     cur = conn.cursor()
     instances: list[Instance] = []
 
@@ -83,6 +88,7 @@ def generate(conn, n: int, seed: int) -> list[Instance]:
                     gold=REFUSAL,
                     grader="refusal_correct",
                     is_refusal=True,
+                    refusal_reason="person_not_in_data",
                 )
             )
     return instances
