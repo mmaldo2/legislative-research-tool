@@ -1,7 +1,7 @@
 ---
 title: "feat: Family 1 live-agent slice (Phase A — vote_lookup)"
 type: feat
-status: active
+status: completed
 date: 2026-06-26
 revision: 2  # rev 2 after the 5-lens adversarial panel (2 blockers + integrity MAJORs folded)
 ---
@@ -151,7 +151,7 @@ Phase 0 (auth spike) ──gate(X|W)──> A1 (get_vote_event + get_bill_detail
 
 ## Phase A5 — live smoke (MANUAL acceptance, not CI)
 
-- [ ] Backend resolved (Phase 0) + Docker Postgres up: `uv run python -m lab.run --template vote_lookup --agent --n 10`. Confirm: loop runs end-to-end; agent calls `get_vote_event` then `submit_answer`; answers graded; a `solver_kind="agent"` JSONL trace is written **with non-empty `trajectory` + real `raw` prose + `latency_ms`**; refusal instances handled (agent refuses when the asked-about member is absent from the records). Record the observed pass rate (measurement; no target). Makes real API/SDK calls — NEVER a CI test.
+- [x] Live smoke DONE (`--model` flag added to pin the agent model). **haiku (`claude-haiku-4-5`): 13/13** clean — every pass retrieved (no-retrieval=0), 0 format-fails, 0 errors; real traces inspected (genuine `get_vote_event` → `submit_answer`, evidence-based refusals). **sonnet (`claude-sonnet-4-6`): rate-limited (429 on all 13)** — the harness recorded it gracefully (agent-errors=13, WARNING fired, no crash, token redacted in the trace) rather than crashing or misreading it as agent failure. Difficulty signal: vote_lookup is **trivial for current agents** (even haiku aces it). Sonnet/opus measurement deferred to the Option W (Agent SDK, subscription-native) backend in the next slice.
 
 ---
 
