@@ -38,6 +38,7 @@ class WrongBaselineSolver(_DeterministicSolver):
       - refusal item:  fabricate a non-refusal option (didn't refuse -> wrong);
       - dict gold:     perturb the first non-bool int field by +1 (same keys -> shape valid);
       - set gold:      ADD a guaranteed-absent sentinel (never remove -> empty gold stays wrong);
+      - bare int gold: +1 (a well-formed wrong int -> attempted-but-wrong, not a format-fail);
       - scalar option: a different valid option.
     """
 
@@ -54,6 +55,8 @@ class WrongBaselineSolver(_DeterministicSolver):
             raise AssertionError(f"composite gold has no int field to perturb: {gold!r}")
         if isinstance(gold, set | list | tuple):
             return set(gold) | {"NX-wrong"}  # add a provably-absent id
+        if isinstance(gold, int) and not isinstance(gold, bool):
+            return gold + 1  # bare int (e.g. defection count) -> a different, well-formed int
         for opt in OPTION_BUCKETS:
             if opt != gold:
                 return opt

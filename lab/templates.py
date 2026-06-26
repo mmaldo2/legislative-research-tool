@@ -9,6 +9,7 @@ We do NOT claim an eligible/ineligible distinction (the schema can't support it)
 
 from collections import defaultdict
 from types import SimpleNamespace
+from typing import Literal
 
 from lab.generate import pick_one, sample
 from lab.graders import REFUSAL
@@ -20,6 +21,8 @@ TEMPLATE_CLOSEST = "family1.closest_by_margin"
 TEMPLATE_MEMBER_SUMMARY = "family1.member_summary"
 TEMPLATE_PAIRWISE = "family1.pairwise_agreement"
 TEMPLATE_PARTY_BREAKDOWN = "family1.party_breakdown"
+TEMPLATE_PARTY_DEFECTION = "family1.party_defection"
+TEMPLATE_CROSSED_PARTY = "family1.crossed_party"
 CLOSEST_K = 5  # how many "closest" roll calls a closest_by_margin instance asks for
 
 
@@ -509,6 +512,55 @@ def _party_eligible_events(conn, precomputed) -> frozenset[str]:
     return frozenset((completed_dated & precomputed.complete_events) - not_exactly_one)
 
 
+def _party_majority_side(yea: int, nay: int) -> Literal["yea", "nay"] | None:
+    """The blessed `party_majority` definition (RESOLVED registry entry): the side a STRICT majority
+    of the party's yea+nay voters took. Denominator = yea+nay voters (absences/present excluded). A
+    tie or zero voters -> None (no majority -> the (party, event) is excluded; never a guess).
+    """
+    if yea > nay:
+        return "yea"
+    if nay > yea:
+        return "nay"
+    return None
+
+
+def _event_party_splits(conn, eid: str) -> dict[str, dict[str, int]]:
+    """{party: {"yea": n, "nay": m}} for one event, by VOTE-TIME party (the half-open as-of join),
+    yea/nay only, 0-filled. Shared by party_breakdown + party_defection."""
+    cur = conn.cursor()
+    cur.execute(
+        'SELECT pps.party, vr."option", COUNT(*) '
+        "FROM vote_records vr "
+        "JOIN vote_events ve ON ve.id = vr.vote_event_id "
+        "JOIN person_party_spans pps ON pps.person_id = vr.person_id "
+        "AND ve.vote_date >= pps.start_date AND ve.vote_date < pps.end_date "
+        "WHERE vr.vote_event_id = %s AND vr.\"option\" IN ('yea', 'nay') "
+        'GROUP BY pps.party, vr."option"',
+        (eid,),
+    )
+    splits: dict[str, dict[str, int]] = {}
+    for party, option, count in cur.fetchall():
+        splits.setdefault(party, {"yea": 0, "nay": 0})[option] += count
+    return splits
+
+
+def _eligible_party_sides(
+    splits: dict[str, dict[str, int]],
+) -> dict[str, Literal["yea", "nay"]]:
+    """The SINGLE home of the defection/crossed eligibility predicate: parties with >=2 yea/nay
+    voters AND a non-null (strict) majority -> {party: majority_side}. A tie is excluded (null
+    majority); a 1-member party is excluded by >=2. (party_breakdown deliberately does NOT use this
+    — its counts-only breakdown tolerates ties; it keeps its own >=2-only filter.)"""
+    out: dict[str, Literal["yea", "nay"]] = {}
+    for party, c in splits.items():
+        if c["yea"] + c["nay"] < 2:
+            continue
+        side = _party_majority_side(c["yea"], c["nay"])
+        if side is not None:
+            out[party] = side
+    return out
+
+
 def generate_party_breakdown(conn, n: int, seed: int, precomputed) -> list[Instance]:
     """Template #4 (party breakdown): a single party's yea/nay split on one roll call, using
     VOTE-TIME party (the half-open as-of join on person_party_spans — NEVER people.party, which is
@@ -517,8 +569,8 @@ def generate_party_breakdown(conn, n: int, seed: int, precomputed) -> list[Insta
     Counts-only, single-party-per-instance. Samples only `_party_eligible_events` (complete ∩
     exactly-one-span ∩ completed-congress) and a party with **≥2** yea/nay voters on the event (a
     breakdown needs ≥2 to be a real split; excludes trivial single-member items that duplicate
-    vote_lookup — party-agnostic, no D/R allowlist). Gold = `{yea, nay}`, 0-filled (both keys always
-    present so grade_fields never key-mismatches).
+    vote_lookup — party-agnostic, no D/R allowlist; tie-tolerant since it's counts-only). Gold =
+    `{yea, nay}`, 0-filled (both keys always present so grade_fields never key-mismatches).
     """
     cur = conn.cursor()
     instances: list[Instance] = []
@@ -533,21 +585,8 @@ def generate_party_breakdown(conn, n: int, seed: int, precomputed) -> list[Insta
         motions = {r[0]: r[1] for r in cur.fetchall()}
 
     for eid in chosen:
-        # ONE query: every party's yea/nay on this event, via the vote-time as-of join.
-        cur.execute(
-            'SELECT pps.party, vr."option", COUNT(*) '
-            "FROM vote_records vr "
-            "JOIN vote_events ve ON ve.id = vr.vote_event_id "
-            "JOIN person_party_spans pps ON pps.person_id = vr.person_id "
-            "AND ve.vote_date >= pps.start_date AND ve.vote_date < pps.end_date "
-            "WHERE vr.vote_event_id = %s AND vr.\"option\" IN ('yea', 'nay') "
-            'GROUP BY pps.party, vr."option"',
-            (eid,),
-        )
-        by_party: dict[str, dict[str, int]] = {}
-        for party, option, count in cur.fetchall():
-            by_party.setdefault(party, {"yea": 0, "nay": 0})[option] += count
-        # a "breakdown" needs >=2 yea/nay voters; excludes the trivial single-member case.
+        by_party = _event_party_splits(conn, eid)
+        # a "breakdown" needs >=2 yea/nay voters; excludes the trivial single-member case (tie OK).
         candidates = sorted(p for p, c in by_party.items() if c["yea"] + c["nay"] >= 2)
         if not candidates:
             continue
@@ -591,6 +630,135 @@ def generate_party_breakdown(conn, n: int, seed: int, precomputed) -> list[Insta
     return instances
 
 
+def generate_party_defection(conn, n: int, seed: int, precomputed) -> list[Instance]:
+    """Template #5 (party defection): how many {party} members voted AGAINST their party's majority.
+    gold = min(yea, nay) (the minority/against-majority count), a bare int. Vote-time party; samples
+    an eligible (event, party) with a NON-NULL majority and >=2 yea/nay voters (a tied party has no
+    majority -> excluded, never a guessed side)."""
+    cur = conn.cursor()
+    instances: list[Instance] = []
+    chosen = sample(sorted(_party_eligible_events(conn, precomputed)), n, seed)
+
+    motions: dict[str, str | None] = {}
+    if chosen:
+        cur.execute(
+            f"SELECT id, motion_text FROM vote_events WHERE id IN ({_in_clause(len(chosen))})",
+            chosen,
+        )
+        motions = {r[0]: r[1] for r in cur.fetchall()}
+
+    for eid in chosen:
+        splits = _event_party_splits(conn, eid)
+        eligible = _eligible_party_sides(splits)  # {party: majority_side}; non-null majority, >=2
+        if not eligible:
+            continue
+        party = pick_one(sorted(eligible), seed)
+        c = splits[party]
+        defectors = min(c["yea"], c["nay"])  # the non-majority (minority) side count
+        motion = (motions.get(eid) or "the recorded motion").strip()
+        instances.append(
+            Instance(
+                instance_id=f"{TEMPLATE_PARTY_DEFECTION}:{seed}:{eid}:{party}",
+                template_id=TEMPLATE_PARTY_DEFECTION,
+                tier="C",
+                params={"vote_event_id": eid, "party": party},
+                prompt=f"On roll call {eid} ({motion}), how many members of the {party} party "
+                f"voted against their party's majority?",
+                gold=defectors,
+                grader="exact_int",
+                is_refusal=False,
+            )
+        )
+
+    instances.extend(_party_event_refusals(cur, TEMPLATE_PARTY_DEFECTION, n, seed))
+    return instances
+
+
+def generate_crossed_party(conn, n: int, seed: int, precomputed) -> list[Instance]:
+    """Template #6 (crossed party): WHICH {party} members crossed party lines (voted against their
+    party's majority). gold = the SET of person_ids on the minority side (∅ if unanimous). ONE
+    per-event (party, option, person_id) query -> counts + ids from the SAME rows, so
+    len(gold) == min(yea, nay) holds by construction (asserted)."""
+    cur = conn.cursor()
+    instances: list[Instance] = []
+    chosen = sample(sorted(_party_eligible_events(conn, precomputed)), n, seed)
+
+    motions: dict[str, str | None] = {}
+    if chosen:
+        cur.execute(
+            f"SELECT id, motion_text FROM vote_events WHERE id IN ({_in_clause(len(chosen))})",
+            chosen,
+        )
+        motions = {r[0]: r[1] for r in cur.fetchall()}
+
+    for eid in chosen:
+        cur.execute(
+            'SELECT pps.party, vr."option", vr.person_id '
+            "FROM vote_records vr "
+            "JOIN vote_events ve ON ve.id = vr.vote_event_id "
+            "JOIN person_party_spans pps ON pps.person_id = vr.person_id "
+            "AND ve.vote_date >= pps.start_date AND ve.vote_date < pps.end_date "
+            "WHERE vr.vote_event_id = %s AND vr.\"option\" IN ('yea', 'nay')",
+            (eid,),
+        )
+        splits: dict[str, dict[str, int]] = {}
+        ids: dict[str, dict[str, list[str]]] = {}
+        for party, option, pid in cur.fetchall():
+            splits.setdefault(party, {"yea": 0, "nay": 0})[option] += 1
+            ids.setdefault(party, {"yea": [], "nay": []})[option].append(pid)
+        eligible = _eligible_party_sides(splits)
+        if not eligible:
+            continue
+        party = pick_one(sorted(eligible), seed)
+        minority = "nay" if eligible[party] == "yea" else "yea"
+        crossers = set(ids[party][minority])
+        assert len(crossers) == min(splits[party]["yea"], splits[party]["nay"]), (
+            f"{eid}/{party}: crosser set size != defection count"
+        )
+        motion = (motions.get(eid) or "the recorded motion").strip()
+        instances.append(
+            Instance(
+                instance_id=f"{TEMPLATE_CROSSED_PARTY}:{seed}:{eid}:{party}",
+                template_id=TEMPLATE_CROSSED_PARTY,
+                tier="C",
+                params={"vote_event_id": eid, "party": party},
+                prompt=f"On roll call {eid} ({motion}), which members of the {party} party crossed "
+                f"party lines (voted against their party's majority)? List the member ids.",
+                gold=crossers,
+                grader="set_match",
+                is_refusal=False,
+            )
+        )
+
+    instances.extend(_party_event_refusals(cur, TEMPLATE_CROSSED_PARTY, n, seed))
+    return instances
+
+
+def _party_event_refusals(cur, template_id: str, n: int, seed: int) -> list[Instance]:
+    """Shared refusal twins for the party-keyed event templates: synthetic nonexistent vote_event
+    ids, proven absent before emit, gold=REFUSAL."""
+    n_refusal = max(3, n // 4)
+    synthetic = [f"NX-EVENT-{seed}-{i:04d}" for i in range(n_refusal)]
+    cur.execute(f"SELECT id FROM vote_events WHERE id IN ({_in_clause(len(synthetic))})", synthetic)
+    if cur.fetchall():
+        raise AssertionError("synthetic refusal event ids unexpectedly exist in vote_events")
+    return [
+        Instance(
+            instance_id=f"{template_id}:{seed}:refusal:{eid}",
+            template_id=template_id,
+            tier="C",
+            params={"vote_event_id": eid, "party": "D"},  # placeholder party for shape parity
+            prompt=f"On roll call {eid}, how many members of the D party voted against their "
+            f"party's majority?",
+            gold=REFUSAL,
+            grader="refusal_correct",
+            is_refusal=True,
+            refusal_reason="event_not_in_data",
+        )
+        for eid in synthetic
+    ]
+
+
 # Template registry — each entry exposes `.generate(conn, n, seed, precomputed)` for the harness.
 TEMPLATE_REGISTRY = {
     "vote_lookup": SimpleNamespace(name="vote_lookup", generate=generate),
@@ -603,4 +771,6 @@ TEMPLATE_REGISTRY = {
         name="pairwise_agreement", generate=generate_pairwise_agreement
     ),
     "party_breakdown": SimpleNamespace(name="party_breakdown", generate=generate_party_breakdown),
+    "party_defection": SimpleNamespace(name="party_defection", generate=generate_party_defection),
+    "crossed_party": SimpleNamespace(name="crossed_party", generate=generate_crossed_party),
 }

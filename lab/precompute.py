@@ -10,8 +10,8 @@ In-memory, no temp tables. Three once-per-run aggregates over the live DB:
     scan the 5.4M-row table a second time.
 
 Phase 1 Template #1 (vote_lookup) does NOT consume these sets — a single member's recorded
-option is unambiguous even on an overcounted event. party_majority is RESERVED (a registry
-DEFINITION, blessed with its consumer #4/#5/#6 — see docs/condorcet/registry-open-questions.md).
+option is unambiguous even on an overcounted event. (party_majority was RESERVED here; it is now
+RESOLVED in `lab/templates._party_majority_side` — strict majority of yea+nay, ties->null.)
 All SQL is engine-portable (it runs on DuckDB in the fixtures).
 """
 
@@ -46,7 +46,6 @@ class Precomputed:
     # sample only complete events (windowed templates require the WHOLE window complete — see
     # lab/templates._fully_complete_windows, which assembles windows from this set).
     complete_events: frozenset[str] = frozenset()
-    # party_majority: see _party_majority() — a reserved registry DEFINITION.
 
 
 def precompute(conn) -> Precomputed:
@@ -100,18 +99,4 @@ def precompute(conn) -> Precomputed:
         completed_congresses=completed,
         total_vote_records=total,
         complete_events=frozenset(complete),
-    )
-
-
-def _party_majority(conn):
-    """RESERVED. 'Majority of a party on an event' is a registry DEFINITION, not a mechanical
-    set — it is blessed with its consumer (#4/#5/#6), not frozen on spec. Three open questions
-    must be resolved first (see docs/condorcet/registry-open-questions.md):
-      1. denominator — voted-only vs present vs all-members;
-      2. ties — 5-5 -> null / both / tie-break;
-      3. absences — do not_voting / present count toward the denominator?
-    """
-    raise NotImplementedError(
-        "party_majority is a reserved registry definition; resolve denominator/ties/absences "
-        "with its consumer (#4/#5/#6). See docs/condorcet/registry-open-questions.md"
     )

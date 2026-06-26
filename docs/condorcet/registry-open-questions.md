@@ -44,22 +44,20 @@ read it when present, else the term `party`. A handful of cases; the data suppor
 
 ## `party_majority` — "the majority position of a party on a roll-call event"
 
-Reserved in `lab/precompute.py::_party_majority`. First consumers: Family 1 templates
-**`party_defection` (party-line vs defection) and `crossed_party` (members who crossed party)**
-— both Phase 3, and both *also* gated on [[vote_time_party]]. (`party_breakdown` is COUNTS-ONLY
-and does **not** consume `party_majority` — but it does consume `vote_time_party`.)
-Resolve these three questions before either template can produce gold:
+**RESOLVED 2026-06-26 (Phase 3c).** Implemented in `lab/templates._party_majority_side(yea, nay)`;
+consumers `party_defection` (`gold = min(yea, nay)`) and `crossed_party` (the minority-side member
+set). The three questions resolved as one blessed package:
 
-1. **Denominator** — is the majority computed over (a) party members who cast yea/nay only,
-   (b) party members present (yea/nay/present), or (c) all party members including not_voting?
-   Different denominators yield different majorities on close/absentee-heavy votes.
-2. **Ties** — when a party splits evenly (e.g. 5–5), is the party majority `null`, *both*
-   positions, or resolved by a tie-break rule? A null majority changes how #5/#6 count defection.
-3. **Absences** — do `not_voting` / `present` count toward the denominator (depressing the
-   majority threshold) or are they excluded entirely?
+1. **Denominator = yea+nay voters only** (option (a)); absences/`present` are excluded.
+2. **Ties → `null`** (a strict majority is required); a null-majority (party, event) is **excluded**
+   from defection/crossed gold (never a guessed or tie-broken side).
+3. **Absences excluded** (falls out of #1 — `not_voting`/`present` do not count toward the denominator).
 
-These interact: the denominator choice partly determines whether ties even arise. Resolve as a
-set, with the #4/#5/#6 consumer, and record the decision here before implementing.
+So `_party_majority_side` = `"yea"` if `yea > nay`, `"nay"` if `nay > yea`, else `None`. Both
+consumers additionally require **≥2 yea/nay voters** (a 1-member party's "defection" is meaningless).
+(`party_breakdown` is COUNTS-ONLY and does NOT consume `party_majority`.) All three party templates
+also consume [[vote_time_party]]. *(Historical: this was a reserved `NotImplementedError` slot in
+`lab/precompute.py`, retired in 3c.)*
 
 > Related future work: the Family 8 "leverage" definitions follow the same discipline —
 > bless-with-consumer, never freeze on spec.
