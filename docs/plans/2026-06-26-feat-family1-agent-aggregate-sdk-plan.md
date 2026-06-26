@@ -196,12 +196,12 @@ P3 Option W (claude-CLI prereq smoke → INTEGRITY EXIT GATE → in-process @too
 
 ## Phase 3 — Option W (Agent SDK backend)
 
-- [ ] Pre-flight smoke: `claude` CLI on PATH + `claude login`-authed; a 2-line `ClaudeAgentOptions(model, allowed_tools, mcp_servers, permission_mode, setting_sources, disallowed_tools, cwd, max_turns, max_budget_usd)` construct (confirm field names + the `allowed_tools` `mcp__lab__*` vs bare naming).
-- [ ] In-process `@tool`s (built INSIDE `_asolve_sdk`, fresh per-instance closures): `get_vote_event` (def sourced from `RESEARCH_TOOLS['get_vote_event']`; routed through `lab_execute_tool`; records bare-name observation) + `submit_answer` (schema from `SUBMIT_SCHEMAS`; records args + a submit observation; returns the ack). `create_sdk_mcp_server(name="lab", tools=[...])`.
-- [ ] `_asolve_sdk`: integrity-locked `ClaudeAgentOptions` (disallowed built-ins, `setting_sources=[]`, neutral `cwd`, pop `ANTHROPIC_API_KEY`, caps, general system_prompt); `query()` on the persistent Runner loop; iterate stream for `raw` + `ResultMessage`; build `_map_answer` input from captured submit args; same `trace_extras` + NO_ANSWER resilience + `_safe_err`.
-- [ ] `AgentSolver(backend=...)` strategy; `run.py --backend`; `policy["backend"]`.
-- [ ] **INTEGRITY EXIT GATE (first live smoke):** prove the agent (a) cannot call any non-`lab` tool, (b) inherits no ambient config, (c) uses subscription creds (not the API key). Do NOT trust any W pass rate until this passes.
-- [ ] **Acceptance:** `test_agent_sdk_backend.py` (mock `query()` that AWAITS the real `@tool` methods; typed mapping + observation/submit capture + retrieved=False on submit-only + no gold leak + tool-doc parity); messages-api path unchanged; ruff + suite green.
+- [x] Pre-flight smoke: `claude` CLI on PATH + `claude login`-authed; a 2-line `ClaudeAgentOptions(model, allowed_tools, mcp_servers, permission_mode, setting_sources, disallowed_tools, cwd, max_turns, max_budget_usd)` construct (confirm field names + the `allowed_tools` `mcp__lab__*` vs bare naming).
+- [x] In-process `@tool`s (built INSIDE `_asolve_sdk`, fresh per-instance closures): `get_vote_event` (def sourced from `RESEARCH_TOOLS['get_vote_event']`; routed through `lab_execute_tool`; records bare-name observation) + `submit_answer` (schema from `SUBMIT_SCHEMAS`; records args + a submit observation; returns the ack). `create_sdk_mcp_server(name="lab", tools=[...])`.
+- [x] `_asolve_sdk`: integrity-locked `ClaudeAgentOptions` (disallowed built-ins, `setting_sources=[]`, neutral `cwd`, pop `ANTHROPIC_API_KEY`, caps, general system_prompt); `query()` on the persistent Runner loop; iterate stream for `raw` + `ResultMessage`; build `_map_answer` input from captured submit args; same `trace_extras` + NO_ANSWER resilience + `_safe_err`.
+- [x] `AgentSolver(backend=...)` strategy; `run.py --backend`; `policy["backend"]`.
+- [x] **INTEGRITY EXIT GATE (first live smoke):** prove the agent (a) cannot call any non-`lab` tool, (b) inherits no ambient config, (c) uses subscription creds (not the API key). Do NOT trust any W pass rate until this passes.
+- [x] **Acceptance:** `test_agent_sdk_backend.py` (mock `query()` that AWAITS the real `@tool` methods; typed mapping + observation/submit capture + retrieved=False on submit-only + no gold leak + tool-doc parity); messages-api path unchanged; ruff + suite green.
 
 ## Phase 4 — sonnet/opus via Option W (CHECKPOINT, manual; not CI)
 

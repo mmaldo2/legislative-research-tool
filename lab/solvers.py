@@ -193,6 +193,7 @@ def _safe_err(exc: Exception, limit: int = 300) -> str:
         msg = msg[:limit] + "…(truncated)"
     return f"<agent error: {type(exc).__name__}: {msg}>"
 
+
 _AGENT_SYSTEM_PROMPT = (
     "You answer factual questions about U.S. Congressional roll-call votes. Use the get_vote_event "
     "tool to retrieve a roll call's records, then COMPUTE the answer the question asks for from "
@@ -288,6 +289,29 @@ def _map_answer(tool_calls: list[dict], *, grader: str, template_id: str):
     return NO_ANSWER  # neither set
 
 
+# BENCHMARK-INTEGRITY: the Agent SDK exposes the claude CLI's built-in tools. Disallow them so the
+# agent can ONLY use the lab's get_vote_event + submit_answer (it must not shell out / read gold off
+# disk / discover other tools). allowed_tools whitelists the two lab tools; this is the belt.
+_DISALLOWED_BUILTINS = [
+    "Bash",
+    "BashOutput",
+    "KillShell",
+    "Read",
+    "Write",
+    "Edit",
+    "NotebookEdit",
+    "Glob",
+    "Grep",
+    "WebFetch",
+    "WebSearch",
+    "Task",
+    "TodoWrite",
+    "ToolSearch",
+    "Skill",
+    "Agent",
+]
+
+
 class AgentSolver:
     """The live LLM solver: drives the production `run_agentic_chat` loop constrained to
     {get_vote_event, submit_answer}, maps the submit_answer payload to a typed answer, and publishes
@@ -299,9 +323,15 @@ class AgentSolver:
     kind = "agent"
 
     def __init__(
-        self, *, model: str = "claude-sonnet-4-6", client=None, system_prompt: str | None = None
+        self,
+        *,
+        model: str = "claude-sonnet-4-6",
+        client=None,
+        system_prompt: str | None = None,
+        backend: str = "messages-api",
     ):
         self.model = model
+        self.backend = backend  # "messages-api" (Option X) | "agent-sdk" (Option W)
         self._client = client  # injectable (tests pass a Mock; prod builds the OAuth client lazily)
         self.system_prompt = system_prompt or _AGENT_SYSTEM_PROMPT
         self.trace_extras: dict | None = None
@@ -313,7 +343,7 @@ class AgentSolver:
         # strings only — NEVER the client or the auth token
         return {
             "name": self.name,
-            "backend": "messages-api",
+            "backend": self.backend,
             "model": self.model,
             "system_prompt_id": "lab_family1_v1",
         }
@@ -349,6 +379,11 @@ class AgentSolver:
         return answer
 
     async def _asolve(self, inst: Instance):
+        if self.backend == "agent-sdk":
+            return await self._asolve_sdk(inst)
+        return await self._asolve_messages(inst)
+
+    async def _asolve_messages(self, inst: Instance):
         from src.llm.tools import RESEARCH_TOOLS
         from src.services.chat_service import run_agentic_chat
 
@@ -390,6 +425,89 @@ class AgentSolver:
         latency_ms = (time.monotonic() - started) * 1000
         answer = _map_answer(tool_calls, grader=inst.grader, template_id=inst.template_id)
         extras = {"trajectory": observations, "raw": final_text, "latency_ms": latency_ms}
+        return answer, extras
+
+    async def _asolve_sdk(self, inst: Instance):
+        """Option W: drive the in-process Agent SDK (subscription-native, no rate wall). Builds a
+        fresh in-process MCP server per instance (fresh capture closures); the @tools route through
+        the SAME lab_execute_tool seam as Option X (data parity) + record bare-name observations.
+        Constrained to {get_vote_event, submit_answer}; built-ins disallowed."""
+        import os
+
+        from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, query, tool
+        from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
+
+        from src.llm.tools import RESEARCH_TOOLS
+
+        gve = next(t for t in RESEARCH_TOOLS if t["name"] == "get_vote_event")
+        observations: list[dict] = []
+        submit_box: list[dict] = []
+
+        @tool("get_vote_event", gve["description"], gve["input_schema"])
+        async def _sdk_get_vote_event(args):
+            from src.database import async_session_factory
+
+            async with async_session_factory() as db:  # @tool opens its OWN session on this loop
+                result = await lab_execute_tool("get_vote_event", args, db, None)
+            observations.append(
+                {"tool": "get_vote_event", "arguments": dict(args), "result": result}
+            )
+            return {"content": [{"type": "text", "text": result}]}
+
+        submit_schema = {"type": "object", "properties": SUBMIT_SCHEMAS[inst.template_id]}
+
+        @tool("submit_answer", _SUBMIT_DESCRIPTION, submit_schema)
+        async def _sdk_submit(args):
+            submit_box.append(dict(args))
+            ack = await lab_execute_tool("submit_answer", args, None, None)
+            observations.append({"tool": "submit_answer", "arguments": dict(args), "result": ack})
+            return {"content": [{"type": "text", "text": ack}]}
+
+        server = create_sdk_mcp_server(name="lab", tools=[_sdk_get_vote_event, _sdk_submit])
+        # subscription creds ONLY: pop ANTHROPIC_API_KEY so query() can't silently bill the Messages
+        # API (and hit the rate wall Option W exists to dodge); restored in finally.
+        saved_key = os.environ.pop("ANTHROPIC_API_KEY", None)
+        options = ClaudeAgentOptions(
+            model=self.model,
+            mcp_servers={"lab": server},
+            allowed_tools=["mcp__lab__get_vote_event", "mcp__lab__submit_answer"],
+            disallowed_tools=_DISALLOWED_BUILTINS,
+            permission_mode="bypassPermissions",
+            setting_sources=[],  # no ambient CLAUDE.md / .claude config / project MCP servers
+            max_turns=8,
+            max_budget_usd=1.0,  # per-rollout runaway guard
+            system_prompt=self.system_prompt,
+        )
+        started = time.monotonic()
+        text_parts: list[str] = []
+        cost = None
+        try:
+            async for msg in query(prompt=inst.prompt, options=options):  # PROMPT ONLY
+                if isinstance(msg, AssistantMessage):
+                    text_parts.extend(b.text for b in msg.content if isinstance(b, TextBlock))
+                elif isinstance(msg, ResultMessage):
+                    cost = getattr(msg, "total_cost_usd", None)
+        except Exception as exc:  # noqa: BLE001 — a live failure FAILS the instance, never crashes
+            return NO_ANSWER, {
+                "trajectory": observations,
+                "raw": _safe_err(exc),
+                "latency_ms": (time.monotonic() - started) * 1000,
+            }
+        finally:
+            if saved_key is not None:
+                os.environ["ANTHROPIC_API_KEY"] = saved_key
+        # _map_answer OUTSIDE the try (mapper bugs crash loudly); input is backend-agnostic.
+        latency_ms = (time.monotonic() - started) * 1000
+        tool_calls = (
+            [{"tool_name": "submit_answer", "arguments": submit_box[-1]}] if submit_box else []
+        )
+        answer = _map_answer(tool_calls, grader=inst.grader, template_id=inst.template_id)
+        extras = {
+            "trajectory": observations,
+            "raw": "\n".join(text_parts),
+            "latency_ms": latency_ms,
+            "cost": cost,
+        }
         return answer, extras
 
     def close(self) -> None:

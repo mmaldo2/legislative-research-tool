@@ -113,9 +113,11 @@ def _run_deterministic(template, name: str, n: int, seed: int) -> int:
     return 0
 
 
-def _run_agent(template, name: str, n: int, seed: int, model: str | None = None) -> int:
+def _run_agent(
+    template, name: str, n: int, seed: int, model: str | None = None, backend: str = "messages-api"
+) -> int:
     # NON-DETERMINISTIC: a live agent's pass rate IS the measurement; no invariant is asserted.
-    solver = AgentSolver(model=model) if model else AgentSolver()
+    solver = AgentSolver(model=model, backend=backend) if model else AgentSolver(backend=backend)
     try:
         results = run(template, [solver], n, seed, set(OPTION_BUCKETS))
     finally:
@@ -217,12 +219,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--model", default=None, help="override the agent model (default claude-sonnet-4-6)"
     )
+    parser.add_argument(
+        "--backend",
+        default="messages-api",
+        choices=("messages-api", "agent-sdk"),
+        help="agent backend: messages-api (OAuth, Option X) or agent-sdk (subscription, Option W)",
+    )
     args = parser.parse_args(argv)
 
     n = args.n if args.n is not None else (10 if args.agent else 20)
     template = templates.TEMPLATE_REGISTRY[args.template]
     if args.agent:
-        return _run_agent(template, args.template, n, args.seed, args.model)
+        return _run_agent(template, args.template, n, args.seed, args.model, args.backend)
     return _run_deterministic(template, args.template, n, args.seed)
 
 
