@@ -5,7 +5,7 @@ portability and absolute correctness on a known input).
 
 import pytest
 
-from lab.precompute import Precomputed, _party_majority, precompute
+from lab.precompute import Precomputed, precompute
 
 
 def _fixture():
@@ -70,12 +70,6 @@ class TestTotalVoteRecords:
     def test_derived_from_aggregate(self):
         pre = precompute(_fixture())
         assert pre.total_vote_records == 11
-
-
-class TestPartyMajorityReserved:
-    def test_raises_not_implemented(self):
-        with pytest.raises(NotImplementedError):
-            _party_majority(None)
 
 
 class TestEmptyDB:

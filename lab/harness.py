@@ -84,6 +84,11 @@ def validate_gold(inst: Instance, valid_options: set[str]) -> None:
     # Set gold gate: must be a collection; the EMPTY set is valid (e.g. zero defectors).
     if inst.grader == "set_match" and not isinstance(inst.gold, set | list | tuple):
         raise ValueError(f"{inst.instance_id}: 'set_match' gold must be a set/list/tuple")
+    # Scalar-int gold gate (e.g. a defection count; 0 is valid). bool is NOT an int here.
+    if inst.grader == "exact_int" and (
+        isinstance(inst.gold, bool) or not isinstance(inst.gold, int)
+    ):
+        raise ValueError(f"{inst.instance_id}: 'exact_int' gold must be an int, got {inst.gold!r}")
 
 
 def run(template, solvers, n: int, seed: int, valid_options: set[str]) -> dict:
