@@ -4,10 +4,11 @@
   - WrongBaselineSolver: returns a wrong answer -> graders must FAIL (catch hallucinations).
   - OverRefuseSolver: refuses everything -> answerable items FAIL (catches over-refusal).
 
-AgentSolver (kind="agent") is the live LLM solver: it drives the production run_agentic_chat loop
-(anthropic-oauth backend) over {get_vote_event, submit_answer} and is NOT invariant-checked (its
-pass rate is the measurement). Each solver exposes `kind` + `policy` so the trace records what
-produced a rollout (and synthetic deterministic rows stay filterable from live agent rollouts).
+AgentSolver (kind="agent") is the live LLM solver over {get_vote_event, submit_answer}, with two
+backends (messages-api = Option X, the run_agentic_chat loop; agent-sdk = Option W, the in-process
+Agent SDK). It is NOT invariant-checked — its pass rate is the measurement. Each solver exposes
+`kind` + `policy` so the trace records what produced a rollout (deterministic rows stay filterable
+from live agent rollouts, and agent rollouts stay filterable by backend).
 """
 
 import asyncio
@@ -313,10 +314,11 @@ _DISALLOWED_BUILTINS = [
 
 
 class AgentSolver:
-    """The live LLM solver: drives the production `run_agentic_chat` loop constrained to
-    {get_vote_event, submit_answer}, maps the submit_answer payload to a typed answer, and publishes
-    `trace_extras` (trajectory + prose + latency) for the additive trace seam. NOT invariant-checked
-    (a live agent is non-deterministic); its pass rate is the measurement.
+    """The live LLM solver over {get_vote_event, submit_answer}, constrained to the per-template
+    shape-aware submit_answer. `backend` selects messages-api (Option X, run_agentic_chat) or
+    agent-sdk (Option W, in-process Agent SDK); both share `_map_answer`/SUBMIT_SCHEMAS/trace_extras
+    and differ only in loop-drive + capture. Maps the submit_answer payload to the grader's typed
+    answer. NOT invariant-checked (non-deterministic); its pass rate is the measurement.
     """
 
     name = "agent"
