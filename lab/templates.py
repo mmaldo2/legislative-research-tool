@@ -19,6 +19,7 @@ TEMPLATE_TALLY = "family1.tally"
 TEMPLATE_CLOSEST = "family1.closest_by_margin"
 TEMPLATE_MEMBER_SUMMARY = "family1.member_summary"
 TEMPLATE_PAIRWISE = "family1.pairwise_agreement"
+TEMPLATE_PARTY_BREAKDOWN = "family1.party_breakdown"
 CLOSEST_K = 5  # how many "closest" roll calls a closest_by_margin instance asks for
 
 
@@ -477,6 +478,119 @@ def generate_pairwise_agreement(conn, n: int, seed: int, precomputed) -> list[In
     return instances
 
 
+def _party_eligible_events(conn, precomputed) -> frozenset[str]:
+    """Events a `party_breakdown` (and 3c's defection/crossed) may use — the reusable 3-gate
+    intersection, computed ONCE per run:
+      (1) COMPLETED-congress dated events (point-in-time gate, EXPLICIT — not incidental);
+      (2) ∩ `precomputed.complete_events` (records reconcile to the official counts);
+      (3) − events where ANY voter maps to ≠1 party span as-of `vote_date`. `COUNT(span) <> 1`
+          catches BOTH 0 (omission) and >1 (overlap double-count), so this does NOT rely on the
+          span construction staying overlap-free (person_party_spans is a maintained gold table).
+    """
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT ve.id "
+        "FROM vote_events ve "
+        "JOIN bills b ON b.id = ve.bill_id "
+        "JOIN sessions s ON s.id = b.session_id "
+        "WHERE ve.vote_date IS NOT NULL AND s.end_date IS NOT NULL"
+    )
+    completed_dated = {r[0] for r in cur.fetchall()}
+    cur.execute(
+        "SELECT vr.vote_event_id "
+        "FROM vote_records vr "
+        "JOIN vote_events ve ON ve.id = vr.vote_event_id "
+        "LEFT JOIN person_party_spans pps ON pps.person_id = vr.person_id "
+        "AND ve.vote_date >= pps.start_date AND ve.vote_date < pps.end_date "
+        "WHERE ve.vote_date IS NOT NULL "
+        "GROUP BY vr.vote_event_id, vr.person_id HAVING COUNT(pps.id) <> 1"
+    )
+    not_exactly_one = {r[0] for r in cur.fetchall()}
+    return frozenset((completed_dated & precomputed.complete_events) - not_exactly_one)
+
+
+def generate_party_breakdown(conn, n: int, seed: int, precomputed) -> list[Instance]:
+    """Template #4 (party breakdown): a single party's yea/nay split on one roll call, using
+    VOTE-TIME party (the half-open as-of join on person_party_spans — NEVER people.party, which is
+    current-only and post-dates switchers).
+
+    Counts-only, single-party-per-instance. Samples only `_party_eligible_events` (complete ∩
+    exactly-one-span ∩ completed-congress) and a party with **≥2** yea/nay voters on the event (a
+    breakdown needs ≥2 to be a real split; excludes trivial single-member items that duplicate
+    vote_lookup — party-agnostic, no D/R allowlist). Gold = `{yea, nay}`, 0-filled (both keys always
+    present so grade_fields never key-mismatches).
+    """
+    cur = conn.cursor()
+    instances: list[Instance] = []
+    chosen = sample(sorted(_party_eligible_events(conn, precomputed)), n, seed)
+
+    motions: dict[str, str | None] = {}
+    if chosen:
+        cur.execute(
+            f"SELECT id, motion_text FROM vote_events WHERE id IN ({_in_clause(len(chosen))})",
+            chosen,
+        )
+        motions = {r[0]: r[1] for r in cur.fetchall()}
+
+    for eid in chosen:
+        # ONE query: every party's yea/nay on this event, via the vote-time as-of join.
+        cur.execute(
+            'SELECT pps.party, vr."option", COUNT(*) '
+            "FROM vote_records vr "
+            "JOIN vote_events ve ON ve.id = vr.vote_event_id "
+            "JOIN person_party_spans pps ON pps.person_id = vr.person_id "
+            "AND ve.vote_date >= pps.start_date AND ve.vote_date < pps.end_date "
+            "WHERE vr.vote_event_id = %s AND vr.\"option\" IN ('yea', 'nay') "
+            'GROUP BY pps.party, vr."option"',
+            (eid,),
+        )
+        by_party: dict[str, dict[str, int]] = {}
+        for party, option, count in cur.fetchall():
+            by_party.setdefault(party, {"yea": 0, "nay": 0})[option] += count
+        # a "breakdown" needs >=2 yea/nay voters; excludes the trivial single-member case.
+        candidates = sorted(p for p, c in by_party.items() if c["yea"] + c["nay"] >= 2)
+        if not candidates:
+            continue
+        party = pick_one(candidates, seed)
+        motion = (motions.get(eid) or "the recorded motion").strip()
+        instances.append(
+            Instance(
+                instance_id=f"{TEMPLATE_PARTY_BREAKDOWN}:{seed}:{eid}:{party}",
+                template_id=TEMPLATE_PARTY_BREAKDOWN,
+                tier="C",
+                params={"vote_event_id": eid, "party": party},
+                prompt=f"On roll call {eid} ({motion}), how many members of the {party} party "
+                f"voted yea and how many voted nay?",
+                gold=by_party[party],
+                grader="fields",
+                is_refusal=False,
+            )
+        )
+
+    # --- refusal: synthetic nonexistent event id, proven absent before emit ---
+    n_refusal = max(3, n // 4)
+    synthetic = [f"NX-EVENT-{seed}-{i:04d}" for i in range(n_refusal)]
+    cur.execute(f"SELECT id FROM vote_events WHERE id IN ({_in_clause(len(synthetic))})", synthetic)
+    if cur.fetchall():
+        raise AssertionError("synthetic refusal event ids unexpectedly exist in vote_events")
+    for eid in synthetic:
+        instances.append(
+            Instance(
+                instance_id=f"{TEMPLATE_PARTY_BREAKDOWN}:{seed}:refusal:{eid}",
+                template_id=TEMPLATE_PARTY_BREAKDOWN,
+                tier="C",
+                params={"vote_event_id": eid, "party": "D"},  # placeholder party for shape parity
+                prompt=f"On roll call {eid}, how many members of the D party voted yea and how "
+                f"many voted nay?",
+                gold=REFUSAL,
+                grader="refusal_correct",
+                is_refusal=True,
+                refusal_reason="event_not_in_data",
+            )
+        )
+    return instances
+
+
 # Template registry — each entry exposes `.generate(conn, n, seed, precomputed)` for the harness.
 TEMPLATE_REGISTRY = {
     "vote_lookup": SimpleNamespace(name="vote_lookup", generate=generate),
@@ -488,4 +602,5 @@ TEMPLATE_REGISTRY = {
     "pairwise_agreement": SimpleNamespace(
         name="pairwise_agreement", generate=generate_pairwise_agreement
     ),
+    "party_breakdown": SimpleNamespace(name="party_breakdown", generate=generate_party_breakdown),
 }
