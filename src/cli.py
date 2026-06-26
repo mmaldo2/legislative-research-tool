@@ -219,6 +219,26 @@ async def _ingest_legislators():
             await ingester.close()
 
 
+@ingest.command("legislator-terms")
+def ingest_legislator_terms():
+    """Backfill person_party_spans (vote-time party) from current + historical legislators."""
+    asyncio.run(_ingest_legislator_terms())
+
+
+async def _ingest_legislator_terms():
+    from src.database import async_session_factory
+    from src.ingestion.congress_legislators import CongressLegislatorsIngester
+
+    logger.info("Starting legislator term-history (vote-time party) ingestion")
+    async with async_session_factory() as session:
+        ingester = CongressLegislatorsIngester(session)
+        try:
+            await ingester.ingest_term_history()
+            logger.info("Legislator term-history ingestion completed")
+        finally:
+            await ingester.close()
+
+
 @cli.command("analyze")
 @click.argument("bill_id")
 def analyze_bill(bill_id: str):

@@ -16,6 +16,7 @@ from src.models.ingestion_run import IngestionRun
 from src.models.jurisdiction import Jurisdiction
 from src.models.organization import Organization
 from src.models.person import Person
+from src.models.person_party_span import PersonPartySpan
 from src.models.policy_workspace import (
     PolicyGeneration,
     PolicySection,
@@ -42,6 +43,7 @@ __all__ = [
     "BillText",
     "BillAction",
     "Person",
+    "PersonPartySpan",
     "PolicyWorkspace",
     "PolicyWorkspacePrecedent",
     "PolicySection",

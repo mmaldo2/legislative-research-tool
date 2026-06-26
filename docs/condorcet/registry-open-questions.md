@@ -13,8 +13,21 @@ a member's historical vote to their current party mis-assigns party-switchers (e
 Jeffords) and reads **post-dated** party onto an earlier vote — a point-in-time-discipline
 violation the schema cannot currently satisfy. Per the hard rule, this is filed, not invented.
 
+**DATA LAYER SHIPPED 2026-06-26 (Phase 3a, branch `feat/vote-time-party`).** Built as
+`person_party_spans` (4 cols: `person_id`, `party` D/R/I/L, `start_date`, `end_date` **EXCLUSIVE**),
+populated by `congress_legislators.py::ingest_term_history()` (one row per contiguous party-span;
+mid-term switches split via `party_affiliations`). Resolution is **half-open**
+`start_date <= vote_date < end_date` with `end_date = min(next_span.start, inclusive_end + 1 day)` —
+disjoint whether the source shares or abuts boundary days (verified: source uses **shared**
+boundaries, e.g. Specter 2009-04-30). Live validation: 7,636 spans / 1,260 members; **99.60%** of
+1,050,514 (voter,date) pairs resolve to exactly one span, **0 overlaps**; Specter golden check
+passes (R pre-2009-04-30, D after). The legacy `theunitedstates.io` JSON host (410 Gone) was
+migrated to GitHub-raw YAML. *Full registry resolution (the lab consumer + production join) lands
+with **3b**.* Refinements vs the original sketch: 4 columns (caucus/congress/chamber **deferred** to
+3c); the table is **voter-scoped** (only bioguides in `people`); `Libertarian→L` added (Amash).
+
 Consumers: **all** party-keyed Family 1 templates — `party_breakdown`, `party_defection`,
-`crossed_party` (all deferred to Phase 3). Decision (2026-06-25): **defer** rather than ship
+`crossed_party` (all Phase 3b/3c). Decision (2026-06-25): **defer** rather than ship
 current-party as a leaky approximation into the factual trust floor.
 
 **Resolution path (identified 2026-06-25, not yet built — a Phase 3 prerequisite):** the
