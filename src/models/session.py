@@ -6,6 +6,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.database import Base
 
 
+# NOTE: the lab/ benchmark harness (precompute.py) has hardcoded SQL referencing these columns
+# (end_date, identifier). Update it if you rename or remove columns here.
 class LegislativeSession(Base):
     __tablename__ = "sessions"
 

@@ -6,6 +6,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.database import Base
 
 
+# NOTE: the lab/ benchmark harness (templates.py, trace.py) has hardcoded SQL referencing
+# these columns. Update those consumers if you rename or remove columns here.
 class Person(Base):
     __tablename__ = "people"
 
