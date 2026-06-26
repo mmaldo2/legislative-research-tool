@@ -54,9 +54,7 @@ def get_llm_client() -> Any:
     provider = settings.llm_provider.strip().lower()
     if provider == "openai":
         if not settings.openai_api_key:
-            raise RuntimeError(
-                "LLM_PROVIDER=openai but OPENAI_API_KEY is not configured."
-            )
+            raise RuntimeError("LLM_PROVIDER=openai but OPENAI_API_KEY is not configured.")
         from src.llm.openai_adapter import OpenAICompatClient
 
         logger.info("Using OpenAI as the primary LLM provider")
@@ -65,9 +63,7 @@ def get_llm_client() -> Any:
 
     if provider == "anthropic":
         if not settings.anthropic_api_key:
-            raise RuntimeError(
-                "LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY is not configured."
-            )
+            raise RuntimeError("LLM_PROVIDER=anthropic but ANTHROPIC_API_KEY is not configured.")
         _llm_client = anthropic.AsyncAnthropic(api_key=settings.anthropic_api_key)
         return _llm_client
 
@@ -95,6 +91,20 @@ def get_agentic_client() -> Any:
     power the current app-managed research loop.
     """
     return get_llm_client()
+
+
+def get_oauth_anthropic_client() -> anthropic.AsyncAnthropic:
+    """A real Anthropic client authenticated via the subscription OAuth token.
+
+    Reads `settings.anthropic_auth_token` (env-backed via `.env` — NEVER hardcoded or logged). This
+    is the zero-marginal-cost path for the lab AgentSolver's tool-using runs (the production
+    `run_agentic_chat` loop needs a genuine `AsyncAnthropic`, not the claude-sdk adapter).
+    """
+    if not settings.anthropic_auth_token:
+        raise RuntimeError(
+            "anthropic_auth_token is not configured; the OAuth Anthropic client is unavailable."
+        )
+    return anthropic.AsyncAnthropic(auth_token=settings.anthropic_auth_token)
 
 
 async def get_session() -> AsyncGenerator[AsyncSession, None]:

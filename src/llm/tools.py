@@ -40,8 +40,8 @@ RESEARCH_TOOLS = [
         "name": "get_bill_detail",
         "description": (
             "Get full details of a specific bill including text, sponsors, legislative actions "
-            "timeline, vote history, and AI-generated summary. Use the bill ID returned by "
-            "search_bills."
+            "timeline, and AI-generated summary. For roll-call vote tallies and how members "
+            "voted, use get_vote_event. Use the bill ID returned by search_bills."
         ),
         "input_schema": {
             "type": "object",
@@ -52,6 +52,26 @@ RESEARCH_TOOLS = [
                 },
             },
             "required": ["bill_id"],
+        },
+    },
+    {
+        "name": "get_vote_event",
+        "description": (
+            "Get a single roll-call vote event by its vote_event_id: the official tallies "
+            "(yes/no/other counts, result, motion, chamber, date) plus every member's recorded "
+            "vote with their party AS OF the vote date (point-in-time, so party-switchers are "
+            "attributed correctly). Use this to answer questions about how members voted on a "
+            "specific roll call."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "vote_event_id": {
+                    "type": "string",
+                    "description": "The roll-call vote event id.",
+                },
+            },
+            "required": ["vote_event_id"],
         },
     },
     {

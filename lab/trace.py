@@ -137,11 +137,23 @@ def _jsonable(value: Any) -> Any:
 
 
 def build_record(
-    inst, solver, answer: Any, verdict: Verdict, ctx: RunContext, seed: int
+    inst,
+    solver,
+    answer: Any,
+    verdict: Verdict,
+    ctx: RunContext,
+    seed: int,
+    extras: dict | None = None,
 ) -> TraceRecord:
     """Project an Instance + solver + Verdict into the validated trace record (Pydantic
-    validates on construction). Centralizes the deterministic-solver defaults."""
+    validates on construction).
+
+    `extras` is the ADDITIVE agent-telemetry channel (a live solver publishes it via
+    `solver.trace_extras`): `trajectory` (tool calls), `raw` (final prose), `latency_ms`, and the
+    token/cost sentinels. Deterministic solvers pass `extras=None` and keep the original defaults
+    (`trajectory=[]`, `raw=str(answer)`, all sentinels None) — so their records are unchanged."""
     answer = _jsonable(answer)
+    extras = extras or {}
     return TraceRecord(
         instance_id=inst.instance_id,
         template_id=inst.template_id,
@@ -155,8 +167,8 @@ def build_record(
         policy=solver.policy,
         solver_kind=solver.kind,
         answer=answer,
-        trajectory=[],
-        raw=str(answer),
+        trajectory=extras.get("trajectory", []),
+        raw=extras.get("raw", str(answer)),
         verdict=VerdictModel(
             passed=verdict.passed,
             score=verdict.score,
@@ -167,6 +179,10 @@ def build_record(
         grading_contract_hash=ctx.grading_contract_hash,
         content_hash=ctx.content_hash,
         dataset_fingerprint=ctx.dataset_fingerprint,
+        latency_ms=extras.get("latency_ms"),
+        input_tokens=extras.get("input_tokens"),
+        output_tokens=extras.get("output_tokens"),
+        cost=extras.get("cost"),
     )
 
 

@@ -100,8 +100,10 @@ def solve_grade_write(instances, solvers, ctx, seed: int, fh):
     for solver in solvers:
         for inst in instances:
             answer = solver.solve(inst)
+            # additive agent-telemetry channel; deterministic solvers don't set it (-> None).
+            extras = getattr(solver, "trace_extras", None)
             verdict = grade(inst.grader, inst.gold, answer, is_refusal=inst.is_refusal)
-            write_trace(build_record(inst, solver, answer, verdict, ctx, seed), fh)
+            write_trace(build_record(inst, solver, answer, verdict, ctx, seed, extras=extras), fh)
             yield solver, inst, verdict
 
 

@@ -25,7 +25,10 @@ from src.models.bill import Bill
 from src.models.bill_text import texts_without_markup
 from src.models.conversation import Conversation, ConversationMessage
 from src.models.jurisdiction import Jurisdiction
+from src.models.person import Person
+from src.models.person_party_span import PersonPartySpan
 from src.models.sponsorship import Sponsorship
+from src.models.vote import VoteEvent, VoteRecord
 from src.schemas.chat import (
     ChatMessageResponse,
     ChatRequest,
@@ -188,6 +191,73 @@ async def _tool_get_bill_detail(
         "sponsors": sponsors,
     }
     return json.dumps(detail)
+
+
+async def _tool_get_vote_event(
+    arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
+) -> str:
+    """One roll-call event: official tallies + per-member votes with VOTE-TIME party.
+
+    Party is resolved via the half-open `person_party_spans` as-of join
+    (`start_date <= vote_date < end_date`), NEVER `people.party` (current-only). RAW per-member
+    rows — the agent does any aggregation. The whole body is guarded so a malformed/absent id can
+    never surface a DB traceback to the agent (or into a trace); it returns a clean JSON error.
+    """
+    eid = arguments.get("vote_event_id", "")
+    try:
+        event = (
+            await db.execute(select(VoteEvent).where(VoteEvent.id == eid))
+        ).scalar_one_or_none()
+        if event is None:
+            return json.dumps({"error": f"Vote event '{eid}' not found."})
+
+        if event.vote_date is None:
+            # No date → no point-in-time party resolution; return every voter with party=None.
+            stmt = (
+                select(VoteRecord.person_id, Person.name, VoteRecord.option)
+                .join(Person, Person.id == VoteRecord.person_id)
+                .where(VoteRecord.vote_event_id == eid)
+            )
+            raw = [(pid, name, opt, None) for (pid, name, opt) in (await db.execute(stmt)).all()]
+        else:
+            stmt = (
+                select(VoteRecord.person_id, Person.name, VoteRecord.option, PersonPartySpan.party)
+                .join(Person, Person.id == VoteRecord.person_id)
+                .outerjoin(  # LEFT JOIN: keep voters with no covering span (party=None)
+                    PersonPartySpan,
+                    (PersonPartySpan.person_id == VoteRecord.person_id)
+                    & (PersonPartySpan.start_date <= event.vote_date)
+                    & (event.vote_date < PersonPartySpan.end_date),
+                )
+                .where(VoteRecord.vote_event_id == eid)
+            )
+            raw = (await db.execute(stmt)).all()
+
+        # One row per voter ((vote_event_id, person_id) is unique); a >1-span voter would yield
+        # duplicate rows from the outer join — collapse to the first (gold excludes such events for
+        # party templates; harmless for the party-agnostic vote_lookup).
+        records: dict[str, dict[str, Any]] = {}
+        for pid, name, option, party in raw:
+            records.setdefault(
+                pid, {"person_id": pid, "name": name, "option": option, "party": party}
+            )
+
+        return json.dumps(
+            {
+                "vote_event_id": event.id,
+                "motion_text": event.motion_text,
+                "result": event.result,
+                "chamber": event.chamber,
+                "vote_date": str(event.vote_date) if event.vote_date else None,
+                "yes_count": event.yes_count,
+                "no_count": event.no_count,
+                "other_count": event.other_count,
+                "records": list(records.values()),
+            }
+        )
+    except Exception:
+        logger.exception("get_vote_event failed for id=%r", eid)
+        return json.dumps({"error": "Failed to retrieve the vote event."})
 
 
 async def _tool_list_jurisdictions(
@@ -415,6 +485,7 @@ _ToolHandler = Callable[[dict[str, Any], AsyncSession, LLMHarness], Coroutine[An
 _TOOL_HANDLERS: dict[str, _ToolHandler] = {
     "search_bills": _tool_search_bills,
     "get_bill_detail": _tool_get_bill_detail,
+    "get_vote_event": _tool_get_vote_event,
     "list_jurisdictions": _tool_list_jurisdictions,
     "find_similar_bills": _tool_find_similar_bills,
     "analyze_version_diff": _tool_analyze_version_diff,
@@ -693,9 +764,7 @@ async def chat_stream(
                 final_text = done_data.get("text", "")
                 all_tool_calls = done_data.get("tool_calls", [])
                 done_data["conversation_id"] = conversation_id
-                event_str = (
-                    f"event: done\ndata: {json.dumps(done_data)}\n\n"
-                )
+                event_str = f"event: done\ndata: {json.dumps(done_data)}\n\n"
 
             yield event_str
 
