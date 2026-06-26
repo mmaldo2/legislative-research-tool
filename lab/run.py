@@ -111,6 +111,24 @@ def _run_agent(template, name: str, n: int, seed: int) -> int:
         kind = "refusal" if ref else "answerable"
         print(f"    [{'PASS' if v.passed else 'FAIL'}] {kind:10} {iid}  score={v.score:.2f}")
 
+    # Fairness diagnostics (additive — NEVER touch a grader): separate a protocol/format miss from
+    # a knowledge miss, surface a harness/API problem, and flag passes that did NO retrieval (a
+    # base-rate / prompt-phrasing game, not real lookup).
+    hist = {h["instance_id"]: h for h in solver.history}
+    fmt_fail = sum(1 for (_i, _r, v) in rows if v.subscores.get("format_valid") == 0.0)
+    errored = sum(1 for h in solver.history if h["errored"])
+    no_retrieval_pass = sum(
+        1 for (iid, _ref, v) in rows if v.passed and not hist.get(iid, {}).get("retrieved", True)
+    )
+    print(
+        f"  diagnostics: format-fail (never-submitted/non-canonical/error) {fmt_fail}/{len(rows)}; "
+        f"agent-errors {errored}; passes with NO get_vote_event call {no_retrieval_pass}"
+    )
+    if errored:
+        print("  WARNING: agent-errors present — high count = harness/API problem, not the agent")
+    if no_retrieval_pass:
+        print("  WARNING: passes WITHOUT retrieval — possible base-rate/phrasing game; inspect")
+
     # A4b: name-collision noise floor (read-only; never touches gold; must not break the run).
     try:
         collided = _name_collisions(template, name, n, seed)

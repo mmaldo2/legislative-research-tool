@@ -56,7 +56,8 @@ def test_maps_option_passthrough():
     assert ans == "yea"
     assert solver.trace_extras["raw"] == "X voted yea."
     assert solver.trace_extras["latency_ms"] >= 0
-    assert solver.trace_extras["trajectory"]  # tool trajectory captured for the trace
+    # trajectory is the observation list (empty here — the mock short-circuits the tool loop)
+    assert isinstance(solver.trace_extras["trajectory"], list)
 
 
 def test_maps_refusal_flag_authoritative():
@@ -98,3 +99,58 @@ def test_prompt_only_no_gold_leak_and_constrained_tools():
     assert inst.gold not in sent
     assert {t["name"] for t in kwargs["tools"]} == {"get_vote_event", "submit_answer"}
     assert kwargs["model"] == "claude-sonnet-4-6"
+
+
+def test_api_error_is_recorded_not_raised():
+    """A live API/network failure FAILS the instance (NO_ANSWER) and is recorded — never crashes."""
+    solver = AgentSolver(client=Mock())
+    with patch(_RAC, new=AsyncMock(side_effect=RuntimeError("429 boom"))):
+        ans = solver.solve(_inst())  # must NOT raise
+    solver.close()
+    assert ans == NO_ANSWER
+    assert "429 boom" in solver.trace_extras["raw"]
+
+
+def test_observations_captured_in_trajectory():
+    """The trajectory records full tool OBSERVATIONS (results), not just char-count summaries."""
+
+    async def fake_rac(*, execute_tool_fn, **kwargs):
+        await execute_tool_fn("submit_answer", {"answer": "yea"}, None, None)
+        return ("done", [{"tool_name": "submit_answer", "arguments": {"answer": "yea"}}])
+
+    solver = AgentSolver(client=Mock())
+    with patch(_RAC, new=fake_rac):
+        ans = solver.solve(_inst())
+    solver.close()
+    assert ans == "yea"
+    traj = solver.trace_extras["trajectory"]
+    assert traj and traj[0]["tool"] == "submit_answer" and "result" in traj[0]
+
+
+def test_error_message_redacts_oauth_token():
+    """A secret that surfaces in a third-party error string must NOT reach the persisted trace."""
+    leak = "auth failed: sk-ant-oat01-SUPERSECRETVALUE blah"
+    solver = AgentSolver(client=Mock())
+    with patch(_RAC, new=AsyncMock(side_effect=RuntimeError(leak))):
+        solver.solve(_inst())
+    solver.close()
+    raw = solver.trace_extras["raw"]
+    assert "sk-ant-oat01-SUPERSECRETVALUE" not in raw
+    assert "<redacted>" in raw
+
+
+def test_runner_reused_across_instances():
+    """The persistent Runner must be reused across N instances (regression guard: a revert to
+    asyncio.run() per call leaves _runner=None and would fail here)."""
+
+    async def fake_rac(**kwargs):
+        return ("done", [{"tool_name": "submit_answer", "arguments": {"answer": "yea"}}])
+
+    solver = AgentSolver(client=Mock())
+    with patch(_RAC, new=fake_rac):
+        assert solver.solve(_inst()) == "yea"
+        first = solver._runner
+        assert solver.solve(_inst()) == "yea"  # 2nd instance on the SAME runner must not raise
+        assert solver._runner is first and first is not None
+    assert len(solver.history) == 2  # the diagnostic trail records both
+    solver.close()

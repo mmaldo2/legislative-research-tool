@@ -12,6 +12,7 @@ produced a rollout (and synthetic deterministic rows stay filterable from live a
 
 import asyncio
 import json
+import re
 import time
 
 from lab.graders import REFUSAL
@@ -111,7 +112,13 @@ async def lab_execute_tool(tool_name: str, arguments: dict, db, harness) -> str:
     from `all_tool_calls` by the solver); every other tool (e.g. `get_vote_event`) routes to the
     real product registry."""
     if tool_name == "submit_answer":
-        return json.dumps({"status": "recorded"})
+        return json.dumps(
+            {
+                "status": "recorded",
+                "note": "Answer recorded. You are finished — do not call any more tools; "
+                "end your turn now.",
+            }
+        )
     from src.api.chat import execute_tool  # lazy: keep product code off the deterministic path
 
     return await execute_tool(tool_name, arguments, db, harness)
@@ -121,12 +128,25 @@ async def lab_execute_tool(tool_name: str, arguments: dict, db, harness) -> str:
 # arms (never earn free refusal credit on a refusal instance). It is its own filterable value.
 NO_ANSWER = "__no_answer__"
 
+_SECRET_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]+")
+
+
+def _safe_err(exc: Exception, limit: int = 300) -> str:
+    """Defense-in-depth: a live API error is persisted into the trace `raw`. Redact any OAuth token
+    that could appear in a third-party error string and bound the length, so no secret / unbounded
+    blob reaches the at-rest JSONL."""
+    msg = _SECRET_RE.sub("<redacted>", str(exc))
+    if len(msg) > limit:
+        msg = msg[:limit] + "…(truncated)"
+    return f"<agent error: {type(exc).__name__}: {msg}>"
+
 _AGENT_SYSTEM_PROMPT = (
     "You answer factual questions about U.S. Congressional roll-call votes. Use the get_vote_event "
     "tool to retrieve a roll call's records, find the member named in the question, and read their "
-    "recorded vote. Then call submit_answer exactly once with that member's option copied VERBATIM "
-    "(yea / nay / present / not_voting). If the member named is not present in the retrieved "
-    "records, call submit_answer with refused=true. Never guess."
+    "recorded vote. You MUST give your final answer ONLY by calling submit_answer exactly once — "
+    "do NOT answer in prose. Put that member's option copied VERBATIM (yea / nay / present / "
+    "not_voting) in `answer`; if the member named is not present in the retrieved records, call "
+    "submit_answer with refused=true. Never guess."
 )
 
 
@@ -169,6 +189,7 @@ class AgentSolver:
         self._client = client  # injectable (tests pass a Mock; prod builds the OAuth client lazily)
         self.system_prompt = system_prompt or _AGENT_SYSTEM_PROMPT
         self.trace_extras: dict | None = None
+        self.history: list[dict] = []  # per-instance diagnostic trail (retrieved? errored?)
         self._runner: asyncio.Runner | None = None
 
     @property
@@ -195,6 +216,17 @@ class AgentSolver:
             self._runner = asyncio.Runner()
         answer, extras = self._runner.run(self._asolve(inst))
         self.trace_extras = extras  # read by solve_grade_write right after solve()
+        # Diagnostic trail (read by run.py's agent summary; never affects grading):
+        self.history.append(
+            {
+                "instance_id": inst.instance_id,
+                "is_refusal": inst.is_refusal,
+                "retrieved": any(
+                    o.get("tool") == "get_vote_event" for o in extras.get("trajectory", [])
+                ),
+                "errored": str(extras.get("raw", "")).startswith("<agent error:"),
+            }
+        )
         return answer
 
     async def _asolve(self, inst: Instance):
@@ -204,21 +236,53 @@ class AgentSolver:
         get_vote_event = next(t for t in RESEARCH_TOOLS if t["name"] == "get_vote_event")
         # PROMPT ONLY — never inst.params (holds the gold person_id) or inst.gold.
         messages = [{"role": "user", "content": inst.prompt}]
+
+        # Capture the agent's OBSERVATIONS (the FULL tool results it actually saw, not the
+        # char-count summaries run_agentic_chat returns) so the trace is rich enough to read/train
+        # on — lab_execute_tool already has the full result in hand.
+        observations: list[dict] = []
+
+        async def _record(tool_name, arguments, db, harness):
+            result = await lab_execute_tool(tool_name, arguments, db, harness)
+            observations.append({"tool": tool_name, "arguments": arguments, "result": result})
+            return result
+
         started = time.monotonic()
-        final_text, tool_calls = await run_agentic_chat(
-            system_prompt=self.system_prompt,
-            messages=messages,
-            client=self._client_or_build(),
-            tools=[get_vote_event, SUBMIT_ANSWER_TOOL],
-            execute_tool_fn=lab_execute_tool,
-            model=self.model,
-        )
+        try:
+            final_text, tool_calls = await run_agentic_chat(
+                system_prompt=self.system_prompt,
+                messages=messages,
+                client=self._client_or_build(),
+                tools=[get_vote_event, SUBMIT_ANSWER_TOOL],
+                execute_tool_fn=_record,
+                model=self.model,
+            )
+        except Exception as exc:  # noqa: BLE001
+            # A live API/network failure FAILS this instance (NO_ANSWER) but must NEVER crash the
+            # run — one rate-limit shouldn't lose every other rollout. The error is recorded
+            # (redacted) in the trace (raw) and the partial observations are kept.
+            return NO_ANSWER, {
+                "trajectory": observations,
+                "raw": _safe_err(exc),
+                "latency_ms": (time.monotonic() - started) * 1000,
+            }
+        # NB: keep _map_answer OUTSIDE the try — a mapping/harness bug must crash loudly, not be
+        # silently mislabeled as an agent error.
         latency_ms = (time.monotonic() - started) * 1000
         answer = _map_answer(tool_calls)
-        extras = {"trajectory": tool_calls, "raw": final_text, "latency_ms": latency_ms}
+        extras = {"trajectory": observations, "raw": final_text, "latency_ms": latency_ms}
         return answer, extras
 
     def close(self) -> None:
+        """Terminal — do not reuse the solver after close(). Dispose the shared async engine's pool
+        on the Runner's loop BEFORE closing it, so asyncpg connections aren't orphaned on a dead
+        loop ('Event loop is closed' GC noise)."""
         if self._runner is not None:
+            try:
+                from src.database import engine
+
+                self._runner.run(engine.dispose())
+            except Exception:  # noqa: BLE001 — best-effort cleanup; never mask the real result
+                pass
             self._runner.close()
             self._runner = None

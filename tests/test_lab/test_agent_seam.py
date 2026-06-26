@@ -17,7 +17,8 @@ from lab.trace import RunContext, build_record
 class TestLabExecuteTool:
     async def test_submit_answer_is_acked_locally(self):
         out = json.loads(await lab_execute_tool("submit_answer", {"answer": "yea"}, None, None))
-        assert out == {"status": "recorded"}
+        assert out["status"] == "recorded"
+        assert "do not call any more tools" in out["note"]  # directive: tells the agent to stop
 
     async def test_other_tools_route_to_product_registry(self):
         with patch(
