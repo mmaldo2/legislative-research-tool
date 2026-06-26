@@ -2,9 +2,19 @@
 ORM models. Fails CI if a refactor renames/removes a column the harness reads. The test reaches
 into src.models (the schema source of truth); lab/ runtime stays standalone."""
 
-from src.models import Bill, LegislativeSession, Person, VoteEvent, VoteRecord
+from src.models import (
+    Bill,
+    LegislativeSession,
+    Person,
+    PersonPartySpan,
+    VoteEvent,
+    VoteRecord,
+)
 
-_MODELS = {m.__tablename__: m for m in (VoteEvent, VoteRecord, Person, LegislativeSession, Bill)}
+_MODELS = {
+    m.__tablename__: m
+    for m in (VoteEvent, VoteRecord, Person, LegislativeSession, Bill, PersonPartySpan)
+}
 
 
 def test_orm_has_required_columns(required_columns):
