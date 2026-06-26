@@ -238,8 +238,8 @@ erDiagram
   DuckDB; (4) `alembic check` green post-`014`; (5) rerun = 0 net change.
 
 ## Acceptance Criteria (rollup)
-- [ ] `PersonPartySpan` (4 cols, FK CASCADE, unique key, **registered/imported**, drift comment) +
-  migration `014`; global `alembic check` green.
+- [x] `PersonPartySpan` (4 cols, FK CASCADE, unique key, **registered/imported**, drift comment) +
+  migration `014`; global `alembic check` green (verified: "No new upgrade operations detected").
 - [ ] `_terms_to_spans` pure → `list[PartySpan]`; **half-open `end_date = min(next.start, incl_end+1)`**;
   `date.fromisoformat`; party normalized; **unknown party collected + surfaced at end**; tests cover
   Specter, boundary-day→later-party, gap, unknown.
