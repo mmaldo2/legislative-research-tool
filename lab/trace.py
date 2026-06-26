@@ -4,6 +4,10 @@ once-per-run audit stamps (split content/contract hashes + dataset fingerprint).
 JSONL is the source of truth (append-only, git-diffable, ships straight to a training
 pipeline); DuckDB is the OLAP read-side on demand:
     duckdb.sql("SELECT * FROM read_json_auto('lab/runs/*.jsonl')")
+NB: `gold`/`answer` are heterogeneous across templates (scalar option, dict, set->sorted-list),
+so for a MIXED run dir pin those payload columns as JSON to keep auto-inference from choking,
+e.g. read_json('lab/runs/*.jsonl', columns={'gold':'JSON','answer':'JSON', ...}). The analytic
+surface (verdict.score, subscores, template_id, solver_kind) is monotyped regardless.
 
 The record shape is forward-compatible for the live agent (policy/trajectory/raw + token/
 cost sentinels) so perishable rollouts never need a schema migration to be captured.
@@ -123,18 +127,28 @@ class TraceRecord(BaseModel):
     cost: float | None = None  # cost is NOT a subscore — a top-level field only
 
 
+def _jsonable(value: Any) -> Any:
+    """Coerce set-valued gold/answer to a SORTED list so the JSONL is byte-stable across seeded
+    re-runs (a Python set serializes with nondeterministic element order). Dicts/scalars pass
+    through unchanged (Pydantic preserves dict insertion order)."""
+    if isinstance(value, set | frozenset):
+        return sorted(value)
+    return value
+
+
 def build_record(
     inst, solver, answer: Any, verdict: Verdict, ctx: RunContext, seed: int
 ) -> TraceRecord:
     """Project an Instance + solver + Verdict into the validated trace record (Pydantic
     validates on construction). Centralizes the deterministic-solver defaults."""
+    answer = _jsonable(answer)
     return TraceRecord(
         instance_id=inst.instance_id,
         template_id=inst.template_id,
         tier=inst.tier,
         params=inst.params,
         prompt=inst.prompt,
-        gold=inst.gold,
+        gold=_jsonable(inst.gold),
         grader=inst.grader,
         is_refusal=inst.is_refusal,
         refusal_reason=inst.refusal_reason,

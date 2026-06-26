@@ -25,12 +25,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Condorcet Lab — Family 1 harness")
     parser.add_argument("--n", type=int, default=20, help="answerable instances per template")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument(
+        "--template",
+        default="vote_lookup",
+        choices=sorted(templates.TEMPLATE_REGISTRY),
+        help="which Family 1 template to run",
+    )
     args = parser.parse_args()
 
+    template = templates.TEMPLATE_REGISTRY[args.template]
     solvers = [SqlOracleSolver(), WrongBaselineSolver(), OverRefuseSolver()]
-    results = run(templates, solvers, args.n, args.seed, set(OPTION_BUCKETS))
+    results = run(template, solvers, args.n, args.seed, set(OPTION_BUCKETS))
 
-    print(f"Template #1 (vote_lookup), n={args.n}, seed={args.seed}")
+    print(f"Template {args.template}, n={args.n}, seed={args.seed}")
     for name, rows in results.items():
         ap, at, rp, rt = _counts(rows)
         passed = sum(v.passed for *_, v in rows)

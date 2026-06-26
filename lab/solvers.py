@@ -33,16 +33,29 @@ class SqlOracleSolver(_DeterministicSolver):
 
 
 class WrongBaselineSolver(_DeterministicSolver):
-    """Provably wrong per instance: a different valid option for answerable items,
-    and a fabricated (non-refusal) answer for refusal items."""
+    """Provably wrong per instance, but always WELL-FORMED (so the wrong-baseline invariant is
+    decision_correct==1 & answer_correct==0 & format_valid==1, never a format-fail):
+      - refusal item:  fabricate a non-refusal option (didn't refuse -> wrong);
+      - dict gold:     perturb the first non-bool int field by +1 (same keys -> shape valid);
+      - set gold:      ADD a guaranteed-absent sentinel (never remove -> empty gold stays wrong);
+      - scalar option: a different valid option.
+    """
 
     name = "wrong-baseline"
 
     def solve(self, inst: Instance):
         if inst.is_refusal:
             return OPTION_BUCKETS[0]  # fabricate instead of refusing -> wrong
+        gold = inst.gold
+        if isinstance(gold, dict):
+            for key, val in gold.items():
+                if isinstance(val, int) and not isinstance(val, bool):
+                    return {**gold, key: val + 1}
+            raise AssertionError(f"composite gold has no int field to perturb: {gold!r}")
+        if isinstance(gold, set | list | tuple):
+            return set(gold) | {"NX-wrong"}  # add a provably-absent id
         for opt in OPTION_BUCKETS:
-            if opt != inst.gold:
+            if opt != gold:
                 return opt
         return REFUSAL  # unreachable for a valid option gold
 

@@ -7,11 +7,14 @@ Phase 0 ships Template #1 (vote lookup). Gold is read directly from `vote_record
 We do NOT claim an eligible/ineligible distinction (the schema can't support it).
 """
 
+from types import SimpleNamespace
+
 from lab.generate import pick_one, sample
 from lab.graders import REFUSAL
 from lab.harness import Instance
 
 TEMPLATE_VOTE_LOOKUP = "family1.vote_lookup"
+TEMPLATE_TALLY = "family1.tally"
 
 
 def _in_clause(n: int) -> str:
@@ -92,3 +95,86 @@ def generate(conn, n: int, seed: int, precomputed) -> list[Instance]:
                 )
             )
     return instances
+
+
+def generate_tally(conn, n: int, seed: int, precomputed) -> list[Instance]:
+    """Template #2 (tally): yea / nay / margin / result for one roll-call event.
+
+    Group A — gold is read STRAIGHT FROM the canonical stored count columns on `vote_events`
+    (`vote_records` are a resolved subset, so counting them could undercount; the official totals
+    are authoritative and overcount-immune). The candidate pool excludes events with any NULL
+    count or NULL result (a NULL gold would crash the margin and make the oracle fail itself) —
+    the Group-A NULL guard, airtight even against an overcount event that also has a NULL bucket.
+    `precomputed` is accepted for the frozen run-loop signature but unused here.
+    """
+    cur = conn.cursor()
+    instances: list[Instance] = []
+
+    # --- answerable: events with complete, non-NULL official tallies + result ---
+    cur.execute(
+        "SELECT id FROM vote_events "
+        "WHERE yes_count IS NOT NULL AND no_count IS NOT NULL AND result IS NOT NULL"
+    )
+    event_ids = [r[0] for r in cur.fetchall()]
+    chosen = sample(event_ids, n, seed)
+    if chosen:
+        cur.execute(
+            "SELECT id, yes_count, no_count, result, motion_text "
+            f"FROM vote_events WHERE id IN ({_in_clause(len(chosen))})",
+            chosen,
+        )
+        rows = {r[0]: r for r in cur.fetchall()}
+        for eid in chosen:
+            row = rows.get(eid)
+            if row is None:
+                continue
+            _id, yes_count, no_count, result, motion_text = row
+            gold = {
+                "yea": yes_count,
+                "nay": no_count,
+                "margin": yes_count - no_count,
+                "result": result,
+            }
+            instances.append(
+                Instance(
+                    instance_id=f"{TEMPLATE_TALLY}:{seed}:{eid}",
+                    template_id=TEMPLATE_TALLY,
+                    tier="C",
+                    params={"vote_event_id": eid},
+                    prompt=f"On roll call {eid} "
+                    f"({(motion_text or 'the recorded motion').strip()}), how many voted yea and "
+                    f"how many nay, what was the margin (yea minus nay), and the result?",
+                    gold=gold,
+                    grader="fields",
+                    is_refusal=False,
+                )
+            )
+
+    # --- refusal: SYNTHETIC nonexistent event ids, proven absent before emit ---
+    n_refusal = max(3, n // 4)
+    synthetic = [f"NX-EVENT-{seed}-{i:04d}" for i in range(n_refusal)]
+    cur.execute(f"SELECT id FROM vote_events WHERE id IN ({_in_clause(len(synthetic))})", synthetic)
+    if cur.fetchall():
+        raise AssertionError("synthetic refusal event ids unexpectedly exist in vote_events")
+    for eid in synthetic:
+        instances.append(
+            Instance(
+                instance_id=f"{TEMPLATE_TALLY}:{seed}:refusal:{eid}",
+                template_id=TEMPLATE_TALLY,
+                tier="C",
+                params={"vote_event_id": eid},
+                prompt=f"On roll call {eid}, how many voted yea and nay, and what was the result?",
+                gold=REFUSAL,
+                grader="refusal_correct",
+                is_refusal=True,
+                refusal_reason="event_not_in_data",
+            )
+        )
+    return instances
+
+
+# Template registry — each entry exposes `.generate(conn, n, seed, precomputed)` for the harness.
+TEMPLATE_REGISTRY = {
+    "vote_lookup": SimpleNamespace(name="vote_lookup", generate=generate),
+    "tally": SimpleNamespace(name="tally", generate=generate_tally),
+}

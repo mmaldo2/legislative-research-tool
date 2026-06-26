@@ -71,6 +71,19 @@ def validate_gold(inst: Instance, valid_options: set[str]) -> None:
         raise ValueError(
             f"{inst.instance_id}: gold {inst.gold!r} not in canonical options {valid_options}"
         )
+    # Composite gold gate: a dict gold must be non-empty with every value a non-None int/str
+    # (an empty {} would grade as a vacuous pass; a None field would silently mis-grade).
+    if inst.grader == "fields":
+        if not isinstance(inst.gold, dict) or not inst.gold:
+            raise ValueError(f"{inst.instance_id}: 'fields' gold must be a non-empty dict")
+        for key, val in inst.gold.items():
+            if val is None or isinstance(val, bool) or not isinstance(val, int | str):
+                raise ValueError(
+                    f"{inst.instance_id}: 'fields' gold[{key!r}]={val!r} must be a non-None int/str"
+                )
+    # Set gold gate: must be a collection; the EMPTY set is valid (e.g. zero defectors).
+    if inst.grader == "set_match" and not isinstance(inst.gold, set | list | tuple):
+        raise ValueError(f"{inst.instance_id}: 'set_match' gold must be a set/list/tuple")
 
 
 def run(template, solvers, n: int, seed: int, valid_options: set[str]) -> dict:

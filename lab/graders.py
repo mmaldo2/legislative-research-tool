@@ -38,21 +38,81 @@ def grade_refusal_correct(gold: Any, answer: Any) -> bool:
     return answer == REFUSAL
 
 
+def grade_exact_int(gold: Any, answer: Any) -> bool:
+    """Exact integer match for counts/margins. NO tolerance. `bool` is explicitly excluded
+    (True == 1 in Python — a bool answer must never satisfy an int field)."""
+    return isinstance(answer, int) and not isinstance(answer, bool) and gold == answer
+
+
+def _match_field(gold: Any, answer: Any) -> bool:
+    """Per-field primitive for composite (dict) answers. Dispatches on the GOLD value's type
+    (gold is trusted SQL output): int->exact_int, str->exact (case-normalized), bool->identity
+    (defensive; no bool fields today), else plain normalized equality (covers None/other)."""
+    if isinstance(gold, bool):
+        return gold is answer
+    if isinstance(gold, int):
+        return grade_exact_int(gold, answer)
+    if isinstance(gold, str):
+        return grade_exact(gold, answer)
+    return _norm(gold) == _norm(answer)
+
+
+def grade_fields(gold: Any, answer: Any) -> bool:
+    """Composite answer: field-wise AND. Keys must match exactly; every field must match its
+    per-type primitive. Empty gold is rejected (an empty {} must never grade as a vacuous pass)."""
+    if not isinstance(answer, dict) or not isinstance(gold, dict) or not gold:
+        return False
+    if answer.keys() != gold.keys():
+        return False
+    return all(_match_field(gold[k], answer[k]) for k in gold)
+
+
+def grade_set_match(gold: Any, answer: Any) -> bool:
+    """Order-independent set equality (e.g. a set of person_ids or event_ids). Symmetric
+    normalization on both sides; TypeError-safe (unhashable answer -> fail, not crash)."""
+    try:
+        return set(map(_norm, gold)) == set(map(_norm, answer))
+    except TypeError:
+        return False
+
+
 GRADERS = {
     "exact": grade_exact,
     "refusal_correct": grade_refusal_correct,
+    "exact_int": grade_exact_int,
+    "fields": grade_fields,
+    "set_match": grade_set_match,
 }
 
 
 def _is_canonical(answer: Any) -> bool:
-    """format_valid gate: a well-formed answer is the refusal sentinel or a canonical option."""
+    """format_valid gate for SCALAR option graders: the refusal sentinel or a canonical option."""
     return answer == REFUSAL or _norm(answer) in OPTION_BUCKETS
+
+
+def _format_valid(grader: str, answer: Any) -> bool:
+    """SHAPE-ONLY format gate. Validates the *shape* of the answer, NOT whether it matches gold
+    (key-set / element correctness is the grader's job — folding it in here would mis-score a
+    wrong-keyed dict as 'malformed' (0.0) instead of 'attempted-but-wrong' (0.5), collapsing the
+    over-refusal vs wrong-answer distinction the subscores exist for). REFUSAL is well-formed for
+    every grader. The scalar exact/refusal_correct path is unchanged (still via _is_canonical)."""
+    if answer == REFUSAL:
+        return True
+    if grader in ("exact", "refusal_correct"):
+        return _is_canonical(answer)
+    if grader == "exact_int":
+        return isinstance(answer, int) and not isinstance(answer, bool)
+    if grader == "fields":
+        return isinstance(answer, dict)
+    if grader == "set_match":
+        return isinstance(answer, set | list | tuple)
+    return False
 
 
 def build_verdict(grader: str, gold: Any, answer: Any, *, is_refusal: bool) -> Verdict:
     """Compose the pure primitives into a Verdict with FLOAT subscores + a grader-authored
     feedback string (the GEPA reflection fuel)."""
-    if not _is_canonical(answer):
+    if not _format_valid(grader, answer):
         subs: Subscores = {
             "decision_correct": None,
             "answer_correct": None,
