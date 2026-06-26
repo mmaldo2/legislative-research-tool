@@ -165,8 +165,8 @@ def _run_agent(template, name: str, n: int, seed: int, model: str | None = None)
             fr = floor / n_ans if n_ans else 0.0
             ar = ans_pass / n_ans if n_ans else 0.0
             print(
-                f"  trivial-constant baseline (always-0/∅): {floor}/{n_ans} ({fr:.2f}); "
-                f"agent answerable pass {ans_pass}/{n_ans} ({ar:.2f})"
+                f"  trivial-constant baseline (always-0 / always-empty): {floor}/{n_ans} "
+                f"({fr:.2f}); agent answerable pass {ans_pass}/{n_ans} ({ar:.2f})"
             )
             if n_ans and ar <= fr:
                 print("  WARNING: agent does NOT beat the trivial-constant baseline — likely guess")
@@ -192,6 +192,12 @@ def _run_agent(template, name: str, n: int, seed: int, model: str | None = None)
 
 
 def main(argv: list[str] | None = None) -> int:
+    # The summary carries unicode (·, etc.); keep a Windows cp1252 console from crashing on print.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
     parser = argparse.ArgumentParser(description="Condorcet Lab — Family 1 harness")
     parser.add_argument(
         "--n", type=int, default=None, help="answerable instances (default 20; 10 for --agent)"
