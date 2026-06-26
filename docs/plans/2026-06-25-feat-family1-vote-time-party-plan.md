@@ -240,12 +240,13 @@ erDiagram
 ## Acceptance Criteria (rollup)
 - [x] `PersonPartySpan` (4 cols, FK CASCADE, unique key, **registered/imported**, drift comment) +
   migration `014`; global `alembic check` green (verified: "No new upgrade operations detected").
-- [ ] `_terms_to_spans` pure → `list[PartySpan]`; **half-open `end_date = min(next.start, incl_end+1)`**;
-  `date.fromisoformat`; party normalized; **unknown party collected + surfaced at end**; tests cover
-  Specter, boundary-day→later-party, gap, unknown.
-- [ ] `ingest_term_history()` + `ingest legislator-terms` subcommand; **replace-not-merge** per member
-  (idempotent; zero-overlap + count asserts); filtered to existing `people`; routine `ingest()`
-  untouched.
+- [x] `_terms_to_spans` pure → `list[PartySpan]`; **half-open `end_date = min(next.start, incl_end+1)`**;
+  `date.fromisoformat`; party normalized (incl. `Libertarian→L`); **unknown party collected +
+  surfaced at end**; tests cover Specter (boundary-day→later-party), gap, unknown, missing-date (10 tests).
+- [x] `ingest_term_history()` + `ingest legislator-terms` subcommand; **replace-not-merge** (atomic
+  DELETE-all + chunked bulk INSERT, computed in memory first; zero-overlap + duplicate-start asserts);
+  filtered to existing `people`; routine `ingest()` logic untouched (its dead `theunitedstates.io`
+  URL migrated to GitHub-raw YAML in the same change).
 - [ ] Backfill run; **resolvability probe** recorded (coverage + unresolved-by-reason + switcher
   count + zero unexplained overlaps); **live Specter golden assertion** passes; STOP-and-surface
   honored if thin.
