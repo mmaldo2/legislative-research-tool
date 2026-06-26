@@ -12,6 +12,7 @@ produced a rollout (and synthetic deterministic rows stay filterable from live a
 
 import asyncio
 import json
+import math
 import re
 import time
 
@@ -82,29 +83,81 @@ class OverRefuseSolver(_DeterministicSolver):
 # submit_answer is a LAB-ONLY meta-tool — deliberately NOT a product RESEARCH_TOOL — the agent's
 # structured, typed answer channel (no prose parsing). get_vote_event IS a product tool.
 
-SUBMIT_ANSWER_TOOL = {
-    "name": "submit_answer",
-    "description": (
-        "Call this exactly once to submit your final answer and finish. Set refused=true ONLY if "
-        "the member asked about is not present in the vote data you retrieved; otherwise put that "
-        "member's recorded vote in `answer`, copied VERBATIM from their `option` field in "
-        "get_vote_event (one of: yea, nay, present, not_voting). Do not set both."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "answer": {
-                "type": "string",
-                "description": "The member's recorded option, copied verbatim from get_vote_event.",
-            },
-            "refused": {
-                "type": "boolean",
-                "description": "True iff the answer is not present in the retrieved data.",
-                "default": False,
-            },
+# SHAPE-AWARE submit_answer: per-template typed fields. The answer fields are OPTIONAL (only the
+# fields the agent chooses are filled; a bare {refused: true} is a valid refusal). Field NAMES +
+# descriptions restate the QUESTION's quantities — NEVER the answer VALUES or the computation METHOD
+# (leak-safe). `fields` golds are built from GOLD_KEYS so answer.keys() == gold.keys() exactly.
+GOLD_KEYS = {
+    "family1.tally": ("yea", "nay", "margin", "result"),
+    "family1.party_breakdown": ("yea", "nay"),
+}
+NUMERIC_FIELDS = {
+    "family1.tally": ("yea", "nay", "margin"),
+    "family1.party_breakdown": ("yea", "nay"),
+}
+_REFUSED_FIELD = {
+    "refused": {
+        "type": "boolean",
+        "description": "True iff the event or member asked about is not in the retrieved data.",
+        "default": False,
+    }
+}
+SUBMIT_SCHEMAS = {
+    "family1.vote_lookup": {
+        "answer": {
+            "type": "string",
+            "description": "The member's recorded option (yea/nay/present/not_voting), copied "
+            "verbatim from get_vote_event.",
         },
+        **_REFUSED_FIELD,
+    },
+    "family1.tally": {
+        "yea": {"type": "integer", "description": "The number of yea votes."},
+        "nay": {"type": "integer", "description": "The number of nay votes."},
+        "margin": {"type": "integer", "description": "Yea count minus nay count."},
+        "result": {
+            "type": "string",
+            "description": "The recorded result, copied verbatim from get_vote_event.",
+        },
+        **_REFUSED_FIELD,
+    },
+    "family1.party_breakdown": {
+        "yea": {"type": "integer", "description": "The number of the party who voted yea."},
+        "nay": {"type": "integer", "description": "The number of the party who voted nay."},
+        **_REFUSED_FIELD,
+    },
+    "family1.party_defection": {
+        "count": {
+            "type": "integer",
+            "description": "The integer count the question asks for (a number of members).",
+        },
+        **_REFUSED_FIELD,
+    },
+    "family1.crossed_party": {
+        "member_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "The member ids the question asks you to list (an empty list if none).",
+        },
+        **_REFUSED_FIELD,
     },
 }
+
+_SUBMIT_DESCRIPTION = (
+    "Call this exactly once to submit your final answer and finish. Fill the answer fields the "
+    "question asks for. To refuse, set refused=true and leave the answer fields empty. Do not set "
+    "both. After this, end your turn — do not call any more tools."
+)
+
+
+def submit_tool_for(template_id: str) -> dict:
+    """The shape-aware submit_answer tool for a template (answer fields OPTIONAL → a bare
+    {refused: true} is a valid refusal)."""
+    return {
+        "name": "submit_answer",
+        "description": _SUBMIT_DESCRIPTION,
+        "input_schema": {"type": "object", "properties": SUBMIT_SCHEMAS[template_id]},
+    }
 
 
 async def lab_execute_tool(tool_name: str, arguments: dict, db, harness) -> str:
@@ -142,34 +195,97 @@ def _safe_err(exc: Exception, limit: int = 300) -> str:
 
 _AGENT_SYSTEM_PROMPT = (
     "You answer factual questions about U.S. Congressional roll-call votes. Use the get_vote_event "
-    "tool to retrieve a roll call's records, find the member named in the question, and read their "
-    "recorded vote. You MUST give your final answer ONLY by calling submit_answer exactly once — "
-    "do NOT answer in prose. Put that member's option copied VERBATIM (yea / nay / present / "
-    "not_voting) in `answer`; if the member named is not present in the retrieved records, call "
-    "submit_answer with refused=true. Never guess."
+    "tool to retrieve a roll call's records, then COMPUTE the answer the question asks for from "
+    "those records (counting members, reading the recorded option, etc.). Give your final answer "
+    "ONLY by calling submit_answer exactly once, filling the structured fields the question asks "
+    "for — do NOT answer in prose. To REFUSE (only when the event or member asked about is not in "
+    "the retrieved data), call submit_answer with refused=true and do NOT fill the answer fields. "
+    "Never guess; compute from the records."
 )
 
 
-def _map_answer(tool_calls: list[dict]):
-    """Project the agent's tool trajectory into a typed answer. The structured `refused` flag is
-    AUTHORITATIVE; a non-canonical `answer` is passed THROUGH (it format-fails at grading, which is
-    honest — not snapped to a valid option). Inconsistent (both / neither) and never-submitted all
-    collapse to NO_ANSWER so they fail cleanly without crashing."""
+def _to_int(value) -> int | None:
+    """Total int coercion shared by exact_int AND the fields numeric path. A wrong value is NEVER
+    snapped to a right one: 3.7 -> None (reject), "5" -> 5, "5.0"/"abc" -> None, bool -> None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if math.isfinite(value) and value == int(value) else None
+    if isinstance(value, str):
+        try:
+            return int(value.strip())
+        except ValueError:
+            return None
+    return None
+
+
+def coerce(grader: str, template_id: str, payload: dict):
+    """Grader-dispatched, TOTAL coercion of the submit_answer payload to the grader's expected type
+    (NO_ANSWER on anything malformed — never crashes). Deliberate asymmetry: a bare non-int for
+    exact_int -> NO_ANSWER (format-fail); a non-coercible fields sub-value -> kept raw -> graded
+    attempted-but-wrong (the dict still carries the gold key-set)."""
+    try:
+        if grader == "exact":
+            ans = payload.get("answer")
+            return ans if isinstance(ans, str) else NO_ANSWER
+        if grader == "exact_int":
+            n = _to_int(payload.get("count"))
+            return n if n is not None else NO_ANSWER
+        if grader == "fields":
+            numeric = NUMERIC_FIELDS[template_id]
+            out: dict = {}
+            for key in GOLD_KEYS[template_id]:
+                raw = payload.get(key)
+                if key in numeric:
+                    n = _to_int(raw)
+                    out[key] = n if n is not None else raw  # raw -> attempted-but-wrong
+                else:
+                    out[key] = str(raw) if raw is not None else None
+            return out
+        if grader == "set_match":
+            ids = payload.get("member_ids")
+            if not isinstance(ids, list | tuple):  # a str/dict is iterable -> would mis-grade
+                return NO_ANSWER
+            return [str(x) for x in ids]
+        return NO_ANSWER
+    except Exception:  # noqa: BLE001 — TOTAL: any malformed payload -> NO_ANSWER, never crash the run
+        return NO_ANSWER
+
+
+def _answer_present(grader: str, template_id: str, args: dict) -> bool:
+    """Per-grader 'did the agent fill a substantive answer?' (vs a bare refusal). An explicit empty
+    member_ids list IS an answer (∅ crossers), not a refusal."""
+    if grader == "exact":
+        a = args.get("answer")
+        return isinstance(a, str) and a != "" and a != REFUSAL
+    if grader == "exact_int":
+        return args.get("count") is not None
+    if grader == "fields":
+        return any(args.get(k) is not None for k in GOLD_KEYS[template_id])
+    if grader == "set_match":
+        return args.get("member_ids") is not None
+    return False
+
+
+def _map_answer(tool_calls: list[dict], *, grader: str, template_id: str):
+    """Project the agent's tool trajectory into a typed answer, uniform across shapes. `refused` is
+    authoritative ONLY when no substantive answer is present; inconsistent (both) / neither /
+    never-submitted -> NO_ANSWER (format-fails every grader; no free refusal credit)."""
     submits = [tc for tc in tool_calls if tc.get("tool_name") == "submit_answer"]
     if not submits:
-        return NO_ANSWER  # agent never finished (gave up / hit max_rounds)
+        return NO_ANSWER  # agent never finished
     args = submits[-1].get("arguments") or {}
     refused = bool(args.get("refused", False))
-    answer = args.get("answer")
-    # a literal REFUSAL sentinel in `answer` must NOT back-door refusal credit when refused is false
-    has_answer = isinstance(answer, str) and answer != "" and answer != REFUSAL
-    if refused and has_answer:
+    present = _answer_present(grader, template_id, args)
+    if refused and present:
         return NO_ANSWER  # inconsistent: both set
     if refused:
         return REFUSAL
-    if has_answer:
-        return answer
-    return NO_ANSWER  # neither set (or answer == the REFUSAL sentinel)
+    if present:
+        return coerce(grader, template_id, args)
+    return NO_ANSWER  # neither set
 
 
 class AgentSolver:
@@ -197,9 +313,9 @@ class AgentSolver:
         # strings only — NEVER the client or the auth token
         return {
             "name": self.name,
-            "backend": "anthropic-oauth",
+            "backend": "messages-api",
             "model": self.model,
-            "system_prompt_id": "lab_vote_lookup_v1",
+            "system_prompt_id": "lab_family1_v1",
         }
 
     def _client_or_build(self):
@@ -221,8 +337,11 @@ class AgentSolver:
             {
                 "instance_id": inst.instance_id,
                 "is_refusal": inst.is_refusal,
+                # any product (non-submit) tool call counts as retrieval (bare tool name; the SDK
+                # backend records the bare name too) — generalizes beyond get_vote_event.
                 "retrieved": any(
-                    o.get("tool") == "get_vote_event" for o in extras.get("trajectory", [])
+                    o.get("tool") not in (None, "submit_answer")
+                    for o in extras.get("trajectory", [])
                 ),
                 "errored": str(extras.get("raw", "")).startswith("<agent error:"),
             }
@@ -253,7 +372,7 @@ class AgentSolver:
                 system_prompt=self.system_prompt,
                 messages=messages,
                 client=self._client_or_build(),
-                tools=[get_vote_event, SUBMIT_ANSWER_TOOL],
+                tools=[get_vote_event, submit_tool_for(inst.template_id)],
                 execute_tool_fn=_record,
                 model=self.model,
             )
@@ -269,7 +388,7 @@ class AgentSolver:
         # NB: keep _map_answer OUTSIDE the try — a mapping/harness bug must crash loudly, not be
         # silently mislabeled as an agent error.
         latency_ms = (time.monotonic() - started) * 1000
-        answer = _map_answer(tool_calls)
+        answer = _map_answer(tool_calls, grader=inst.grader, template_id=inst.template_id)
         extras = {"trajectory": observations, "raw": final_text, "latency_ms": latency_ms}
         return answer, extras
 
