@@ -163,10 +163,10 @@ This keeps the invariant `decision_correct==1.0 ∧ answer_correct==0.0 ∧ form
 - **Refusal twin**: a congress that **does not exist at all** (e.g. `"999"`), **proven absent against `sessions`/`bills`** — *not* merely absent from `completed_congresses` (an ongoing congress exists in the DB; calling it "not in the data" would be a fabricated refusal). `refusal_reason = "congress_not_in_data"`.
 
 **Acceptance (2b):**
-- [ ] `event_to_congress` built once (no per-instance congress lookup); `bills.session_id` NULL-soundness verified.
-- [ ] `closest_by_margin` excludes `missing_official_count`; tie-deterministic `(margin, id)` gold proven unique on a tied fixture; `< K` behavior defined + tested.
-- [ ] Refusal twin = nonexistent congress, proven absent against `sessions`/`bills`.
-- [ ] Gold SQL passes the determinism/portability regex scan + a DuckDB-fixture-vs-hand-literals test (incl. tie + NULL-count + `<K` fixtures); three invariants green on live Postgres. `ruff` clean; full suite green.
+- [x] Window = completed-congress + chamber, via a per-window `vote_events→bills→sessions` join (one query per window, no N+1). **Deviation from plan letter:** `event_to_congress`/`fully_complete_windows` precompute maps are NOT built in 2b — deferred to 2c where `member_summary`/`pairwise` actually reuse them (YAGNI; the per-window join has no N+1). `bills.session_id` NULL-soundness **verified** (probe: 0 events with NULL/broken bill→session linkage, so no window-membership omission).
+- [x] `closest_by_margin` excludes NULL-count events (unrankable margin); tie-deterministic `(margin, id)` total order proven unique on a tied fixture (e5 in / e6 out by id); prompt states the tie-break so the question is determinate; `< K` handled by the slice (returns all rankable — defensive; every real window has ≥123).
+- [x] Refusal twin = nonexistent congress, proven absent against `sessions` before emit; `refusal_reason="congress_not_in_data"`.
+- [x] Gold SQL passes the determinism/portability regex scan + a DuckDB-fixture test (tie + NULL-count + cross-chamber window-filter cases); three invariants green on live Postgres (oracle 18 windows + 5 refusals; wrong-baseline 0; over-refuse fails answerable). `ruff` clean; lab suite green.
 
 ---
 

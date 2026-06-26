@@ -15,6 +15,8 @@ from lab.harness import Instance
 
 TEMPLATE_VOTE_LOOKUP = "family1.vote_lookup"
 TEMPLATE_TALLY = "family1.tally"
+TEMPLATE_CLOSEST = "family1.closest_by_margin"
+CLOSEST_K = 5  # how many "closest" roll calls a closest_by_margin instance asks for
 
 
 def _in_clause(n: int) -> str:
@@ -173,8 +175,94 @@ def generate_tally(conn, n: int, seed: int, precomputed) -> list[Instance]:
     return instances
 
 
+def generate_closest_by_margin(conn, n: int, seed: int, precomputed) -> list[Instance]:
+    """Template #8 (closest by margin): the K roll calls in a {congress, chamber} window with
+    the smallest |yea - nay|.
+
+    Group A — margins come from the canonical stored count columns (overcount-immune); NULL-count
+    events are excluded (an unrankable NULL margin). The window is a single COMPLETED congress
+    (point-in-time gate via `precomputed.completed_congresses` — the ongoing congress is excluded)
+    scoped to one chamber. Gold is tie-DETERMINISTIC: events are ranked by the total order
+    (margin ASC, id ASC), so the K-set is unique even when margins tie at the boundary; the prompt
+    states the tie-break so the question is fully determinate. `grader = "set_match"` (the answer
+    is *which* K, order-independent). Verified: every real window has >= ~123 rankable events, so K
+    is always satisfiable; the `< K` arm (return all rankable) is defensive only.
+    """
+    cur = conn.cursor()
+    instances: list[Instance] = []
+    completed = precomputed.completed_congresses
+
+    # candidate windows: (congress, chamber) with >=1 rankable event, gated to completed congresses.
+    cur.execute(
+        "SELECT DISTINCT s.identifier, ve.chamber "
+        "FROM vote_events ve "
+        "JOIN bills b ON b.id = ve.bill_id "
+        "JOIN sessions s ON s.id = b.session_id "
+        "WHERE ve.yes_count IS NOT NULL AND ve.no_count IS NOT NULL"
+    )
+    windows = {f"{c}:{ch}": (c, ch) for (c, ch) in cur.fetchall() if c in completed}
+    for wid in sample(list(windows), n, seed):
+        congress, chamber = windows[wid]
+        cur.execute(
+            "SELECT ve.id, ve.yes_count, ve.no_count "
+            "FROM vote_events ve "
+            "JOIN bills b ON b.id = ve.bill_id "
+            "JOIN sessions s ON s.id = b.session_id "
+            "WHERE s.identifier = %s AND ve.chamber = %s "
+            "AND ve.yes_count IS NOT NULL AND ve.no_count IS NOT NULL",
+            (congress, chamber),
+        )
+        # total order (margin ASC, id ASC) -> unique gold set even on ties.
+        ranked = sorted((abs(yes - no), eid) for (eid, yes, no) in cur.fetchall())
+        gold = {eid for (_margin, eid) in ranked[:CLOSEST_K]}
+        instances.append(
+            Instance(
+                instance_id=f"{TEMPLATE_CLOSEST}:{seed}:{congress}:{chamber}",
+                template_id=TEMPLATE_CLOSEST,
+                tier="C",
+                params={"congress": congress, "chamber": chamber, "k": CLOSEST_K},
+                prompt=f"Among the {chamber} roll-call votes of Congress {congress}, which "
+                f"{CLOSEST_K} had the smallest margin (closest |yea minus nay|), breaking ties "
+                f"by roll-call id? List the roll-call ids.",
+                gold=gold,
+                grader="set_match",
+                is_refusal=False,
+            )
+        )
+
+    # --- refusal: nonexistent congress, proven absent against sessions ---
+    n_refusal = max(3, n // 4)
+    synthetic = [f"NX-CONGRESS-{seed}-{i:04d}" for i in range(n_refusal)]
+    cur.execute(
+        f"SELECT identifier FROM sessions WHERE identifier IN ({_in_clause(len(synthetic))})",
+        synthetic,
+    )
+    if cur.fetchall():
+        raise AssertionError("synthetic refusal congress ids unexpectedly exist in sessions")
+    for i, cid in enumerate(synthetic):
+        chamber = "house" if i % 2 == 0 else "senate"
+        instances.append(
+            Instance(
+                instance_id=f"{TEMPLATE_CLOSEST}:{seed}:refusal:{cid}:{chamber}",
+                template_id=TEMPLATE_CLOSEST,
+                tier="C",
+                params={"congress": cid, "chamber": chamber, "k": CLOSEST_K},
+                prompt=f"Among the {chamber} roll-call votes of Congress {cid}, which "
+                f"{CLOSEST_K} had the smallest margin? List the roll-call ids.",
+                gold=REFUSAL,
+                grader="refusal_correct",
+                is_refusal=True,
+                refusal_reason="congress_not_in_data",
+            )
+        )
+    return instances
+
+
 # Template registry — each entry exposes `.generate(conn, n, seed, precomputed)` for the harness.
 TEMPLATE_REGISTRY = {
     "vote_lookup": SimpleNamespace(name="vote_lookup", generate=generate),
     "tally": SimpleNamespace(name="tally", generate=generate_tally),
+    "closest_by_margin": SimpleNamespace(
+        name="closest_by_margin", generate=generate_closest_by_margin
+    ),
 }
