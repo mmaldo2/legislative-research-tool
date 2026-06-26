@@ -91,6 +91,20 @@ def validate_gold(inst: Instance, valid_options: set[str]) -> None:
         raise ValueError(f"{inst.instance_id}: 'exact_int' gold must be an int, got {inst.gold!r}")
 
 
+def solve_grade_write(instances, solvers, ctx, seed: int, fh):
+    """The frozen per-instance chokepoint: solve -> grade -> write_trace, in this exact order.
+
+    Yields (solver, inst, verdict) so callers accumulate their own view WITHOUT forking the
+    grading path: `run()` builds per-solver results; `lab/batch.py` builds corpus stats. Keeping
+    this the SINGLE producer of trace records is what the frozen-core discipline protects."""
+    for solver in solvers:
+        for inst in instances:
+            answer = solver.solve(inst)
+            verdict = grade(inst.grader, inst.gold, answer, is_refusal=inst.is_refusal)
+            write_trace(build_record(inst, solver, answer, verdict, ctx, seed), fh)
+            yield solver, inst, verdict
+
+
 def run(template, solvers, n: int, seed: int, valid_options: set[str]) -> dict:
     """Generate instances for one template, run each solver, grade to a Verdict, and log a
     validated JSONL trace via the single write_trace chokepoint.
@@ -122,10 +136,6 @@ def run(template, solvers, n: int, seed: int, valid_options: set[str]) -> dict:
 
     results: dict[str, list[tuple[str, bool, Any]]] = {s.name: [] for s in solvers}
     with open(out_path, "a", encoding="utf-8") as fh:
-        for solver in solvers:
-            for inst in instances:
-                answer = solver.solve(inst)
-                verdict = grade(inst.grader, inst.gold, answer, is_refusal=inst.is_refusal)
-                write_trace(build_record(inst, solver, answer, verdict, ctx, seed), fh)
-                results[solver.name].append((inst.instance_id, inst.is_refusal, verdict))
+        for solver, inst, verdict in solve_grade_write(instances, solvers, ctx, seed, fh):
+            results[solver.name].append((inst.instance_id, inst.is_refusal, verdict))
     return results

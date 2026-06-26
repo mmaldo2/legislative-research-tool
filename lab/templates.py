@@ -31,6 +31,15 @@ def _in_clause(n: int) -> str:
     return ",".join(["%s"] * n)
 
 
+def _n_refusals(n_answerable: int) -> int:
+    """Refusal twins are ~1/5 of each template's ANSWERABLE yield (a RATIO of what was actually
+    generated, NOT a function of the requested n). Window templates saturate at the small number of
+    complete windows, so keying off n would drown them in refusals (a 0.74 ratio at n=200); keying
+    off the answerable count holds every template near a 0.2 refusal ratio. Floor of 3 guarantees
+    the refusal arm is always exercised even on a tiny answerable set."""
+    return max(3, n_answerable // 4)
+
+
 def generate(conn, n: int, seed: int, precomputed) -> list[Instance]:
     """Generate ~n answerable + a proportional refusal set for Template #1.
 
@@ -82,7 +91,7 @@ def generate(conn, n: int, seed: int, precomputed) -> list[Instance]:
     # --- refusal: SYNTHETIC nonexistent members (provably absent) paired with a real event.
     # Unambiguous (a real non-voting member could be a duplicate-row of someone who did vote);
     # absence is the only valid basis for refusal gold, so we prove it before emitting.
-    n_refusal = max(3, n // 4)
+    n_refusal = _n_refusals(len(instances))
     synthetic = [f"NX-{seed}-{i:04d}" for i in range(n_refusal)]
     cur.execute(f"SELECT id FROM people WHERE id IN ({_in_clause(len(synthetic))})", synthetic)
     if cur.fetchall():
@@ -160,7 +169,7 @@ def generate_tally(conn, n: int, seed: int, precomputed) -> list[Instance]:
             )
 
     # --- refusal: SYNTHETIC nonexistent event ids, proven absent before emit ---
-    n_refusal = max(3, n // 4)
+    n_refusal = _n_refusals(len(instances))
     synthetic = [f"NX-EVENT-{seed}-{i:04d}" for i in range(n_refusal)]
     cur.execute(f"SELECT id FROM vote_events WHERE id IN ({_in_clause(len(synthetic))})", synthetic)
     if cur.fetchall():
@@ -238,7 +247,7 @@ def generate_closest_by_margin(conn, n: int, seed: int, precomputed) -> list[Ins
         )
 
     # --- refusal: nonexistent congress, proven absent against sessions ---
-    n_refusal = max(3, n // 4)
+    n_refusal = _n_refusals(len(instances))
     synthetic = [f"NX-CONGRESS-{seed}-{i:04d}" for i in range(n_refusal)]
     cur.execute(
         f"SELECT identifier FROM sessions WHERE identifier IN ({_in_clause(len(synthetic))})",
@@ -353,7 +362,7 @@ def generate_member_summary(conn, n: int, seed: int, precomputed) -> list[Instan
         )
 
     # --- refusal: synthetic nonexistent member over a real fully-complete window ---
-    n_refusal = max(3, n // 4)
+    n_refusal = _n_refusals(len(instances))
     synthetic = [f"NX-{seed}-{i:04d}" for i in range(n_refusal)]
     cur.execute(f"SELECT id FROM people WHERE id IN ({_in_clause(len(synthetic))})", synthetic)
     if cur.fetchall():
@@ -450,7 +459,7 @@ def generate_pairwise_agreement(conn, n: int, seed: int, precomputed) -> list[In
         )
 
     # --- refusal: a synthetic nonexistent member paired with a real one over a real window ---
-    n_refusal = max(3, n // 4)
+    n_refusal = _n_refusals(len(instances))
     synthetic = [f"NX-{seed}-{i:04d}" for i in range(n_refusal)]
     cur.execute(f"SELECT id FROM people WHERE id IN ({_in_clause(len(synthetic))})", synthetic)
     if cur.fetchall():
@@ -607,7 +616,7 @@ def generate_party_breakdown(conn, n: int, seed: int, precomputed) -> list[Insta
         )
 
     # --- refusal: synthetic nonexistent event id, proven absent before emit ---
-    n_refusal = max(3, n // 4)
+    n_refusal = _n_refusals(len(instances))
     synthetic = [f"NX-EVENT-{seed}-{i:04d}" for i in range(n_refusal)]
     cur.execute(f"SELECT id FROM vote_events WHERE id IN ({_in_clause(len(synthetic))})", synthetic)
     if cur.fetchall():
@@ -670,7 +679,7 @@ def generate_party_defection(conn, n: int, seed: int, precomputed) -> list[Insta
             )
         )
 
-    instances.extend(_party_event_refusals(cur, TEMPLATE_PARTY_DEFECTION, n, seed))
+    instances.extend(_party_event_refusals(cur, TEMPLATE_PARTY_DEFECTION, len(instances), seed))
     return instances
 
 
@@ -730,14 +739,14 @@ def generate_crossed_party(conn, n: int, seed: int, precomputed) -> list[Instanc
             )
         )
 
-    instances.extend(_party_event_refusals(cur, TEMPLATE_CROSSED_PARTY, n, seed))
+    instances.extend(_party_event_refusals(cur, TEMPLATE_CROSSED_PARTY, len(instances), seed))
     return instances
 
 
-def _party_event_refusals(cur, template_id: str, n: int, seed: int) -> list[Instance]:
+def _party_event_refusals(cur, template_id: str, n_answerable: int, seed: int) -> list[Instance]:
     """Shared refusal twins for the party-keyed event templates: synthetic nonexistent vote_event
     ids, proven absent before emit, gold=REFUSAL."""
-    n_refusal = max(3, n // 4)
+    n_refusal = _n_refusals(n_answerable)
     synthetic = [f"NX-EVENT-{seed}-{i:04d}" for i in range(n_refusal)]
     cur.execute(f"SELECT id FROM vote_events WHERE id IN ({_in_clause(len(synthetic))})", synthetic)
     if cur.fetchall():
