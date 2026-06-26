@@ -49,6 +49,17 @@ class TestOvercountClassification:
         }
 
 
+class TestCompleteEvents:
+    def test_exact_reconciliation_and_strict_superset(self):
+        pre = precompute(_fixture())
+        # e_ok reconciles EXACTLY (yea2/nay1/other1 == stored 2/1/1) -> complete.
+        assert pre.complete_events == frozenset({"e_ok"})
+        # e_under is undercount (resolved 1/0/0 < stored 5/5/5): in NEITHER complete_events NOR
+        # excluded_events — the strict-superset distinction ("not excluded" != "complete").
+        assert "e_under" not in pre.complete_events
+        assert "e_under" not in pre.excluded_events
+
+
 class TestCompletedCongresses:
     def test_only_ended_sessions(self):
         pre = precompute(_fixture())

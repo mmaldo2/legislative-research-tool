@@ -39,7 +39,13 @@ class Precomputed:
     excluded_events: dict[str, ExclusionReason] = field(default_factory=dict)
     completed_congresses: frozenset[str] = frozenset()
     total_vote_records: int = 0
-    # event_to_congress: reserved for Phase 2 (built once here, never per-instance).
+    # Events whose resolved records reconcile EXACTLY against the stored official counts in every
+    # bucket — the Group B/C completeness gate. STRICTLY stronger than "not in excluded_events":
+    # an UNDERcount event (resolved < stored, no overcount/NULL) is in NEITHER set. A GROUP BY over
+    # a non-complete event would undercount = fabrication-by-omission, so record-derived templates
+    # sample only complete events (windowed templates require the WHOLE window complete — see
+    # lab/templates._fully_complete_windows, which assembles windows from this set).
+    complete_events: frozenset[str] = frozenset()
     # party_majority: see _party_majority() — a reserved registry DEFINITION.
 
 
@@ -57,9 +63,10 @@ def precompute(conn) -> Precomputed:
         resolved.setdefault(event_id, {})[option] = count
         total += count
 
-    # 2) stored official totals per event; classify overcount / missing.
+    # 2) stored official totals per event; classify overcount / missing / complete.
     cur.execute("SELECT id, yes_count, no_count, other_count FROM vote_events")
     excluded: dict[str, ExclusionReason] = {}
+    complete: set[str] = set()
     for event_id, yes_count, no_count, other_count in cur.fetchall():
         stored = {"yes_count": yes_count, "no_count": no_count, "other_count": other_count}
         resolved_bucket = {"yes_count": 0, "no_count": 0, "other_count": 0}
@@ -78,6 +85,10 @@ def precompute(conn) -> Precomputed:
             excluded[event_id] = "overcount"
         elif has_missing:
             excluded[event_id] = "missing_official_count"
+        elif all(resolved_bucket[b] == stored[b] for b in stored):
+            # exact reconciliation (stored non-NULL here, resolved <= stored) -> complete.
+            # An undercount event falls through to NEITHER excluded nor complete (by design).
+            complete.add(event_id)
 
     # 3) completed congresses (point-in-time gate). One session row per congress (verified: 10
     #    sessions for Congresses 110-119), so the identifier alone is sufficient.
@@ -88,6 +99,7 @@ def precompute(conn) -> Precomputed:
         excluded_events=excluded,
         completed_congresses=completed,
         total_vote_records=total,
+        complete_events=frozenset(complete),
     )
 
 

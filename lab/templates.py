@@ -7,6 +7,7 @@ Phase 0 ships Template #1 (vote lookup). Gold is read directly from `vote_record
 We do NOT claim an eligible/ineligible distinction (the schema can't support it).
 """
 
+from collections import defaultdict
 from types import SimpleNamespace
 
 from lab.generate import pick_one, sample
@@ -16,6 +17,8 @@ from lab.harness import Instance
 TEMPLATE_VOTE_LOOKUP = "family1.vote_lookup"
 TEMPLATE_TALLY = "family1.tally"
 TEMPLATE_CLOSEST = "family1.closest_by_margin"
+TEMPLATE_MEMBER_SUMMARY = "family1.member_summary"
+TEMPLATE_PAIRWISE = "family1.pairwise_agreement"
 CLOSEST_K = 5  # how many "closest" roll calls a closest_by_margin instance asks for
 
 
@@ -258,11 +261,231 @@ def generate_closest_by_margin(conn, n: int, seed: int, precomputed) -> list[Ins
     return instances
 
 
+def _fully_complete_windows(conn, precomputed) -> list[tuple[str, str]]:
+    """(congress, chamber) windows where EVERY event reconciles exactly (all-or-nothing) AND the
+    congress is completed (point-in-time). ALL-OR-NOTHING is the honest framing: filtering
+    incomplete events *inside* a window would silently change the per-member / pairwise denominator
+    (a partial tally presented as the member's full-congress record = fabrication-by-omission).
+    Returns a sorted list for deterministic sampling. (Currently every completed window is fully
+    complete — the only undercount is the ongoing congress, already gated out — but this stays a
+    real guard: a future re-ingest that leaves one unmatched voter drops that whole window.)"""
+    cur = conn.cursor()
+    cur.execute(
+        "SELECT ve.id, s.identifier, ve.chamber "
+        "FROM vote_events ve "
+        "JOIN bills b ON b.id = ve.bill_id "
+        "JOIN sessions s ON s.id = b.session_id"
+    )
+    total: dict[tuple[str, str], int] = defaultdict(int)
+    incomplete: dict[tuple[str, str], int] = defaultdict(int)
+    for eid, congress, chamber in cur.fetchall():
+        if congress not in precomputed.completed_congresses:
+            continue
+        win = (congress, chamber)
+        total[win] += 1
+        if eid not in precomputed.complete_events:
+            incomplete[win] += 1
+    return sorted(w for w, t in total.items() if incomplete[w] == 0)
+
+
+def generate_member_summary(conn, n: int, seed: int, precomputed) -> list[Instance]:
+    """Template #6 (per-member summary): a member's option counts across a {congress, chamber}.
+
+    Group B — `GROUP BY` over the member's records, so it samples only FULLY-COMPLETE windows
+    (every event reconciled -> every member's record present). Reported as `{yea, nay, other}`:
+    `other` = present + not_voting, which reconciles against the stored `other_count` bucket; the
+    present/not_voting split is deliberately NOT reported (it rests on ingest classification the
+    gate cannot re-verify). Uses ix_vote_records_person_id.
+    """
+    cur = conn.cursor()
+    instances: list[Instance] = []
+    windows = _fully_complete_windows(conn, precomputed)
+    win_ids = {f"{c}:{ch}": (c, ch) for (c, ch) in windows}
+
+    for wid in sample(list(win_ids), n, seed):
+        congress, chamber = win_ids[wid]
+        cur.execute(
+            "SELECT DISTINCT vr.person_id "
+            "FROM vote_records vr "
+            "JOIN vote_events ve ON ve.id = vr.vote_event_id "
+            "JOIN bills b ON b.id = ve.bill_id "
+            "JOIN sessions s ON s.id = b.session_id "
+            "WHERE s.identifier = %s AND ve.chamber = %s",
+            (congress, chamber),
+        )
+        member_ids = [r[0] for r in cur.fetchall()]
+        if not member_ids:
+            continue
+        pid = pick_one(member_ids, seed)
+        cur.execute("SELECT name FROM people WHERE id = %s", (pid,))
+        row = cur.fetchone()
+        name = row[0] if row else pid
+        cur.execute(
+            'SELECT vr."option", COUNT(*) '
+            "FROM vote_records vr "
+            "JOIN vote_events ve ON ve.id = vr.vote_event_id "
+            "JOIN bills b ON b.id = ve.bill_id "
+            "JOIN sessions s ON s.id = b.session_id "
+            "WHERE vr.person_id = %s AND s.identifier = %s AND ve.chamber = %s "
+            'GROUP BY vr."option"',
+            (pid, congress, chamber),
+        )
+        gold = {"yea": 0, "nay": 0, "other": 0}
+        for option, count in cur.fetchall():
+            key = option if option in ("yea", "nay") else "other"
+            gold[key] += count
+        instances.append(
+            Instance(
+                instance_id=f"{TEMPLATE_MEMBER_SUMMARY}:{seed}:{congress}:{chamber}:{pid}",
+                template_id=TEMPLATE_MEMBER_SUMMARY,
+                tier="C",
+                params={"person_id": pid, "congress": congress, "chamber": chamber},
+                prompt=f"Across the {chamber} roll-call votes of Congress {congress}, how many did "
+                f"{name} vote yea, how many nay, and how many other (present or not voting)?",
+                gold=gold,
+                grader="fields",
+                is_refusal=False,
+            )
+        )
+
+    # --- refusal: synthetic nonexistent member over a real fully-complete window ---
+    n_refusal = max(3, n // 4)
+    synthetic = [f"NX-{seed}-{i:04d}" for i in range(n_refusal)]
+    cur.execute(f"SELECT id FROM people WHERE id IN ({_in_clause(len(synthetic))})", synthetic)
+    if cur.fetchall():
+        raise AssertionError("synthetic refusal ids unexpectedly exist in people")
+    for i, pid in enumerate(synthetic):
+        if not windows:
+            break
+        congress, chamber = windows[i % len(windows)]
+        instances.append(
+            Instance(
+                instance_id=f"{TEMPLATE_MEMBER_SUMMARY}:{seed}:refusal:{congress}:{chamber}:{pid}",
+                template_id=TEMPLATE_MEMBER_SUMMARY,
+                tier="C",
+                params={"person_id": pid, "congress": congress, "chamber": chamber},
+                prompt=f"Across the {chamber} roll-call votes of Congress {congress}, how did the "
+                f"member with id '{pid}' vote (yea / nay / other)?",
+                gold=REFUSAL,
+                grader="refusal_correct",
+                is_refusal=True,
+                refusal_reason="person_not_in_data",
+            )
+        )
+    return instances
+
+
+def generate_pairwise_agreement(conn, n: int, seed: int, precomputed) -> list[Instance]:
+    """Template #7 (pairwise agreement): on shared yea/nay roll calls in a {congress, chamber},
+    how often two members voted the same way.
+
+    Group B — fully-complete windows only (so "shared" is not undercounted). Both the shared and
+    the agreement counts are restricted to events where BOTH members cast a yea/nay vote (a mutual
+    present/not_voting is neither "both voted" nor an "agreement"). Two sargable person_id index
+    scans joined on vote_event_id (the (vote_event_id, person_id) uniqueness makes it one row per
+    shared event -> no double counting).
+    """
+    cur = conn.cursor()
+    instances: list[Instance] = []
+    windows = _fully_complete_windows(conn, precomputed)
+    win_ids = {f"{c}:{ch}": (c, ch) for (c, ch) in windows}
+
+    for wid in sample(list(win_ids), n, seed):
+        congress, chamber = win_ids[wid]
+        cur.execute(
+            "SELECT DISTINCT vr.person_id "
+            "FROM vote_records vr "
+            "JOIN vote_events ve ON ve.id = vr.vote_event_id "
+            "JOIN bills b ON b.id = ve.bill_id "
+            "JOIN sessions s ON s.id = b.session_id "
+            "WHERE s.identifier = %s AND ve.chamber = %s",
+            (congress, chamber),
+        )
+        member_ids = [r[0] for r in cur.fetchall()]
+        if len(member_ids) < 2:
+            continue
+        person_a, person_b = sample(member_ids, 2, seed)  # two smallest-hash members
+        cur.execute("SELECT id, name FROM people WHERE id IN (%s, %s)", (person_a, person_b))
+        names = {r[0]: r[1] for r in cur.fetchall()}
+        cur.execute(
+            'SELECT ra."option", rb."option" '
+            "FROM vote_records ra "
+            "JOIN vote_records rb ON ra.vote_event_id = rb.vote_event_id "
+            "JOIN vote_events ve ON ve.id = ra.vote_event_id "
+            "JOIN bills b ON b.id = ve.bill_id "
+            "JOIN sessions s ON s.id = b.session_id "
+            "WHERE ra.person_id = %s AND rb.person_id = %s "
+            "AND s.identifier = %s AND ve.chamber = %s "
+            "AND ra.\"option\" IN ('yea', 'nay') AND rb.\"option\" IN ('yea', 'nay')",
+            (person_a, person_b, congress, chamber),
+        )
+        shared, agreements = 0, 0
+        for a_opt, b_opt in cur.fetchall():
+            shared += 1
+            if a_opt == b_opt:
+                agreements += 1
+        instances.append(
+            Instance(
+                instance_id=f"{TEMPLATE_PAIRWISE}:{seed}:{congress}:{chamber}:{person_a}:{person_b}",
+                template_id=TEMPLATE_PAIRWISE,
+                tier="C",
+                params={
+                    "person_a": person_a,
+                    "person_b": person_b,
+                    "congress": congress,
+                    "chamber": chamber,
+                },
+                prompt=f"Across the {chamber} roll-call votes of Congress {congress}, on how many "
+                f"did both {names.get(person_a, person_a)} and "
+                f"{names.get(person_b, person_b)} vote yea or nay (shared_events), and on how many "
+                f"of those did they vote the same way (agreements)?",
+                gold={"agreements": agreements, "shared_events": shared},
+                grader="fields",
+                is_refusal=False,
+            )
+        )
+
+    # --- refusal: a synthetic nonexistent member paired with a real one over a real window ---
+    n_refusal = max(3, n // 4)
+    synthetic = [f"NX-{seed}-{i:04d}" for i in range(n_refusal)]
+    cur.execute(f"SELECT id FROM people WHERE id IN ({_in_clause(len(synthetic))})", synthetic)
+    if cur.fetchall():
+        raise AssertionError("synthetic refusal ids unexpectedly exist in people")
+    for i, pid in enumerate(synthetic):
+        if not windows:
+            break
+        congress, chamber = windows[i % len(windows)]
+        instances.append(
+            Instance(
+                instance_id=f"{TEMPLATE_PAIRWISE}:{seed}:refusal:{congress}:{chamber}:{pid}",
+                template_id=TEMPLATE_PAIRWISE,
+                tier="C",
+                params={
+                    "person_a": pid,
+                    "person_b": None,
+                    "congress": congress,
+                    "chamber": chamber,
+                },
+                prompt=f"Across the {chamber} roll-call votes of Congress {congress}, on how many "
+                f"did the member with id '{pid}' and any other member vote the same way?",
+                gold=REFUSAL,
+                grader="refusal_correct",
+                is_refusal=True,
+                refusal_reason="person_not_in_data",
+            )
+        )
+    return instances
+
+
 # Template registry — each entry exposes `.generate(conn, n, seed, precomputed)` for the harness.
 TEMPLATE_REGISTRY = {
     "vote_lookup": SimpleNamespace(name="vote_lookup", generate=generate),
     "tally": SimpleNamespace(name="tally", generate=generate_tally),
     "closest_by_margin": SimpleNamespace(
         name="closest_by_margin", generate=generate_closest_by_margin
+    ),
+    "member_summary": SimpleNamespace(name="member_summary", generate=generate_member_summary),
+    "pairwise_agreement": SimpleNamespace(
+        name="pairwise_agreement", generate=generate_pairwise_agreement
     ),
 }

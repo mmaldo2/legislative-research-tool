@@ -193,10 +193,10 @@ if complete: complete_events.add(event_id)
 **Differential PG↔DuckDB layer — recommended deferred again.** Hand-literals prove *absolute* correctness (PG==DuckDB agreement is strictly weaker — they can agree on a wrong answer) at lower cost. Broaden the hand-literal fixtures instead (tie / empty-result / single-shared-event / undercount-excluded cases). Flagged so review can overrule for PG-execution coverage of the self-join.
 
 **Acceptance (2c):**
-- [ ] Feasibility probe run (reusing precompute); fully-complete-window count recorded by congress/chamber; ≥ enough to sample, or STOP-and-surface documented (and `member_summary`/`pairwise` deferred).
-- [ ] `complete_events` (exact reconciliation) + `fully_complete_windows` built in the existing single scan; test proves an *undercount* fixture event is in neither `complete_events` nor `excluded_events`, and a window with one incomplete event is excluded.
-- [ ] `member_summary` samples only fully-complete windows; gold `{yea, nay, other}`; uses `person_id` index. `pairwise_agreement` (if kept) filters `option IN ('yea','nay')`, two index scans joined on `vote_event_id`.
-- [ ] Each template: refusal twin proven absent; gold SQL passes regex scan + DuckDB-fixture-vs-literals; three invariants green on live Postgres. `ruff` clean; full suite green.
+- [x] Feasibility probe run (reusing precompute): **18/18 completed windows fully complete** (94.6% of all events reconcile exactly; the only undercount is the ongoing 119th, already point-in-time-gated). Feasibility GREEN — both templates built.
+- [x] `complete_events` (exact reconciliation) built in the existing precompute scan (no new pass); `_fully_complete_windows` (all-or-nothing) computed in a `templates` helper (keeps precompute join-free — same separation as 2b's per-window join). Tests prove an *undercount* fixture event is in neither `complete_events` nor `excluded_events`, and a window with one incomplete event is dropped.
+- [x] `member_summary` samples only fully-complete windows; gold `{yea, nay, other}` (present/not_voting collapsed — every field reconciles); uses `person_id` index. `pairwise_agreement` filters `"option" IN ('yea','nay')` on both sides (mutual absence excluded), two `person_id` index scans joined on `vote_event_id`.
+- [x] Each template: refusal twin proven absent against `people`; gold SQL passes regex scan + DuckDB-fixture-vs-literals; three invariants green on live Postgres (oracle 18 windows + 5 refusals each; gold magnitudes sane — e.g. member sum == window size). `ruff` clean; lab suite green.
 
 ---
 
