@@ -142,12 +142,12 @@ Phase 0 (auth spike) ──gate(X|W)──> A1 (get_vote_event + get_bill_detail
 
 ## Phase A4 — agent run entry (`--agent`)
 
-- [ ] `lab/run.py`: `--agent` flag takes a **separate code path** — build `solvers=[AgentSolver(...)]`, run via `harness.run`, print the agent's pass rate + mean score + per-instance pass/fail, and **skip the entire `results["oracle"]`/wrong/over-refuse invariant block** (those keys don't exist for an agent run → would `KeyError`). Default `--n 10` for agent runs. The deterministic path (no `--agent`) is unchanged and still asserts.
-- [ ] **Acceptance:** `--agent` path unit-exercised with a mocked solver (no live call); deterministic invariants still run + pass without `--agent`.
+- [x] `lab/run.py`: `--agent` flag takes a **separate code path** — build `solvers=[AgentSolver(...)]`, run via `harness.run`, print the agent's pass rate + mean score + per-instance pass/fail, and **skip the entire `results["oracle"]`/wrong/over-refuse invariant block** (those keys don't exist for an agent run → would `KeyError`). Default `--n 10` for agent runs. The deterministic path (no `--agent`) is unchanged and still asserts.
+- [x] **Acceptance:** `tests/test_lab/test_run_cli.py` — `--agent` (mocked `run`) returns 0 w/o KeyError + defaults n=10; deterministic path still asserts. Live `--template vote_lookup --n 8` = oracle 11/11, INVARIANTS OK.
 
 ## Phase A4b — duplicate-name noise floor (integrity)
 
-- [ ] Read-only diagnostic (no gold/template change): over the sampled `vote_lookup` events, count cases where the chosen member's `name` is non-unique within the event. Post-hoc **annotate/exclude** any collided instance from the **reported** pass rate (trace-side filter, never a gold edit) so the headline number isn't corrupted by input ambiguity. Document residual as a Family-10 data-quality seed.
+- [x] Read-only diagnostic (no gold/template change): `vote_lookup_name_collisions(conn, instances)` flags answerable instances whose looked-up member shares a name with another voter in the same event; `_run_agent` regenerates the seed-deterministic instances read-only, excludes collided ones from a **reported clean rate** (never a gold edit), and is guarded so the diagnostic can't abort the run. Family-10 data-quality seed noted.
 
 ## Phase A5 — live smoke (MANUAL acceptance, not CI)
 
