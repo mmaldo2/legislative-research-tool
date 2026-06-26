@@ -9,6 +9,8 @@ kind="agent" and a richer policy. Each solver exposes `kind` + `policy` so the t
 what produced a rollout (and synthetic fixture rows can be filtered out of any training set).
 """
 
+import json
+
 from lab.graders import REFUSAL
 from lab.harness import Instance
 from src.ingestion.vote_parsers import OPTION_BUCKETS
@@ -70,3 +72,43 @@ class OverRefuseSolver(_DeterministicSolver):
 
     def solve(self, inst: Instance):
         return REFUSAL
+
+
+# --- Lab agent tools (used by the live AgentSolver) -------------------------------------------
+# submit_answer is a LAB-ONLY meta-tool — deliberately NOT a product RESEARCH_TOOL — the agent's
+# structured, typed answer channel (no prose parsing). get_vote_event IS a product tool.
+
+SUBMIT_ANSWER_TOOL = {
+    "name": "submit_answer",
+    "description": (
+        "Call this exactly once to submit your final answer and finish. Set refused=true ONLY if "
+        "the member asked about is not present in the vote data you retrieved; otherwise put that "
+        "member's recorded vote in `answer`, copied VERBATIM from their `option` field in "
+        "get_vote_event (one of: yea, nay, present, not_voting). Do not set both."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "answer": {
+                "type": "string",
+                "description": "The member's recorded option, copied verbatim from get_vote_event.",
+            },
+            "refused": {
+                "type": "boolean",
+                "description": "True iff the answer is not present in the retrieved data.",
+                "default": False,
+            },
+        },
+    },
+}
+
+
+async def lab_execute_tool(tool_name: str, arguments: dict, db, harness) -> str:
+    """ToolExecutor for the lab agent run: `submit_answer` is a local sink (the payload is read
+    from `all_tool_calls` by the solver); every other tool (e.g. `get_vote_event`) routes to the
+    real product registry."""
+    if tool_name == "submit_answer":
+        return json.dumps({"status": "recorded"})
+    from src.api.chat import execute_tool  # lazy: keep product code off the deterministic path
+
+    return await execute_tool(tool_name, arguments, db, harness)

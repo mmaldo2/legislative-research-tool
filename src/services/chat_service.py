@@ -92,17 +92,19 @@ async def run_agentic_chat(
     tools: list[dict] | None = None,
     max_rounds: int = MAX_TOOL_ROUNDS,
     execute_tool_fn: ToolExecutor | None = None,
+    model: str | None = None,
 ) -> tuple[str, list[dict]]:
     """Run the agentic chat loop, returning (final_text, tool_calls_metadata).
 
     No DB connection is held during LLM API calls. Tool handlers get
-    their own short-lived sessions.
+    their own short-lived sessions. `model` overrides the default (`settings.summary_model`) so a
+    caller (e.g. the lab AgentSolver) can pin a specific model without mutating global settings.
     """
     if tools is None:
         tools = RESEARCH_TOOLS
 
     _exec_fn = execute_tool_fn or _default_execute_tool
-    model = settings.summary_model
+    model = model or settings.summary_model
     all_tool_calls: list[dict] = []
     api_messages = list(messages)
     final_text = ""
@@ -253,11 +255,14 @@ async def stream_agentic_chat(
                 tool_name = block.name
                 tool_input = block.input
 
-                yield _sse_event("tool_status", {
-                    "tool": tool_name,
-                    "status": "running",
-                    "description": _tool_description(tool_name, tool_input),
-                })
+                yield _sse_event(
+                    "tool_status",
+                    {
+                        "tool": tool_name,
+                        "status": "running",
+                        "description": _tool_description(tool_name, tool_input),
+                    },
+                )
 
                 try:
                     result_str = await _execute_tool_with_session(
@@ -265,9 +270,7 @@ async def stream_agentic_chat(
                     )
                 except (ValueError, LookupError, json.JSONDecodeError):
                     logger.exception("Tool execution error: %s", tool_name)
-                    result_str = json.dumps(
-                        {"error": f"Tool '{tool_name}' encountered an error."}
-                    )
+                    result_str = json.dumps({"error": f"Tool '{tool_name}' encountered an error."})
 
                 result_data = json.loads(result_str)
                 if "error" in result_data:
@@ -280,23 +283,30 @@ async def stream_agentic_chat(
                 else:
                     summary = f"{len(result_str)} chars"
 
-                all_tool_calls.append({
-                    "tool_name": tool_name,
-                    "arguments": tool_input,
-                    "result_summary": summary,
-                })
+                all_tool_calls.append(
+                    {
+                        "tool_name": tool_name,
+                        "arguments": tool_input,
+                        "result_summary": summary,
+                    }
+                )
 
-                yield _sse_event("tool_status", {
-                    "tool": tool_name,
-                    "status": "complete",
-                    "description": summary,
-                })
+                yield _sse_event(
+                    "tool_status",
+                    {
+                        "tool": tool_name,
+                        "status": "complete",
+                        "description": summary,
+                    },
+                )
 
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": block.id,
-                    "content": result_str,
-                })
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": result_str,
+                    }
+                )
 
             api_messages.append({"role": "user", "content": tool_results})
 
@@ -309,14 +319,16 @@ async def stream_agentic_chat(
         final_text = extract_text(response)
         if not final_text:
             final_text = (
-                "I reached the maximum number of research steps. "
-                "Here is what I found so far."
+                "I reached the maximum number of research steps. Here is what I found so far."
             )
 
-    yield _sse_event("done", {
-        "text": final_text,
-        "tool_calls": all_tool_calls,
-    })
+    yield _sse_event(
+        "done",
+        {
+            "text": final_text,
+            "tool_calls": all_tool_calls,
+        },
+    )
 
 
 def _tool_description(tool_name: str, tool_input: dict) -> str:
@@ -325,27 +337,17 @@ def _tool_description(tool_name: str, tool_input: dict) -> str:
         "search_bills": lambda args: f"Searching for '{args.get('query', '')}'...",
         "get_bill_detail": lambda args: f"Reading bill {args.get('bill_id', '')}...",
         "list_jurisdictions": lambda _args: "Listing available jurisdictions...",
-        "find_similar_bills": lambda args: (
-            f"Finding similar bills to {args.get('bill_id', '')}..."
-        ),
-        "analyze_version_diff": lambda args: (
-            f"Comparing versions of {args.get('bill_id', '')}..."
-        ),
+        "find_similar_bills": lambda args: f"Finding similar bills to {args.get('bill_id', '')}...",
+        "analyze_version_diff": lambda args: f"Comparing versions of {args.get('bill_id', '')}...",
         "analyze_constitutional": lambda args: (
             f"Analyzing constitutionality of {args.get('bill_id', '')}..."
         ),
         "analyze_patterns": lambda args: (
             f"Detecting legislative patterns for {args.get('bill_id', '')}..."
         ),
-        "predict_bill_passage": lambda args: (
-            f"Predicting passage for {args.get('bill_id', '')}..."
-        ),
-        "search_govinfo": lambda args: (
-            f"Searching GovInfo for '{args.get('query', '')}'..."
-        ),
-        "get_govinfo_document": lambda args: (
-            f"Retrieving document {args.get('package_id', '')}..."
-        ),
+        "predict_bill_passage": lambda args: f"Predicting passage for {args.get('bill_id', '')}...",
+        "search_govinfo": lambda args: f"Searching GovInfo for '{args.get('query', '')}'...",
+        "get_govinfo_document": lambda args: f"Retrieving document {args.get('package_id', '')}...",
     }
     fn = descriptions.get(tool_name, lambda _: f"Running {tool_name}...")
     return fn(tool_input)
@@ -458,18 +460,22 @@ def _run_sdk_query_with_mcp(prompt: str, system_prompt: str) -> list[dict]:
                     if isinstance(block, TextBlock):
                         events.append({"type": "text", "text": block.text})
                     elif isinstance(block, ToolUseBlock):
-                        events.append({
-                            "type": "tool_use",
-                            "name": block.name,
-                            "input": block.input,
-                            "id": block.id,
-                        })
+                        events.append(
+                            {
+                                "type": "tool_use",
+                                "name": block.name,
+                                "input": block.input,
+                                "id": block.id,
+                            }
+                        )
             elif isinstance(msg, ResultMessage):
-                events.append({
-                    "type": "result",
-                    "is_error": msg.is_error,
-                    "result": msg.result,
-                })
+                events.append(
+                    {
+                        "type": "result",
+                        "is_error": msg.is_error,
+                        "result": msg.result,
+                    }
+                )
             # UserMessage (tool results) and SystemMessage are internal to the
             # SDK's agentic loop — we don't need to surface them.
         return events
@@ -512,20 +518,21 @@ async def stream_sdk_agentic_chat(
     )
 
     try:
-        events = await asyncio.to_thread(
-            _run_sdk_query_with_mcp, prompt, system_prompt
-        )
+        events = await asyncio.to_thread(_run_sdk_query_with_mcp, prompt, system_prompt)
     except Exception:
         logger.exception("Agent SDK query with MCP failed")
-        yield _sse_event("error", {
-            "message": (
-                "The research assistant is unavailable right now. "
-                "Configure ANTHROPIC_API_KEY or Claude SDK auth and try again."
-            ),
-            "retryable": True,
-            "error_type": "server",
-            "detail": "Claude Agent SDK/MCP execution failed.",
-        })
+        yield _sse_event(
+            "error",
+            {
+                "message": (
+                    "The research assistant is unavailable right now. "
+                    "Configure ANTHROPIC_API_KEY or Claude SDK auth and try again."
+                ),
+                "retryable": True,
+                "error_type": "server",
+                "detail": "Claude Agent SDK/MCP execution failed.",
+            },
+        )
         return
 
     # Convert collected events to SSE format
@@ -542,31 +549,45 @@ async def stream_sdk_agentic_chat(
                 yield _sse_event("token", {"text": text[i : i + chunk_size]})
 
         elif event["type"] == "tool_use":
-            tool_calls.append({
-                "tool_name": event["name"],
-                "arguments": event.get("input", {}),
-                "result_summary": _tool_description(event["name"], event.get("input", {})),
-            })
-            yield _sse_event("tool_status", {
-                "tool": event["name"],
-                "status": "running",
-                "description": _tool_description(event["name"], event.get("input", {})),
-            })
+            tool_calls.append(
+                {
+                    "tool_name": event["name"],
+                    "arguments": event.get("input", {}),
+                    "result_summary": _tool_description(event["name"], event.get("input", {})),
+                }
+            )
+            yield _sse_event(
+                "tool_status",
+                {
+                    "tool": event["name"],
+                    "status": "running",
+                    "description": _tool_description(event["name"], event.get("input", {})),
+                },
+            )
             # Emit a completion status after each tool use
-            yield _sse_event("tool_status", {
-                "tool": event["name"],
-                "status": "complete",
-            })
+            yield _sse_event(
+                "tool_status",
+                {
+                    "tool": event["name"],
+                    "status": "complete",
+                },
+            )
 
         elif event["type"] == "result":
             if event.get("is_error"):
-                yield _sse_event("error", {
-                    "message": event.get("result", "Unknown error"),
-                    "retryable": True,
-                })
+                yield _sse_event(
+                    "error",
+                    {
+                        "message": event.get("result", "Unknown error"),
+                        "retryable": True,
+                    },
+                )
                 return
 
-    yield _sse_event("done", {
-        "text": full_text,
-        "tool_calls": tool_calls,
-    })
+    yield _sse_event(
+        "done",
+        {
+            "text": full_text,
+            "tool_calls": tool_calls,
+        },
+    )

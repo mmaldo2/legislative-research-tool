@@ -119,16 +119,16 @@ Phase 0 (auth spike) ──gate(X|W)──> A1 (get_vote_event + get_bill_detail
 
 ## Phase A2 — `submit_answer` + lab dispatcher + model pin
 
-- [ ] In `lab/solvers.py` (inline — no separate `lab_tools.py` for one template): `SUBMIT_ANSWER_TOOL` schema = `{answer: string (optional), refused: boolean (default false)}`. Description: "call exactly once to finish; set `refused=true` **iff the asked-about member is not present in the data you retrieved**; otherwise put the member's recorded vote in `answer`, copied **verbatim** from that member's `option` field in `get_vote_event` (a canonical token)."
-- [ ] Module-level `async def lab_execute_tool(tool_name, arguments, db, harness) -> str` (plain function, no factory): `submit_answer` → `json.dumps({"status": "recorded"})`; else delegate to `src.api.chat.execute_tool`.
-- [ ] `src/services/chat_service.py`: add optional `model: str | None = None` to `run_agentic_chat` (default → `settings.summary_model`); backward-compatible. (Leave `stream_agentic_chat`'s identical hardcode untouched — non-stream path only; note the asymmetry.)
-- [ ] **Acceptance:** unit test that `lab_execute_tool` acks `submit_answer` + routes `get_vote_event`; `run_agentic_chat(model=...)` default unchanged. (Folds into A3b's test if simpler.)
+- [x] In `lab/solvers.py` (inline — no separate `lab_tools.py` for one template): `SUBMIT_ANSWER_TOOL` schema = `{answer: string (optional), refused: boolean (default false)}`. Description: "call exactly once to finish; set `refused=true` **iff the asked-about member is not present in the data you retrieved**; otherwise put the member's recorded vote in `answer`, copied **verbatim** from that member's `option` field in `get_vote_event` (a canonical token)."
+- [x] Module-level `async def lab_execute_tool(tool_name, arguments, db, harness) -> str` (plain function, no factory): `submit_answer` → `json.dumps({"status": "recorded"})`; else delegate to `src.api.chat.execute_tool` (lazy import).
+- [x] `src/services/chat_service.py`: add optional `model: str | None = None` to `run_agentic_chat` (default → `settings.summary_model`); backward-compatible. (Left `stream_agentic_chat`'s identical hardcode untouched — non-stream path only.)
+- [x] **Acceptance:** `tests/test_lab/test_agent_seam.py::TestLabExecuteTool` — acks `submit_answer` + routes `get_vote_event` to `execute_tool`.
 
 ## Phase A3a — trace-capture seam (Decision 1, additive)
 
-- [ ] `lab/harness.py::solve_grade_write`: after `answer = solver.solve(inst)`, read `extras = getattr(solver, "trace_extras", None)` and pass `extras=extras` to `build_record`.
-- [ ] `lab/trace.py::build_record(..., extras=None)`: `extras = extras or {}`; set `trajectory=extras.get("trajectory", [])`, `raw=extras.get("raw", str(answer))`, `latency_ms=extras.get("latency_ms")`, `input_tokens/output_tokens/cost=extras.get(...)` (None for Phase A — tokens/cost DEFERRED, not threaded out of `run_agentic_chat`). Deterministic solvers (no `trace_extras`) → unchanged defaults.
-- [ ] **Acceptance:** existing 84 lab tests STILL green (deterministic path unchanged); `test_hashes` confirms `grading_contract_hash` + `content_hash` UNMOVED; a new test asserts an agent-shaped `extras` round-trips into the TraceRecord.
+- [x] `lab/harness.py::solve_grade_write`: after `answer = solver.solve(inst)`, read `extras = getattr(solver, "trace_extras", None)` and pass `extras=extras` to `build_record`.
+- [x] `lab/trace.py::build_record(..., extras=None)`: `extras = extras or {}`; set `trajectory`/`raw`/`latency_ms`/tokens/cost from `extras` (tokens/cost DEFERRED → None for Phase A). Deterministic solvers (no `trace_extras`) → unchanged defaults.
+- [x] **Acceptance:** lab suite green (88, was 84 + 4); `test_hashes` confirms `grading_contract_hash` + `content_hash` UNMOVED; `test_agent_seam.py::TestBuildRecordExtras` asserts agent `extras` round-trip + deterministic defaults preserved.
 
 ## Phase A3b — `AgentSolver`
 
