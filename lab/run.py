@@ -13,7 +13,7 @@ import sys
 
 from lab import templates
 from lab.harness import get_connection, run
-from lab.precompute import Precomputed
+from lab.precompute import Precomputed, precompute
 from lab.solvers import AgentSolver, OverRefuseSolver, SqlOracleSolver, WrongBaselineSolver
 from src.ingestion.vote_parsers import OPTION_BUCKETS
 
@@ -44,6 +44,29 @@ def vote_lookup_name_collisions(conn, instances) -> set[str]:
         if cur.fetchone()[0] > 1:
             collided.add(inst.instance_id)
     return collided
+
+
+def _trivial_baseline(template, name: str, n: int, seed: int):
+    """For templates whose gold is often a trivial constant (party_defection -> 0, crossed_party ->
+    ∅), the share of ANSWERABLE golds equal to that constant — the floor an agent that always
+    answers 0 / [] would hit WITHOUT reasoning. Read-only; regenerates the seed-deterministic
+    instances (needs the real precompute for the party eligibility gate). Returns (floor, n_ans)
+    or None when not applicable."""
+    if name not in ("party_defection", "crossed_party"):
+        return None
+    conn = get_connection()
+    try:
+        instances = template.generate(conn, n, seed, precompute(conn))
+    finally:
+        conn.close()
+    answerable = [i for i in instances if not i.is_refusal]
+    if not answerable:
+        return None
+    if name == "party_defection":
+        trivial = sum(1 for i in answerable if i.gold == 0)
+    else:  # crossed_party
+        trivial = sum(1 for i in answerable if len(i.gold) == 0)
+    return trivial, len(answerable)
 
 
 def _name_collisions(template, name: str, n: int, seed: int) -> set[str]:
@@ -90,9 +113,11 @@ def _run_deterministic(template, name: str, n: int, seed: int) -> int:
     return 0
 
 
-def _run_agent(template, name: str, n: int, seed: int, model: str | None = None) -> int:
+def _run_agent(
+    template, name: str, n: int, seed: int, model: str | None = None, backend: str = "messages-api"
+) -> int:
     # NON-DETERMINISTIC: a live agent's pass rate IS the measurement; no invariant is asserted.
-    solver = AgentSolver(model=model) if model else AgentSolver()
+    solver = AgentSolver(model=model, backend=backend) if model else AgentSolver(backend=backend)
     try:
         results = run(template, [solver], n, seed, set(OPTION_BUCKETS))
     finally:
@@ -118,16 +143,35 @@ def _run_agent(template, name: str, n: int, seed: int, model: str | None = None)
     fmt_fail = sum(1 for (_i, _r, v) in rows if v.subscores.get("format_valid") == 0.0)
     errored = sum(1 for h in solver.history if h["errored"])
     no_retrieval_pass = sum(
-        1 for (iid, _ref, v) in rows if v.passed and not hist.get(iid, {}).get("retrieved", True)
+        1 for (iid, _ref, v) in rows if v.passed and not hist.get(iid, {}).get("retrieved", False)
     )
     print(
         f"  diagnostics: format-fail (never-submitted/non-canonical/error) {fmt_fail}/{len(rows)}; "
-        f"agent-errors {errored}; passes with NO get_vote_event call {no_retrieval_pass}"
+        f"agent-errors {errored}; passes with NO retrieval {no_retrieval_pass}"
     )
     if errored:
         print("  WARNING: agent-errors present — high count = harness/API problem, not the agent")
     if no_retrieval_pass:
         print("  WARNING: passes WITHOUT retrieval — possible base-rate/phrasing game; inspect")
+
+    # Trivial-constant baseline (additive; never touches a grader): defection gold is often 0,
+    # crossed often ∅ — an agent that always answers 0/[] hits this floor WITHOUT reasoning.
+    try:
+        baseline = _trivial_baseline(template, name, n, seed)
+    except Exception as exc:  # noqa: BLE001 — a diagnostic must never abort the measurement
+        print(f"  (trivial-constant baseline skipped: {type(exc).__name__}: {exc})")
+    else:
+        if baseline is not None:
+            floor, n_ans = baseline
+            ans_pass = sum(1 for (_i, ref, v) in rows if v.passed and not ref)
+            fr = floor / n_ans if n_ans else 0.0
+            ar = ans_pass / n_ans if n_ans else 0.0
+            print(
+                f"  trivial-constant baseline (always-0 / always-empty): {floor}/{n_ans} "
+                f"({fr:.2f}); agent answerable pass {ans_pass}/{n_ans} ({ar:.2f})"
+            )
+            if n_ans and ar <= fr:
+                print("  WARNING: agent does NOT beat the trivial-constant baseline — likely guess")
 
     # A4b: name-collision noise floor (read-only; never touches gold; must not break the run).
     try:
@@ -150,6 +194,12 @@ def _run_agent(template, name: str, n: int, seed: int, model: str | None = None)
 
 
 def main(argv: list[str] | None = None) -> int:
+    # The summary carries unicode (·, etc.); keep a Windows cp1252 console from crashing on print.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
     parser = argparse.ArgumentParser(description="Condorcet Lab — Family 1 harness")
     parser.add_argument(
         "--n", type=int, default=None, help="answerable instances (default 20; 10 for --agent)"
@@ -169,12 +219,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--model", default=None, help="override the agent model (default claude-sonnet-4-6)"
     )
+    parser.add_argument(
+        "--backend",
+        default="messages-api",
+        choices=("messages-api", "agent-sdk"),
+        help="agent backend: messages-api (OAuth, Option X) or agent-sdk (subscription, Option W)",
+    )
     args = parser.parse_args(argv)
 
     n = args.n if args.n is not None else (10 if args.agent else 20)
     template = templates.TEMPLATE_REGISTRY[args.template]
     if args.agent:
-        return _run_agent(template, args.template, n, args.seed, args.model)
+        return _run_agent(template, args.template, n, args.seed, args.model, args.backend)
     return _run_deterministic(template, args.template, n, args.seed)
 
 
