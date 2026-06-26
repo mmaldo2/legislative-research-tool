@@ -475,7 +475,7 @@ class AgentSolver:
             permission_mode="bypassPermissions",
             setting_sources=[],  # no ambient CLAUDE.md / .claude config / project MCP servers
             max_turns=8,
-            max_budget_usd=1.0,  # per-rollout runaway guard
+            max_budget_usd=3.0,  # per-rollout guard ($1 truncated sonnet mid-count)
             system_prompt=self.system_prompt,
         )
         started = time.monotonic()

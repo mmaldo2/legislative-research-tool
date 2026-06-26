@@ -1,7 +1,7 @@
 ---
 title: "feat: Family 1 agent slice 2 — aggregate answer shapes + Agent SDK backend"
 type: feat
-status: active
+status: completed
 date: 2026-06-26
 revision: 2  # rev 2 after the 5-lens panel (4 integrity blockers + a simplification folded in)
 ---
@@ -191,8 +191,8 @@ P3 Option W (claude-CLI prereq smoke → INTEGRITY EXIT GATE → in-process @too
 
 ## Phase 2 — HAIKU validation (CHECKPOINT, manual; not CI)
 
-- [ ] Per template `t ∈ {tally, party_breakdown, party_defection, crossed_party}`: `uv run python -m lab.run --template t --agent --model claude-haiku-4-5 --n 10`.
-- [ ] **Read traces** (trust bar): confirm retrieve→COMPUTE→submit-right-shape; check format-fail / agent-error / no-retrieval / **pass-vs-trivial-baseline**. Record per-template pass rate + difficulty read (tally near-trivial copy; breakdown moderate; defection/crossed the hard ones). STOP for review. **Off-ramp decision:** if conclusive, P3/P4 may become a follow-up slice.
+- [x] Per template `t ∈ {tally, party_breakdown, party_defection, crossed_party}`: `uv run python -m lab.run --template t --agent --model claude-haiku-4-5 --n 10`.
+- [x] **Read traces** (trust bar): confirm retrieve→COMPUTE→submit-right-shape; check format-fail / agent-error / no-retrieval / **pass-vs-trivial-baseline**. Record per-template pass rate + difficulty read (tally near-trivial copy; breakdown moderate; defection/crossed the hard ones). STOP for review. **Off-ramp decision:** if conclusive, P3/P4 may become a follow-up slice.
 
 ## Phase 3 — Option W (Agent SDK backend)
 
@@ -205,7 +205,7 @@ P3 Option W (claude-CLI prereq smoke → INTEGRITY EXIT GATE → in-process @too
 
 ## Phase 4 — sonnet/opus via Option W (CHECKPOINT, manual; not CI)
 
-- [ ] After the P3 integrity gate passes: `uv run python -m lab.run --template t --agent --backend agent-sdk --model claude-sonnet-4-6 --n 10` per template (then optionally opus, `max_budget_usd≈0.5`). Confirm no rate wall, tools constrained, traces capture observations + structured answer + latency. Read traces; record capable-model pass rates vs the haiku baseline AND the trivial-constant floor. STOP for review.
+- [x] After the P3 integrity gate passes: `uv run python -m lab.run --template t --agent --backend agent-sdk --model claude-sonnet-4-6 --n 10` per template (then optionally opus, `max_budget_usd≈0.5`). Confirm no rate wall, tools constrained, traces capture observations + structured answer + latency. Read traces; record capable-model pass rates vs the haiku baseline AND the trivial-constant floor. STOP for review.
 
 ---
 
