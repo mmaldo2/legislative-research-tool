@@ -12,7 +12,10 @@ import pickle
 import re
 from pathlib import Path
 
-import lightgbm as lgb
+try:
+    import lightgbm as lgb
+except ImportError:  # optional heavy ML dep; bill prediction is unavailable without it
+    lgb = None
 import numpy as np
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -77,6 +80,10 @@ def _load_pickle_verified(path: Path, hashes: dict) -> object:
 def _load_models() -> bool:
     """Load model artifacts from disk. Returns True if successful."""
     global _lgbm_models, _rf_models, _meta_lr, _meta_scaler, _metadata, _model_loaded
+
+    if lgb is None:
+        logger.warning("lightgbm not installed; bill prediction is unavailable")
+        return False
 
     metadata_path = MODELS_DIR / "metadata.json"
     if not metadata_path.exists():
@@ -326,14 +333,16 @@ def _predict(features: np.ndarray, feature_names: list[str]) -> tuple[float, lis
 
     # Layer 2: Meta-learner
     meta = np.array(
-        [[
-            lgbm_preds,
-            rf_preds,
-            lgbm_preds * rf_preds,
-            features[0, action_idx],
-            features[0, cosponsor_idx],
-            features[0, interact_idx],
-        ]]
+        [
+            [
+                lgbm_preds,
+                rf_preds,
+                lgbm_preds * rf_preds,
+                features[0, action_idx],
+                features[0, cosponsor_idx],
+                features[0, interact_idx],
+            ]
+        ]
     )
     meta_scaled = _meta_scaler.transform(meta)
     probability = _meta_lr.predict_proba(meta_scaled)[0, 1]
