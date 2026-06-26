@@ -247,12 +247,13 @@ erDiagram
   DELETE-all + chunked bulk INSERT, computed in memory first; zero-overlap + duplicate-start asserts);
   filtered to existing `people`; routine `ingest()` logic untouched (its dead `theunitedstates.io`
   URL migrated to GitHub-raw YAML in the same change).
-- [ ] Backfill run; **resolvability probe** recorded (coverage + unresolved-by-reason + switcher
-  count + zero unexplained overlaps); **live Specter golden assertion** passes; STOP-and-surface
-  honored if thin.
-- [ ] Minimal half-open `BETWEEN` DuckDB portability smoke test green (switcher + single-span). Lab
+- [x] Backfill run (7,636 spans / 1,260 members; 11,507 non-voters skipped); **live resolvability**
+  via the half-open join = **99.60% exactly-one** (1,046,349 / 1,050,514), **0 overlaps**, 0.40%
+  no-span (= the 30 hash-id pseudo-voters); **Specter golden assertion PASSES** (pre-switch → R ×229,
+  post-switch → D ×172); 16 switchers materialized (Specter D,R; Amash I,L,R; Lieberman D,I; …).
+- [x] Minimal half-open `BETWEEN` DuckDB portability smoke test green (switcher + single-span). Lab
   manifest entry + full fixture + production join **deferred to 3b**.
-- [ ] Registry noted; `ruff` green; rerun idempotent.
+- [x] Registry noted (vote_time_party data layer shipped); my 3a files `ruff` clean; full suite 696 passed; `alembic check` green; backfill rerun idempotent (replace-not-merge).
 
 ## Alternative Approaches Considered
 - **Inclusive `BETWEEN`** — rejected (panel BLOCKER): double-resolves party on boundary/switch days.
