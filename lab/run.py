@@ -9,6 +9,7 @@ keys, so it must never touch the deterministic-invariant block).
 """
 
 import argparse
+import re
 import sys
 from collections import Counter
 
@@ -47,13 +48,24 @@ def vote_lookup_name_collisions(conn, instances) -> set[str]:
     return collided
 
 
+def _core_name_tokens(full_name: str) -> list[str]:
+    """The natural-name tokens a reasonable agent would pass: people.name is stored
+    'Sen. Murkowski, Lisa [R-AK]' -> ['murkowski', 'lisa'] (drop the title prefix + the
+    [party-state-district] bracket, keep alphabetic tokens). Mirrors find_people's tokenization so
+    the collision check models the same query the agent makes."""
+    s = re.sub(r"\[.*?\]", " ", full_name)  # drop [party-state-district]
+    s = re.sub(r"^\s*\w+\.\s+", " ", s)  # drop a leading title ('Sen. ' / 'Rep. ')
+    return [t for t in s.lower().replace(",", " ").split() if t.isalpha()]
+
+
 def window_name_collisions(conn, instances, person_keys) -> set[str]:
     """Answerable window-template (member_summary / pairwise) instance ids where a sampled member's
-    NAME is shared by >1 voter in the SAME (congress, chamber) window. The prompt names the member
-    but gold is person_id-keyed, so a collision is INPUT AMBIGUITY, not an agent error — excluded
-    from the *reported* clean rate. `person_keys` = the params key(s) holding the person id(s). The
-    roster predicate (any vote in the window, NO option filter) is IDENTICAL to find_people's, so
-    the excluded set matches what the agent actually sees. Read-only; never touches gold."""
+    natural NAME (first + last) token-matches >1 voter in the SAME (congress, chamber) window. The
+    prompt names the member but gold is person_id-keyed, so a collision is INPUT AMBIGUITY, not an
+    agent error — excluded from the *reported* clean rate. `person_keys` = the params key(s) holding
+    the person id(s). The match (every core token a substring of the name; any vote in the window,
+    NO option filter) is IDENTICAL to find_people's, so the excluded set matches what the agent
+    actually sees. Read-only; never touches gold."""
     cur = conn.cursor()
     collided: set[str] = set()
     for inst in instances:
@@ -63,15 +75,23 @@ def window_name_collisions(conn, instances, person_keys) -> set[str]:
         chamber = inst.params["chamber"]
         for key in person_keys:
             pid = inst.params[key]
+            cur.execute("SELECT name FROM people WHERE id = %s", (pid,))
+            row = cur.fetchone()
+            if row is None:
+                continue
+            tokens = _core_name_tokens(row[0])
+            if not tokens:
+                continue
+            like = " AND ".join(["LOWER(p.name) LIKE %s"] * len(tokens))
+            params = [f"%{t}%" for t in tokens] + [congress, chamber]
             cur.execute(
-                "SELECT COUNT(DISTINCT vr.person_id) FROM vote_records vr "
-                "JOIN people p ON p.id = vr.person_id "
+                "SELECT COUNT(DISTINCT p.id) FROM people p "
+                "JOIN vote_records vr ON vr.person_id = p.id "
                 "JOIN vote_events ve ON ve.id = vr.vote_event_id "
                 "JOIN bills b ON b.id = ve.bill_id "
                 "JOIN sessions s ON s.id = b.session_id "
-                "WHERE s.identifier = %s AND ve.chamber = %s "
-                "AND p.name = (SELECT name FROM people WHERE id = %s)",
-                (congress, chamber, pid),
+                f"WHERE {like} AND s.identifier = %s AND ve.chamber = %s",
+                params,
             )
             if cur.fetchone()[0] > 1:
                 collided.add(inst.instance_id)

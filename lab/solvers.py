@@ -276,9 +276,11 @@ _AGENT_SYSTEM_PROMPT = (
     "retrieval tools to gather the relevant vote records, then COMPUTE the answer the question "
     "asks for from those records (counting members, reading the recorded option, ranking by "
     "margin, etc.). Give your final answer ONLY by calling submit_answer exactly once, filling the "
-    "structured fields the question asks for — do NOT answer in prose. To REFUSE (only when the "
-    "event, member, or window asked about is not in the retrieved data), call submit_answer with "
-    "refused=true and do NOT fill the answer fields. Never guess; compute from the records."
+    "structured fields the question asks for — do NOT answer in prose. ALWAYS finish by calling "
+    "submit_answer; if a retrieval tool reports the event, member, or window is not in the data "
+    "(an error or an empty result), you MUST still call submit_answer with refused=true (and do "
+    "NOT fill the answer fields) — never stop without calling submit_answer. Never guess; compute "
+    "from the records."
 )
 
 

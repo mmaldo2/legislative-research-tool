@@ -312,20 +312,28 @@ async def _tool_find_people(
 ) -> str:
     """Legislators matching a name who voted in a (congress, chamber) window.
 
-    NAME-FIRST: match the small `people` table by case-insensitive full name, then keep only those
-    with >=1 vote_record in the window (an index-backed EXISTS via ix_vote_records_person_id; NO
-    option filter, so a present/not_voting-only member still resolves — matching how gold samples
+    NAME-FIRST + TOKEN match: `people.name` is stored formatted ('Sen. Murkowski, Lisa [R-AK]'), but
+    an agent naturally passes 'Lisa Murkowski' — so we match when EVERY alphabetic token of the
+    query is a (case-insensitive) substring of the name (order-independent; commas ignored). Then
+    keep only those with >=1 vote_record in the window (index-backed EXISTS via ix_vote_records_pid;
+    NO option filter, so a present/not_voting-only member still resolves — matching how gold samples
     the roster). Empty list = not found; >1 = a shared name (input ambiguity). Guarded.
     """
     name = arguments.get("name", "")
     congress = arguments.get("congress", "")
     chamber = arguments.get("chamber", "")
     try:
-        candidates = (
-            await db.execute(
-                select(Person.id, Person.name).where(func.lower(Person.name) == func.lower(name))
-            )
-        ).all()
+        # Alphabetic tokens only (drops 'Jr.', commas, a bioguide id, etc.). `isalpha` guarantees no
+        # LIKE wildcards (%/_) in a token, so the f-string pattern is injection-safe.
+        tokens = [t for t in name.lower().replace(",", " ").split() if t.isalpha()]
+        if not tokens:
+            return json.dumps(
+                {"people": [], "count": 0}
+            )  # no name to match (e.g. an id was passed)
+        name_query = select(Person.id, Person.name)
+        for tok in tokens:
+            name_query = name_query.where(func.lower(Person.name).like(f"%{tok}%"))
+        candidates = (await db.execute(name_query)).all()
         people = []
         for pid, pname in candidates:
             voted = (

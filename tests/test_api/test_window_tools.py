@@ -7,6 +7,7 @@ Two layers, mirroring test_vote_tool.py: hermetic (mocked AsyncSession) for the 
 """
 
 import json
+import re
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -72,6 +73,19 @@ async def test_find_people_db_error_no_traceback_leak():
     )
     assert out == {"error": "Failed to find people."}
     assert "ProgrammingError" not in json.dumps(out)
+
+
+async def test_find_people_non_name_query_returns_empty_without_db():
+    # a bioguide id (no alphabetic tokens after the digits) must not match anyone — and must not
+    # build a wildcard-less LIKE that matches EVERYONE; early-return before touching the DB.
+    db = AsyncMock()
+    out = json.loads(
+        await _tool_find_people(
+            {"name": "000303", "congress": "117", "chamber": "senate"}, db, None
+        )
+    )
+    assert out == {"people": [], "count": 0}
+    db.execute.assert_not_called()
 
 
 # --- get_member_voting_record -----------------------------------------------------------------
@@ -160,6 +174,17 @@ async def test_window_tools_against_real_window():
             )
         )
         assert pid in {p["person_id"] for p in fp["people"]}, "find_people must resolve name → id"
+
+        # the bug this fixes: an agent passes the NATURAL name, not the stored 'Sen. Last, First
+        # [P-ST]' string. Strip the title + bracket and assert the token-match still resolves.
+        core = re.sub(r"\[.*?\]", " ", pname)
+        core = re.sub(r"^\s*\w+\.\s+", " ", core).strip()
+        natural = json.loads(
+            await _tool_find_people(
+                {"name": core, "congress": congress, "chamber": chamber}, db, None
+            )
+        )
+        assert pid in {p["person_id"] for p in natural["people"]}, "natural name must token-match"
 
         gmr = json.loads(
             await _tool_get_member_voting_record(
