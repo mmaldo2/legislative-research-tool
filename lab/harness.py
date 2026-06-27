@@ -107,12 +107,11 @@ def solve_grade_write(instances, solvers, ctx, seed: int, fh):
             yield solver, inst, verdict
 
 
-def run(template, solvers, n: int, seed: int, valid_options: set[str]) -> dict:
-    """Generate instances for one template, run each solver, grade to a Verdict, and log a
-    validated JSONL trace via the single write_trace chokepoint.
-
-    Returns per-solver results: {solver_name: [(instance_id, is_refusal, verdict), ...]}.
-    """
+def prepare_run(template, n: int, seed: int, valid_options: set[str]):
+    """The LOAD phase (a zero-behavior split of run()): connect, precompute, build the RunContext
+    hashes + dataset fingerprint, generate, and gold-validate. Returns (instances, ctx). Shared by
+    run() and the ablation orchestrator so neither duplicates the frozen load glue (validate_gold,
+    dataset_fingerprint, the hashes)."""
     conn = get_connection()
     try:
         pre = precompute(conn)
@@ -131,6 +130,16 @@ def run(template, solvers, n: int, seed: int, valid_options: set[str]) -> dict:
         )
     for inst in instances:
         validate_gold(inst, valid_options)
+    return instances, ctx
+
+
+def run(template, solvers, n: int, seed: int, valid_options: set[str]) -> dict:
+    """Generate instances for one template, run each solver, grade to a Verdict, and log a
+    validated JSONL trace via the single write_trace chokepoint.
+
+    Returns per-solver results: {solver_name: [(instance_id, is_refusal, verdict), ...]}.
+    """
+    instances, ctx = prepare_run(template, n, seed, valid_options)
 
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")

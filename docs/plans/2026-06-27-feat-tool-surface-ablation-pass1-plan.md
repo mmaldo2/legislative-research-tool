@@ -248,19 +248,19 @@ graph TD
 - [x] ruff; full suite green; `test_hashes` green. Commit.
 
 ## Phase 2 — orchestrator + report
-- [ ] **(P12)** Extract a zero-behavior `prepare_run` from `harness.run`; `lab/ablation.py` reuses it
+- [x] **(P12)** Extract a zero-behavior `prepare_run` from `harness.run`; `lab/ablation.py` reuses it
   + `solve_grade_write` (canonical `write_trace` = the artifact; no bespoke jsonl). Pre-filter
   `is_refusal==False`. **(P10)** generate the answerable set ONCE, reuse across all cells+repeats; run
   BOTH surfaces N× (default 3). Sequential only (env-key race); fresh solver per (cell,repeat) +
   guaranteed `.close()`; per-rollout `asyncio.wait_for(~180s)`.
-- [ ] **(P6)** Closed-match 4-bucket partition with asserts (format_valid first; raise on unreachable);
+- [x] **(P6)** Closed-match 4-bucket partition with asserts (format_valid first; raise on unreachable);
   `N==0` guard. **(P9)** retrieved-rate per cell; **(P11)** split `errored` from `format_fail` +
   cross-tab vs `result_subtype`. Report: accuracy/hallucination/over_refusal/format_fail/errored +
   retrieved-rate + latency/turns (cost may be null) + ours-vs-web delta + min/max/mean over repeats.
   Print to stdout (+ optional md table). CLI: `--models --surfaces --n --seed --repeats`.
-- [ ] `tests/test_lab/test_ablation.py`: rate-math on **synthetic Verdicts** — the 4-bucket partition
+- [x] `tests/test_lab/test_ablation.py`: rate-math on **synthetic Verdicts** — the 4-bucket partition
   + the illegal `{fv1,dc1,ac:None}` **raises** + `N==0` guard. NO live calls.
-- [ ] ruff; full suite green; `test_hashes` green. Commit.
+- [x] ruff; full suite green; `test_hashes` green. Commit.
 
 ## Phase 3 — MANUAL control run (STOP)
 - [ ] `uv run python -m lab.ablation --models haiku,sonnet --surfaces ours,web --n 10 --repeats 3`.

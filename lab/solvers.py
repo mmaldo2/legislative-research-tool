@@ -461,6 +461,7 @@ class AgentSolver:
         surface: str = "ours",
         max_turns: int | None = None,
         max_budget_usd: float | None = None,
+        timeout_s: float | None = None,
     ):
         # `surface` is the tool-surface ablation axis (agent-sdk only): "ours" = the lab tools;
         # "web" = WebSearch + submit_answer ONLY. Default "ours" → behavior unchanged.
@@ -476,6 +477,7 @@ class AgentSolver:
         # Per-rollout overrides (None → the _asolve_sdk defaults for the big window templates).
         self.max_turns = max_turns
         self.max_budget_usd = max_budget_usd
+        self.timeout_s = timeout_s  # per-rollout wall-clock backstop (None → no timeout)
         self._client = client  # injectable (tests pass a Mock; prod builds the OAuth client lazily)
         self.system_prompt = system_prompt or _AGENT_SYSTEM_PROMPT
         self.trace_extras: dict | None = None
@@ -645,7 +647,9 @@ class AgentSolver:
         text_parts: list[str] = []
         cost = None
         result_subtype = None  # P7: SDK stop reason — tells truncation apart from a wrong answer
-        try:
+
+        async def _drive():
+            nonlocal cost, result_subtype
             async for msg in query(prompt=inst.prompt, options=options):  # PROMPT ONLY
                 if isinstance(msg, AssistantMessage):
                     for b in msg.content:
@@ -668,6 +672,14 @@ class AgentSolver:
                 elif isinstance(msg, ResultMessage):
                     cost = getattr(msg, "total_cost_usd", None)
                     result_subtype = getattr(msg, "subtype", None)
+
+        try:
+            # per-rollout wall-clock backstop (a hung WebSearch must fail this instance, not stall
+            # the matrix); a TimeoutError is an Exception → falls into the NO_ANSWER arm below.
+            if self.timeout_s is not None:
+                await asyncio.wait_for(_drive(), timeout=self.timeout_s)
+            else:
+                await _drive()
         except Exception as exc:  # noqa: BLE001 — a live failure FAILS the instance, never crashes
             return NO_ANSWER, {
                 "trajectory": observations,
