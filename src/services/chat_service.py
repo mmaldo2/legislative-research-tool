@@ -336,6 +336,13 @@ def _tool_description(tool_name: str, tool_input: dict) -> str:
     descriptions: dict[str, Callable[[dict], str]] = {
         "search_bills": lambda args: f"Searching for '{args.get('query', '')}'...",
         "get_bill_detail": lambda args: f"Reading bill {args.get('bill_id', '')}...",
+        "list_vote_events": lambda args: (
+            f"Listing {args.get('chamber', '')} roll calls of Congress {args.get('congress', '')}"
+        ),
+        "find_people": lambda args: f"Finding member '{args.get('name', '')}'...",
+        "get_member_voting_record": lambda args: (
+            f"Reading the voting record of {args.get('person_id', '')}..."
+        ),
         "list_jurisdictions": lambda _args: "Listing available jurisdictions...",
         "find_similar_bills": lambda args: f"Finding similar bills to {args.get('bill_id', '')}...",
         "analyze_version_diff": lambda args: f"Comparing versions of {args.get('bill_id', '')}...",
@@ -495,7 +502,7 @@ async def stream_sdk_agentic_chat(
     """Run agentic chat via Agent SDK with MCP tools, yielding SSE events.
 
     The Agent SDK handles the entire tool-use loop internally — it spawns
-    our MCP server as a subprocess, discovers the 10 research tools, and
+    our MCP server as a subprocess, discovers the research tools, and
     lets Claude call them against the database.
 
     Events are collected in a background thread (to avoid greenlet corruption)
