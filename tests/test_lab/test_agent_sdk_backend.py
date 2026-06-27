@@ -175,3 +175,111 @@ def test_sdk_backend_window_template_provisions_window_tools(monkeypatch):
         "submit_answer",
     ]
     assert solver.history[-1]["retrieved"] is True
+
+
+def _vote_lookup_inst() -> Instance:
+    return Instance(
+        instance_id="family1.vote_lookup:42:e1:p1",
+        template_id="family1.vote_lookup",
+        tier="C",
+        params={"person_id": "p1", "vote_event_id": "us-house-115-2017-0009"},
+        prompt="How did Rep. X vote on roll call us-house-115-2017-0009 (the motion)?",
+        gold="yea",
+        grader="exact",
+        is_refusal=False,
+    )
+
+
+def test_sdk_web_surface_websearch_only_locks_out_lab_and_folds_vocab(monkeypatch):
+    """Tool-surface ablation, WEB arm: WebSearch + submit ONLY (no lab @tool, no WebFetch); the
+    built-in WebSearch call + its result are captured from the stream; web's faithful vocabulary
+    ('Aye') folds to the canonical option."""
+    from claude_agent_sdk.types import (
+        AssistantMessage,
+        ToolResultBlock,
+        ToolUseBlock,
+        UserMessage,
+    )
+
+    captured: dict = {}
+    sdk_tools: dict = {}
+
+    def fake_create_server(name, version="1.0.0", tools=None):
+        for t in tools or []:
+            sdk_tools[t.name] = t
+        return {"server": name}
+
+    async def fake_query(*, prompt, options):
+        captured["options"] = options
+        # a built-in WebSearch call + its result arrive on the stream (NOT via an @tool side-effect)
+        web_call = ToolUseBlock(id="tu1", name="WebSearch", input={"query": "Rep X roll call 9"})
+        yield AssistantMessage(content=[web_call], model="claude-haiku-4-5")
+        yield UserMessage(
+            content=[ToolResultBlock(tool_use_id="tu1", content="Rep X voted Aye.", is_error=False)]
+        )
+        # the model answers in Congress.gov's faithful vocabulary; the fold must canonicalize it
+        await sdk_tools["submit_answer"].handler({"answer": "Aye"})
+
+    monkeypatch.setattr("claude_agent_sdk.create_sdk_mcp_server", fake_create_server)
+    monkeypatch.setattr("claude_agent_sdk.query", fake_query)
+    monkeypatch.setattr("lab.solvers.lab_execute_tool", AsyncMock(side_effect=_fake_exec))
+
+    solver = solvers.AgentSolver(backend="agent-sdk", surface="web")
+    ans = solver.solve(_vote_lookup_inst())
+    solver.close()
+
+    # vocab fold: web's "Aye" -> canonical "yea"
+    assert ans == "yea"
+    # ONLY the submit @tool is built (NO get_vote_event / lab product tool)
+    assert set(sdk_tools) == {"submit_answer"}
+    opts = captured["options"]
+    # web allowed_tools = exactly WebSearch + submit (positive whitelist; NO WebFetch)
+    assert opts.allowed_tools == ["WebSearch", "mcp__lab__submit_answer"]
+    assert "WebFetch" not in opts.allowed_tools
+    # disallowed: WebSearch removed (so web works); WebFetch + the rest STAY blocked
+    assert "WebSearch" not in opts.disallowed_tools
+    assert "WebFetch" in opts.disallowed_tools
+    assert "Bash" in opts.disallowed_tools
+    # the global was NOT mutated (ours cells after this must still block WebSearch)
+    assert "WebSearch" in solvers._DISALLOWED_BUILTINS
+    # the built-in WebSearch was captured from the stream WITH its result, not double-counted;
+    # submit self-captured once
+    traj = solver.trace_extras["trajectory"]
+    assert [o["tool"] for o in traj] == ["WebSearch", "submit_answer"]
+    web_obs = traj[0]
+    assert web_obs["arguments"] == {"query": "Rep X roll call 9"}
+    assert web_obs["result"] == "Rep X voted Aye."  # ToolResultBlock matched by id
+    assert solver.history[-1]["retrieved"] is True  # a non-submit tool ran
+    assert solver.policy["surface"] == "web"
+
+
+def test_sdk_ours_surface_keeps_web_disallowed(monkeypatch):
+    """The ours arm must PROVABLY block web — WebSearch + WebFetch stay in disallowed_tools."""
+    captured: dict = {}
+    sdk_tools: dict = {}
+
+    def fake_create_server(name, version="1.0.0", tools=None):
+        for t in tools or []:
+            sdk_tools[t.name] = t
+        return {"server": name}
+
+    async def fake_query(*, prompt, options):
+        captured["options"] = options
+        await sdk_tools["get_vote_event"].handler({"vote_event_id": "e1"})
+        await sdk_tools["submit_answer"].handler({"answer": "yea"})
+        if False:
+            yield
+
+    monkeypatch.setattr("claude_agent_sdk.create_sdk_mcp_server", fake_create_server)
+    monkeypatch.setattr("claude_agent_sdk.query", fake_query)
+    monkeypatch.setattr("lab.solvers.lab_execute_tool", AsyncMock(side_effect=_fake_exec))
+    monkeypatch.setattr("src.database.async_session_factory", lambda: _FakeSession())
+
+    solver = solvers.AgentSolver(backend="agent-sdk", surface="ours")
+    solver.solve(_vote_lookup_inst())
+    solver.close()
+
+    opts = captured["options"]
+    assert "WebSearch" in opts.disallowed_tools and "WebFetch" in opts.disallowed_tools
+    assert opts.allowed_tools == ["mcp__lab__get_vote_event", "mcp__lab__submit_answer"]
+    assert solver.policy["surface"] == "ours"

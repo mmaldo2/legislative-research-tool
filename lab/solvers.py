@@ -19,7 +19,7 @@ import time
 
 from lab.graders import REFUSAL
 from lab.harness import Instance
-from src.ingestion.vote_parsers import OPTION_BUCKETS
+from src.ingestion.vote_parsers import OPTION_BUCKETS, VOTE_OPTION_MAP
 
 
 class _DeterministicSolver:
@@ -313,6 +313,22 @@ def _to_int(value) -> int | None:
     return None
 
 
+# Case-insensitive fold of a faithful vote vocabulary to the canonical option. SAME map the ingest
+# pipeline uses (vote_parsers.VOTE_OPTION_MAP) — so an agent reading Congress.gov's "Aye"/"No"/
+# "Not Voting" grades on VOTE DIRECTION, not on matching our snake_case token. Already-canonical
+# tokens map to themselves; a genuinely-not-an-option string passes through (still grades wrong).
+# A no-op for the `ours` arm (get_vote_event already returns the canonical token). Lives here (the
+# swappable answer-mapping layer), NOT in the frozen grader.
+_ALIAS_FOLD = {
+    **{raw.lower(): canon for raw, canon in VOTE_OPTION_MAP.items()},
+    **{o: o for o in OPTION_BUCKETS},
+}
+
+
+def _fold_option(answer: str) -> str:
+    return _ALIAS_FOLD.get(answer.strip().lower(), answer)
+
+
 def coerce(grader: str, template_id: str, payload: dict):
     """Grader-dispatched, TOTAL coercion of the submit_answer payload to the grader's expected type
     (NO_ANSWER on anything malformed — never crashes). Deliberate asymmetry: a bare non-int for
@@ -321,7 +337,7 @@ def coerce(grader: str, template_id: str, payload: dict):
     try:
         if grader == "exact":
             ans = payload.get("answer")
-            return ans if isinstance(ans, str) else NO_ANSWER
+            return _fold_option(ans) if isinstance(ans, str) else NO_ANSWER
         if grader == "exact_int":
             n = _to_int(payload.get("count"))
             return n if n is not None else NO_ANSWER
@@ -442,9 +458,24 @@ class AgentSolver:
         client=None,
         system_prompt: str | None = None,
         backend: str = "messages-api",
+        surface: str = "ours",
+        max_turns: int | None = None,
+        max_budget_usd: float | None = None,
     ):
+        # `surface` is the tool-surface ablation axis (agent-sdk only): "ours" = the lab tools;
+        # "web" = WebSearch + submit_answer ONLY. Default "ours" → behavior unchanged.
+        if surface not in ("ours", "web"):
+            raise ValueError(f"unknown surface: {surface!r}")
+        if surface == "web" and backend != "agent-sdk":
+            raise ValueError(
+                "surface='web' requires backend='agent-sdk' (the web arm needs the SDK)"
+            )
         self.model = model
         self.backend = backend  # "messages-api" (Option X) | "agent-sdk" (Option W)
+        self.surface = surface
+        # Per-rollout overrides (None → the _asolve_sdk defaults for the big window templates).
+        self.max_turns = max_turns
+        self.max_budget_usd = max_budget_usd
         self._client = client  # injectable (tests pass a Mock; prod builds the OAuth client lazily)
         self.system_prompt = system_prompt or _AGENT_SYSTEM_PROMPT
         self.trace_extras: dict | None = None
@@ -457,6 +488,7 @@ class AgentSolver:
         return {
             "name": self.name,
             "backend": self.backend,
+            "surface": self.surface,
             "model": self.model,
             "system_prompt_id": "lab_family1_v1",
         }
@@ -542,26 +574,44 @@ class AgentSolver:
         extras = {"trajectory": observations, "raw": final_text, "latency_ms": latency_ms}
         return answer, extras
 
-    async def _asolve_sdk(self, inst: Instance):
-        """Option W: drive the in-process Agent SDK (subscription-native, no rate wall). Builds a
-        fresh in-process MCP server per instance (fresh capture closures); the @tools route through
-        the SAME lab_execute_tool seam as Option X (data parity) + record bare-name observations.
-        Constrained to the template's tool subset (TEMPLATE_TOOLS); built-ins disallowed."""
-        import os
+    def _sdk_tool_config(self, inst: Instance, observations: list, submit_tool):
+        """Build (mcp_tools, allowed_tools, disallowed_tools) for the instance's SURFACE.
 
-        from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, query, tool
-        from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
-
-        observations: list[dict] = []
-        submit_box: list[dict] = []
-
-        # Per-template product @tools (single source of truth: TEMPLATE_TOOLS) + the shape-aware
-        # submit; allowed_tools derives from the SAME list (P9 lockstep — the whitelist can't drift
-        # wider/narrower than the provisioned set).
+        ours: the template's product @tools + submit; mcp__lab__* allowed; built-ins disallowed.
+        web:  submit @tool ONLY (no lab tools); WebSearch + submit allowed; WebFetch stays blocked
+              (the localhost/file:// DB-leak vector). NEVER mutates the global disallow list — web
+              builds a FRESH list with only WebSearch removed."""
+        if self.surface == "web":
+            allowed = ["WebSearch", "mcp__lab__submit_answer"]
+            disallowed = [t for t in _DISALLOWED_BUILTINS if t != "WebSearch"]  # WebFetch stays
+            return [submit_tool], allowed, disallowed
         tool_names = TEMPLATE_TOOLS[inst.template_id]
         product_tools = [
             _make_sdk_product_tool(research_tool_for(n), observations) for n in tool_names
         ]
+        allowed = [f"mcp__lab__{n}" for n in tool_names] + ["mcp__lab__submit_answer"]
+        return [*product_tools, submit_tool], allowed, _DISALLOWED_BUILTINS
+
+    async def _asolve_sdk(self, inst: Instance):
+        """Option W: drive the in-process Agent SDK (subscription-native, no rate wall). Builds a
+        fresh in-process MCP server per instance (fresh capture closures); the @tools route through
+        the SAME lab_execute_tool seam as Option X (data parity) + record bare-name observations.
+        Surface-configured (ours = lab tools; web = WebSearch + submit only)."""
+        import os
+
+        from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, query, tool
+        from claude_agent_sdk.types import (
+            AssistantMessage,
+            ResultMessage,
+            TextBlock,
+            ToolResultBlock,
+            ToolUseBlock,
+            UserMessage,
+        )
+
+        observations: list[dict] = []
+        submit_box: list[dict] = []
+        builtin_by_id: dict[str, dict] = {}  # tool_use_id -> the built-in observation (for results)
 
         submit_schema = {"type": "object", "properties": SUBMIT_SCHEMAS[inst.template_id]}
 
@@ -572,8 +622,10 @@ class AgentSolver:
             observations.append({"tool": "submit_answer", "arguments": dict(args), "result": ack})
             return {"content": [{"type": "text", "text": ack}]}
 
-        server = create_sdk_mcp_server(name="lab", tools=[*product_tools, _sdk_submit])
-        allowed_tools = [f"mcp__lab__{n}" for n in tool_names] + ["mcp__lab__submit_answer"]
+        mcp_tools, allowed_tools, disallowed_tools = self._sdk_tool_config(
+            inst, observations, _sdk_submit
+        )
+        server = create_sdk_mcp_server(name="lab", tools=mcp_tools)
         # subscription creds ONLY: pop ANTHROPIC_API_KEY so query() can't silently bill the Messages
         # API (and hit the rate wall Option W exists to dodge); restored in finally.
         saved_key = os.environ.pop("ANTHROPIC_API_KEY", None)
@@ -581,11 +633,12 @@ class AgentSolver:
             model=self.model,
             mcp_servers={"lab": server},
             allowed_tools=allowed_tools,
-            disallowed_tools=_DISALLOWED_BUILTINS,
+            disallowed_tools=disallowed_tools,
             permission_mode="bypassPermissions",
             setting_sources=[],  # no ambient CLAUDE.md / .claude config / project MCP servers
-            max_turns=14,  # headroom for big windows (sonnet hit 10 on a 1138-event pairwise)
-            max_budget_usd=6.0,  # per-rollout guard ($3 truncated the largest sonnet windows)
+            # per-rollout overrides (None → window defaults); the ablation sets these tight.
+            max_turns=self.max_turns if self.max_turns is not None else 14,
+            max_budget_usd=self.max_budget_usd if self.max_budget_usd is not None else 6.0,
             system_prompt=self.system_prompt,
         )
         started = time.monotonic()
@@ -595,7 +648,23 @@ class AgentSolver:
         try:
             async for msg in query(prompt=inst.prompt, options=options):  # PROMPT ONLY
                 if isinstance(msg, AssistantMessage):
-                    text_parts.extend(b.text for b in msg.content if isinstance(b, TextBlock))
+                    for b in msg.content:
+                        if isinstance(b, TextBlock):
+                            text_parts.append(b.text)
+                        # P7: capture BUILT-IN tool calls (WebSearch etc.) from the stream — they do
+                        # NOT route through our @tool side-effects, so the web trajectory would be
+                        # opaque otherwise. Lab tools (mcp__) self-capture; filter them out here so
+                        # they aren't double-counted. No-op for `ours` (built-ins disallowed).
+                        elif isinstance(b, ToolUseBlock) and not b.name.startswith("mcp__"):
+                            obs = {"tool": b.name, "arguments": dict(b.input), "result": None}
+                            observations.append(obs)
+                            builtin_by_id[b.id] = obs
+                elif isinstance(msg, UserMessage):
+                    # built-in tool RESULTS arrive here (not on the AssistantMessage) — attach by id
+                    # so the trust bar sees what the web search actually returned.
+                    for b in msg.content if isinstance(msg.content, list) else []:
+                        if isinstance(b, ToolResultBlock) and b.tool_use_id in builtin_by_id:
+                            builtin_by_id[b.tool_use_id]["result"] = b.content
                 elif isinstance(msg, ResultMessage):
                     cost = getattr(msg, "total_cost_usd", None)
                     result_subtype = getattr(msg, "subtype", None)
