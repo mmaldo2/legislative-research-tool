@@ -333,13 +333,13 @@ graph TD
 
 ## Phase 3 — HAIKU validation checkpoint (manual; STOP)
 
-- [ ] Prep the 3 commands: `uv run python -m lab.run --template {closest_by_margin,member_summary,
+- [x] Prep the 3 commands: `uv run python -m lab.run --template {closest_by_margin,member_summary,
   pairwise_agreement} --agent --model claude-haiku-4-5 --n 10` (user fires; gentle pacing).
-- [ ] **Read traces together** (trust bar): per template check pass-rate, the **name-collision
+- [x] **Read traces together** (trust bar): per template check pass-rate, the **name-collision
   exclusions**, format-fail/agent-error/**(P7) budget-or-turn-truncation** (bucketed separately) /
   no-retrieval, and whether the agent used the right tool sequence (closest→list; member→find+record;
   pairwise→find×2+record×2).
-- [ ] **(P7)** Record actual per-rollout **cost** for closest/pairwise from the haiku run; extrapolate
+- [x] **(P7)** Record actual per-rollout **cost** for closest/pairwise from the haiku run; extrapolate
   to opus (~10–15×) and **bump per-template `max_budget_usd`** if it nears $3 BEFORE Phase 4. **STOP**
   for review + off-ramp decision before sonnet/opus.
 
