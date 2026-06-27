@@ -261,6 +261,52 @@ async def _tool_get_vote_event(
         return json.dumps({"error": "Failed to retrieve the vote event."})
 
 
+async def _tool_get_bill_votes(
+    arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
+) -> str:
+    """The roll-call vote events for a bill (RAW per-event rows; the agent picks/cites/verifies).
+
+    One query on `vote_events.bill_id` (index-backed; never touches `vote_records`). The whole body
+    is guarded so a malformed/absent id can never surface a DB traceback. A real bill with no
+    roll-calls returns an empty list; a nonexistent bill returns a clean not-found error (the
+    distinction is the agent's refusal signal).
+    """
+    bill_id = arguments.get("bill_id", "")
+    try:
+        stmt = (
+            select(
+                VoteEvent.id,
+                VoteEvent.chamber,
+                VoteEvent.vote_date,
+                VoteEvent.motion_text,
+                VoteEvent.result,
+            )
+            .where(VoteEvent.bill_id == bill_id)
+            .order_by(VoteEvent.id)
+        )
+        rows = (await db.execute(stmt)).all()
+        if not rows:
+            # Only on an empty result do we pay the existence check: a missing bill is the refusal
+            # basis; a real bill with no roll-calls is a distinct (empty-list) answer.
+            exists = (await db.execute(select(Bill.id).where(Bill.id == bill_id))).first()
+            if exists is None:
+                return json.dumps({"error": f"Bill '{bill_id}' not found."})
+        roll_calls = [
+            {
+                "vote_event_id": eid,
+                "chamber": chamber,
+                "vote_date": str(vote_date) if vote_date else None,
+                "motion_text": motion_text,
+                "result": result,
+            }
+            for (eid, chamber, vote_date, motion_text, result) in rows
+        ]
+        return json.dumps({"bill_id": bill_id, "roll_calls": roll_calls, "count": len(roll_calls)})
+    except Exception:
+        logger.exception("get_bill_votes failed for bill_id=%r", bill_id)
+        return json.dumps({"error": "Failed to retrieve the bill votes."})
+
+
 async def _tool_list_vote_events(
     arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
 ) -> str:
@@ -630,6 +676,7 @@ _TOOL_HANDLERS: dict[str, _ToolHandler] = {
     "search_bills": _tool_search_bills,
     "get_bill_detail": _tool_get_bill_detail,
     "get_vote_event": _tool_get_vote_event,
+    "get_bill_votes": _tool_get_bill_votes,
     "list_vote_events": _tool_list_vote_events,
     "find_people": _tool_find_people,
     "get_member_voting_record": _tool_get_member_voting_record,

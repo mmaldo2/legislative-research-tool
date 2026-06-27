@@ -75,11 +75,31 @@ RESEARCH_TOOLS = [
         },
     },
     {
+        "name": "get_bill_votes",
+        "description": (
+            "List the roll-call vote events for a bill by its bill_id: one row per roll call with "
+            "its vote_event_id, chamber, vote_date, motion text, and result. Use this to find "
+            "which roll call(s) a bill received and to get the vote_event_id you can cite or pass "
+            "to get_vote_event. An empty list means the bill received no roll-call votes; an error "
+            "means no such bill exists."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "bill_id": {
+                    "type": "string",
+                    "description": "The internal bill ID.",
+                },
+            },
+            "required": ["bill_id"],
+        },
+    },
+    {
         "name": "list_vote_events",
         "description": (
             "List every roll-call vote event in a (congress, chamber) window with its official "
-            "tally: one row per roll call with its vote_event_id, yes_count, and no_count. Use this "
-            "for questions that span all the roll-call votes of a whole Congress. Roll calls whose "
+            "tally: one row per roll call with its vote_event_id, yes_count, and no_count. Use "
+            "this for questions that span all the roll-call votes of a whole Congress. Roll calls "
             "official tally is unavailable are omitted."
         ),
         "input_schema": {

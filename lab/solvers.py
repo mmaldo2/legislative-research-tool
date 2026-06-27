@@ -184,12 +184,22 @@ SUBMIT_SCHEMAS = {
         },
         **_REFUSED_FIELD,
     },
+    "family10.cite_record_id": {
+        "vote_event_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "The vote_event_id(s) the question asks you to cite, as a list of "
+            "strings (a single id in a one-element list).",
+        },
+        **_REFUSED_FIELD,
+    },
 }
 
 # set_match is keyed per-template (the submit field NAME differs: crossed lists members, closest
 # lists roll calls) — coerce + _answer_present resolve the field via this map, not a literal.
 SET_MATCH_FIELD = {
     "family1.crossed_party": "member_ids",
+    "family10.cite_record_id": "vote_event_ids",
     "family1.closest_by_margin": "roll_call_ids",
 }
 
@@ -226,6 +236,8 @@ TEMPLATE_TOOLS = {
     "family1.closest_by_margin": ["list_vote_events"],
     "family1.member_summary": _MEMBER_TOOLS,
     "family1.pairwise_agreement": _MEMBER_TOOLS,
+    # Family 10: bill->roll-call resolution + per-event verification (cite the id, or refuse).
+    "family10.cite_record_id": ["get_bill_votes", "get_vote_event"],
 }
 
 

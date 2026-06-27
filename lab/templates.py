@@ -23,6 +23,7 @@ TEMPLATE_PAIRWISE = "family1.pairwise_agreement"
 TEMPLATE_PARTY_BREAKDOWN = "family1.party_breakdown"
 TEMPLATE_PARTY_DEFECTION = "family1.party_defection"
 TEMPLATE_CROSSED_PARTY = "family1.crossed_party"
+TEMPLATE_CITE = "family10.cite_record_id"  # Family 10 (provenance): cite the roll-call vote id
 CLOSEST_K = 5  # how many "closest" roll calls a closest_by_margin instance asks for
 
 
@@ -768,18 +769,199 @@ def _party_event_refusals(cur, template_id: str, n_answerable: int, seed: int) -
     ]
 
 
-# Template registry — each entry exposes `.generate(conn, n, seed, precomputed)` for the harness.
+def generate_cite_record_id(conn, n: int, seed: int, precomputed) -> list[Instance]:
+    """Family 10 #1 (cite record id): "Cite the vote_event_id of the roll-call recording how member
+    X voted on bill Y." PROVENANCE — the agent must return a REAL, CORRECT, non-fabricated id, or
+    REFUSE when no such vote exists. Answerable + refusal twins share an IDENTICAL prompt shape (the
+    agent cannot distinguish by phrasing — only by verifying the data).
+
+    - answerable: a (member, bill) where the bill has EXACTLY ONE roll-call and the member voted on
+      it. gold = `{that vote_event_id}` (a singleton set), grader `set_match`. Uniqueness is a
+      guarantee: one event per single-roll-call bill × the (vote_event_id, person_id) unique
+      constraint => exactly one record => one citable id.
+    - refusal twin A (NO-LINK centerpiece): a REAL active voter X whose ENTIRE record is in a
+      DIFFERENT congress than Y, so X structurally could not have voted on Y. This closes the
+      mis-attribution residual a within-congress no-link would leave (one mis-parsed vote -> a false
+      no-link); structural disjointness would require an ENTIRE congress of X's votes mis-parsed,
+      which is implausible. Proven in CODE: X active (has records), X never voted in Y's congress
+      (index-backed), X has 0 records on Y's roll-call (the explicit probe). gold = REFUSAL.
+    - refusal twin B (NONEXISTENT BILL): a synthetic bill id proven absent -> get_bill_votes' error
+      arm. gold = REFUSAL.
+    """
+    cur = conn.cursor()
+    instances: list[Instance] = []
+
+    # single-roll-call bills: (event_id, bill_id, bill_identifier, congress). The HAVING COUNT=1 is
+    # the whole eligibility gate (one event per bill => the citation is unique).
+    cur.execute(
+        "SELECT ve.id, ve.bill_id, b.identifier, s.identifier "
+        "FROM vote_events ve "
+        "JOIN bills b ON b.id = ve.bill_id "
+        "JOIN sessions s ON s.id = b.session_id "
+        "WHERE ve.bill_id IN ("
+        "  SELECT bill_id FROM vote_events WHERE bill_id IS NOT NULL "
+        "  GROUP BY bill_id HAVING COUNT(*) = 1)"
+    )
+    single = sorted(cur.fetchall())  # deterministic order
+    by_bill = {bid: (eid, ident, cong) for (eid, bid, ident, cong) in single}
+
+    # --- answerable: sample single-roll-call bills; gold from a REAL voter on the roll-call ---
+    chosen = sample(list(by_bill), n, seed)
+    chosen_events = [by_bill[bid][0] for bid in chosen]
+    voters: dict[str, list[tuple[str, str]]] = {}
+    if chosen_events:
+        cur.execute(
+            f"SELECT vr.vote_event_id, vr.person_id, p.name FROM vote_records vr "
+            f"JOIN people p ON p.id = vr.person_id "
+            f"WHERE vr.vote_event_id IN ({_in_clause(len(chosen_events))})",
+            chosen_events,
+        )
+        for eid, pid, name in cur.fetchall():
+            voters.setdefault(eid, []).append((pid, name))
+    for bid in chosen:
+        eid, ident, cong = by_bill[bid]
+        rows = voters.get(eid)
+        if not rows:
+            continue  # no resolved voter on this event -> can't build a real gold; skip
+        pid = pick_one([r[0] for r in rows], seed)
+        name = next(nm for p, nm in rows if p == pid)
+        instances.append(
+            Instance(
+                instance_id=f"{TEMPLATE_CITE}:{seed}:{bid}:{pid}",
+                template_id=TEMPLATE_CITE,
+                tier="C",
+                params={"person_id": pid, "bill_id": bid},
+                prompt=f"Cite the vote_event_id recording how {name} voted on "
+                f"bill {ident} (bill id {bid}).",
+                gold={eid},  # singleton set -> set_match (exact-id semantics)
+                grader="set_match",
+                is_refusal=False,
+            )
+        )
+
+    # --- refusal twin A: structurally-disjoint NO-LINK (the centerpiece; per-type floor) ---
+    n_no_link = max(3, len(instances) // 4)
+    congresses = sorted({cong for *_, cong in single})
+    if len(congresses) >= 2:
+        congress_a, congress_b = congresses[0], congresses[-1]  # maximally separated
+        b_bills = sorted(
+            (eid, bid, ident) for (eid, bid, ident, cong) in single if cong == congress_b
+        )
+        # candidate X pool = voters on ONE single-roll-call event in congress A (index-backed,
+        # ~one chamber's roster); every such X is active in A by construction.
+        a_events = sorted(eid for (eid, _bid, _id, cong) in single if cong == congress_a)
+        x_pool: list[tuple[str, str]] = []
+        if a_events and b_bills:
+            cur.execute(
+                "SELECT vr.person_id, p.name FROM vote_records vr "
+                "JOIN people p ON p.id = vr.person_id WHERE vr.vote_event_id = %s",
+                (a_events[0],),
+            )
+            x_pool = sorted(cur.fetchall())
+        emitted = 0
+        for pid, name in x_pool:
+            if emitted >= n_no_link:
+                break
+            # structural disjointness: X never voted in congress B at all (index-backed probe on
+            # person_id; STRONGER than "0 on Y" since Y's roll-calls are a subset of B's events).
+            cur.execute(
+                "SELECT 1 FROM vote_records vr "
+                "JOIN vote_events ve ON ve.id = vr.vote_event_id "
+                "JOIN bills b ON b.id = ve.bill_id "
+                "JOIN sessions s ON s.id = b.session_id "
+                "WHERE vr.person_id = %s AND s.identifier = %s LIMIT 1",
+                (pid, congress_b),
+            )
+            if cur.fetchone() is not None:
+                continue  # X did vote in B -> not structurally disjoint; skip
+            eid_y, bid_y, ident_y = b_bills[emitted % len(b_bills)]
+            # explicit no-link proof: X has 0 records on Y's roll-call (the citable event).
+            cur.execute(
+                "SELECT 1 FROM vote_records WHERE person_id = %s AND vote_event_id = %s LIMIT 1",
+                (pid, eid_y),
+            )
+            if cur.fetchone() is not None:
+                raise AssertionError(f"no-link violated: {pid} has a record on {eid_y}")
+            # assert X active (defensive — true by pool construction, but make it airtight in code).
+            cur.execute("SELECT 1 FROM vote_records WHERE person_id = %s LIMIT 1", (pid,))
+            if cur.fetchone() is None:
+                continue
+            instances.append(
+                Instance(
+                    instance_id=f"{TEMPLATE_CITE}:{seed}:nolink:{bid_y}:{pid}",
+                    template_id=TEMPLATE_CITE,
+                    tier="C",
+                    params={"person_id": pid, "bill_id": bid_y},
+                    prompt=f"Cite the vote_event_id recording how {name} voted "
+                    f"on bill {ident_y} (bill id {bid_y}).",
+                    gold=REFUSAL,
+                    grader="refusal_correct",
+                    is_refusal=True,
+                    refusal_reason="member_did_not_vote_on_bill",
+                )
+            )
+            emitted += 1
+
+    # --- refusal twin B: NONEXISTENT BILL (synthetic id proven absent -> get_bill_votes error) ---
+    n_no_bill = max(2, len(instances) // 8)
+    synthetic = [f"NX-BILL-{seed}-{i:04d}" for i in range(n_no_bill)]
+    cur.execute(f"SELECT id FROM bills WHERE id IN ({_in_clause(len(synthetic))})", synthetic)
+    if cur.fetchall():
+        raise AssertionError("synthetic refusal bill ids unexpectedly exist in bills")
+    # a real member name for the prompt (the BILL is the absent part); reuse the answerable voters.
+    real_names = [nm for rows in voters.values() for (_p, nm) in rows] or ["the member"]
+    for i, bid in enumerate(synthetic):
+        name = real_names[i % len(real_names)]
+        instances.append(
+            Instance(
+                instance_id=f"{TEMPLATE_CITE}:{seed}:nobill:{bid}",
+                template_id=TEMPLATE_CITE,
+                tier="C",
+                params={"person_id": None, "bill_id": bid},
+                prompt=f"Cite the vote_event_id recording how {name} voted on bill {bid}.",
+                gold=REFUSAL,
+                grader="refusal_correct",
+                is_refusal=True,
+                refusal_reason="bill_not_in_data",
+            )
+        )
+    return instances
+
+
+# Template registry — each entry exposes `.generate(conn, n, seed, precomputed)` for the harness +
+# `.template_id` (the family-qualified id). The flat bare-name key no longer encodes the family: a
+# template's family lives in `template_id`, so cross-family wiring (TEMPLATE_TOOLS, P9) keys
+# off `ns.template_id`, NOT `f"family1.{name}"`. (Family 10 is the first non-family-1 entry.)
 TEMPLATE_REGISTRY = {
-    "vote_lookup": SimpleNamespace(name="vote_lookup", generate=generate),
-    "tally": SimpleNamespace(name="tally", generate=generate_tally),
+    "vote_lookup": SimpleNamespace(
+        name="vote_lookup", template_id=TEMPLATE_VOTE_LOOKUP, generate=generate
+    ),
+    "tally": SimpleNamespace(name="tally", template_id=TEMPLATE_TALLY, generate=generate_tally),
     "closest_by_margin": SimpleNamespace(
-        name="closest_by_margin", generate=generate_closest_by_margin
+        name="closest_by_margin", template_id=TEMPLATE_CLOSEST, generate=generate_closest_by_margin
     ),
-    "member_summary": SimpleNamespace(name="member_summary", generate=generate_member_summary),
+    "member_summary": SimpleNamespace(
+        name="member_summary", template_id=TEMPLATE_MEMBER_SUMMARY, generate=generate_member_summary
+    ),
     "pairwise_agreement": SimpleNamespace(
-        name="pairwise_agreement", generate=generate_pairwise_agreement
+        name="pairwise_agreement",
+        template_id=TEMPLATE_PAIRWISE,
+        generate=generate_pairwise_agreement,
     ),
-    "party_breakdown": SimpleNamespace(name="party_breakdown", generate=generate_party_breakdown),
-    "party_defection": SimpleNamespace(name="party_defection", generate=generate_party_defection),
-    "crossed_party": SimpleNamespace(name="crossed_party", generate=generate_crossed_party),
+    "party_breakdown": SimpleNamespace(
+        name="party_breakdown",
+        template_id=TEMPLATE_PARTY_BREAKDOWN,
+        generate=generate_party_breakdown,
+    ),
+    "party_defection": SimpleNamespace(
+        name="party_defection",
+        template_id=TEMPLATE_PARTY_DEFECTION,
+        generate=generate_party_defection,
+    ),
+    "crossed_party": SimpleNamespace(
+        name="crossed_party", template_id=TEMPLATE_CROSSED_PARTY, generate=generate_crossed_party
+    ),
+    "cite_record_id": SimpleNamespace(
+        name="cite_record_id", template_id=TEMPLATE_CITE, generate=generate_cite_record_id
+    ),
 }
