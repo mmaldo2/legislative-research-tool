@@ -91,10 +91,16 @@ class OverRefuseSolver(_DeterministicSolver):
 GOLD_KEYS = {
     "family1.tally": ("yea", "nay", "margin", "result"),
     "family1.party_breakdown": ("yea", "nay"),
+    "family1.member_summary": ("yea", "nay", "other"),
+    "family1.pairwise_agreement": ("agreements", "shared_events"),
 }
 NUMERIC_FIELDS = {
     "family1.tally": ("yea", "nay", "margin"),
     "family1.party_breakdown": ("yea", "nay"),
+    # P8: member_summary + pairwise golds are ALL-int -> NUMERIC_FIELDS == GOLD_KEYS (no str field
+    # like tally's `result`), else a stringized "5" would str()-through and false-fail.
+    "family1.member_summary": ("yea", "nay", "other"),
+    "family1.pairwise_agreement": ("agreements", "shared_events"),
 }
 _REFUSED_FIELD = {
     "refused": {
@@ -142,6 +148,49 @@ SUBMIT_SCHEMAS = {
         },
         **_REFUSED_FIELD,
     },
+    "family1.member_summary": {
+        "yea": {
+            "type": "integer",
+            "description": "The number of roll calls on which the member voted yea.",
+        },
+        "nay": {
+            "type": "integer",
+            "description": "The number of roll calls on which the member voted nay.",
+        },
+        "other": {
+            "type": "integer",
+            "description": "The number of roll calls on which the member voted other (present or "
+            "not voting).",
+        },
+        **_REFUSED_FIELD,
+    },
+    "family1.pairwise_agreement": {
+        "agreements": {
+            "type": "integer",
+            "description": "The number of roll calls on which both members cast the identical "
+            "option.",
+        },
+        "shared_events": {
+            "type": "integer",
+            "description": "The number of roll calls on which both members cast a yea or nay vote.",
+        },
+        **_REFUSED_FIELD,
+    },
+    "family1.closest_by_margin": {
+        "roll_call_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "The roll-call ids the question asks you to list.",
+        },
+        **_REFUSED_FIELD,
+    },
+}
+
+# set_match is keyed per-template (the submit field NAME differs: crossed lists members, closest
+# lists roll calls) — coerce + _answer_present resolve the field via this map, not a literal.
+SET_MATCH_FIELD = {
+    "family1.crossed_party": "member_ids",
+    "family1.closest_by_margin": "roll_call_ids",
 }
 
 _SUBMIT_DESCRIPTION = (
@@ -159,6 +208,33 @@ def submit_tool_for(template_id: str) -> dict:
         "description": _SUBMIT_DESCRIPTION,
         "input_schema": {"type": "object", "properties": SUBMIT_SCHEMAS[template_id]},
     }
+
+
+# PER-TEMPLATE TOOL PROVISIONING: each template is offered exactly the product tools it needs (plus
+# submit_answer, appended by the backends). Event-keyed templates use get_vote_event; window-keyed
+# templates use the multi-event window tools. Minimal exact subsets — closest must not be tempted to
+# call find_people, member_summary must not be tempted toward list_vote_events. Both backends read
+# THIS single map (the parity mechanism).
+_EVENT_TOOLS = ["get_vote_event"]
+_MEMBER_TOOLS = ["find_people", "get_member_voting_record"]
+TEMPLATE_TOOLS = {
+    "family1.vote_lookup": _EVENT_TOOLS,
+    "family1.tally": _EVENT_TOOLS,
+    "family1.party_breakdown": _EVENT_TOOLS,
+    "family1.party_defection": _EVENT_TOOLS,
+    "family1.crossed_party": _EVENT_TOOLS,
+    "family1.closest_by_margin": ["list_vote_events"],
+    "family1.member_summary": _MEMBER_TOOLS,
+    "family1.pairwise_agreement": _MEMBER_TOOLS,
+}
+
+
+def research_tool_for(name: str) -> dict:
+    """The product RESEARCH_TOOLS def for a tool name (lazy import keeps product code off the
+    deterministic path). Raises loudly on a wiring typo (the name comes from TEMPLATE_TOOLS)."""
+    from src.llm.tools import RESEARCH_TOOLS
+
+    return next(t for t in RESEARCH_TOOLS if t["name"] == name)
 
 
 async def lab_execute_tool(tool_name: str, arguments: dict, db, harness) -> str:
@@ -196,13 +272,15 @@ def _safe_err(exc: Exception, limit: int = 300) -> str:
 
 
 _AGENT_SYSTEM_PROMPT = (
-    "You answer factual questions about U.S. Congressional roll-call votes. Use the get_vote_event "
-    "tool to retrieve a roll call's records, then COMPUTE the answer the question asks for from "
-    "those records (counting members, reading the recorded option, etc.). Give your final answer "
-    "ONLY by calling submit_answer exactly once, filling the structured fields the question asks "
-    "for — do NOT answer in prose. To REFUSE (only when the event or member asked about is not in "
-    "the retrieved data), call submit_answer with refused=true and do NOT fill the answer fields. "
-    "Never guess; compute from the records."
+    "You answer factual questions about U.S. Congressional roll-call votes. Use the available "
+    "retrieval tools to gather the relevant vote records, then COMPUTE the answer the question "
+    "asks for from those records (counting members, reading the recorded option, ranking by "
+    "margin, etc.). Give your final answer ONLY by calling submit_answer exactly once, filling the "
+    "structured fields the question asks for — do NOT answer in prose. ALWAYS finish by calling "
+    "submit_answer; if a retrieval tool reports the event, member, or window is not in the data "
+    "(an error or an empty result), you MUST still call submit_answer with refused=true (and do "
+    "NOT fill the answer fields) — never stop without calling submit_answer. Never guess; compute "
+    "from the records."
 )
 
 
@@ -247,7 +325,7 @@ def coerce(grader: str, template_id: str, payload: dict):
                     out[key] = str(raw) if raw is not None else None
             return out
         if grader == "set_match":
-            ids = payload.get("member_ids")
+            ids = payload.get(SET_MATCH_FIELD[template_id])  # per-template field name (P1)
             if not isinstance(ids, list | tuple):  # a str/dict is iterable -> would mis-grade
                 return NO_ANSWER
             return [str(x) for x in ids]
@@ -267,7 +345,7 @@ def _answer_present(grader: str, template_id: str, args: dict) -> bool:
     if grader == "fields":
         return any(args.get(k) is not None for k in GOLD_KEYS[template_id])
     if grader == "set_match":
-        return args.get("member_ids") is not None
+        return args.get(SET_MATCH_FIELD[template_id]) is not None  # per-template field name (P1)
     return False
 
 
@@ -311,6 +389,27 @@ _DISALLOWED_BUILTINS = [
     "Skill",
     "Agent",
 ]
+
+
+def _make_sdk_product_tool(tool_def: dict, observations: list):
+    """Wrap a product RESEARCH_TOOL as an in-process Agent SDK @tool: it opens its OWN
+    async_session_factory session, routes through the SAME lab_execute_tool seam as Option X (data
+    parity), and records a BARE-name observation. The closure binds its own `tool_def` +
+    `observations` (no late-binding when building N tools in a comprehension)."""
+    from claude_agent_sdk import tool
+
+    name = tool_def["name"]
+
+    @tool(name, tool_def["description"], tool_def["input_schema"])
+    async def _product_tool(args):
+        from src.database import async_session_factory
+
+        async with async_session_factory() as db:  # @tool opens its OWN session on this loop
+            result = await lab_execute_tool(name, args, db, None)
+        observations.append({"tool": name, "arguments": dict(args), "result": result})
+        return {"content": [{"type": "text", "text": result}]}
+
+    return _product_tool
 
 
 class AgentSolver:
@@ -376,6 +475,7 @@ class AgentSolver:
                     for o in extras.get("trajectory", [])
                 ),
                 "errored": str(extras.get("raw", "")).startswith("<agent error:"),
+                "result_subtype": extras.get("result_subtype"),  # P7: SDK stop reason (or None)
             }
         )
         return answer
@@ -386,10 +486,11 @@ class AgentSolver:
         return await self._asolve_messages(inst)
 
     async def _asolve_messages(self, inst: Instance):
-        from src.llm.tools import RESEARCH_TOOLS
         from src.services.chat_service import run_agentic_chat
 
-        get_vote_event = next(t for t in RESEARCH_TOOLS if t["name"] == "get_vote_event")
+        # Per-template tool subset (TEMPLATE_TOOLS) + the shape-aware submit_answer.
+        tools = [research_tool_for(n) for n in TEMPLATE_TOOLS[inst.template_id]]
+        tools.append(submit_tool_for(inst.template_id))
         # PROMPT ONLY — never inst.params (holds the gold person_id) or inst.gold.
         messages = [{"role": "user", "content": inst.prompt}]
 
@@ -409,7 +510,7 @@ class AgentSolver:
                 system_prompt=self.system_prompt,
                 messages=messages,
                 client=self._client_or_build(),
-                tools=[get_vote_event, submit_tool_for(inst.template_id)],
+                tools=tools,
                 execute_tool_fn=_record,
                 model=self.model,
             )
@@ -433,28 +534,22 @@ class AgentSolver:
         """Option W: drive the in-process Agent SDK (subscription-native, no rate wall). Builds a
         fresh in-process MCP server per instance (fresh capture closures); the @tools route through
         the SAME lab_execute_tool seam as Option X (data parity) + record bare-name observations.
-        Constrained to {get_vote_event, submit_answer}; built-ins disallowed."""
+        Constrained to the template's tool subset (TEMPLATE_TOOLS); built-ins disallowed."""
         import os
 
         from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, query, tool
         from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
 
-        from src.llm.tools import RESEARCH_TOOLS
-
-        gve = next(t for t in RESEARCH_TOOLS if t["name"] == "get_vote_event")
         observations: list[dict] = []
         submit_box: list[dict] = []
 
-        @tool("get_vote_event", gve["description"], gve["input_schema"])
-        async def _sdk_get_vote_event(args):
-            from src.database import async_session_factory
-
-            async with async_session_factory() as db:  # @tool opens its OWN session on this loop
-                result = await lab_execute_tool("get_vote_event", args, db, None)
-            observations.append(
-                {"tool": "get_vote_event", "arguments": dict(args), "result": result}
-            )
-            return {"content": [{"type": "text", "text": result}]}
+        # Per-template product @tools (single source of truth: TEMPLATE_TOOLS) + the shape-aware
+        # submit; allowed_tools derives from the SAME list (P9 lockstep — the whitelist can't drift
+        # wider/narrower than the provisioned set).
+        tool_names = TEMPLATE_TOOLS[inst.template_id]
+        product_tools = [
+            _make_sdk_product_tool(research_tool_for(n), observations) for n in tool_names
+        ]
 
         submit_schema = {"type": "object", "properties": SUBMIT_SCHEMAS[inst.template_id]}
 
@@ -465,30 +560,33 @@ class AgentSolver:
             observations.append({"tool": "submit_answer", "arguments": dict(args), "result": ack})
             return {"content": [{"type": "text", "text": ack}]}
 
-        server = create_sdk_mcp_server(name="lab", tools=[_sdk_get_vote_event, _sdk_submit])
+        server = create_sdk_mcp_server(name="lab", tools=[*product_tools, _sdk_submit])
+        allowed_tools = [f"mcp__lab__{n}" for n in tool_names] + ["mcp__lab__submit_answer"]
         # subscription creds ONLY: pop ANTHROPIC_API_KEY so query() can't silently bill the Messages
         # API (and hit the rate wall Option W exists to dodge); restored in finally.
         saved_key = os.environ.pop("ANTHROPIC_API_KEY", None)
         options = ClaudeAgentOptions(
             model=self.model,
             mcp_servers={"lab": server},
-            allowed_tools=["mcp__lab__get_vote_event", "mcp__lab__submit_answer"],
+            allowed_tools=allowed_tools,
             disallowed_tools=_DISALLOWED_BUILTINS,
             permission_mode="bypassPermissions",
             setting_sources=[],  # no ambient CLAUDE.md / .claude config / project MCP servers
-            max_turns=8,
-            max_budget_usd=3.0,  # per-rollout guard ($1 truncated sonnet mid-count)
+            max_turns=14,  # headroom for big windows (sonnet hit 10 on a 1138-event pairwise)
+            max_budget_usd=6.0,  # per-rollout guard ($3 truncated the largest sonnet windows)
             system_prompt=self.system_prompt,
         )
         started = time.monotonic()
         text_parts: list[str] = []
         cost = None
+        result_subtype = None  # P7: SDK stop reason — tells truncation apart from a wrong answer
         try:
             async for msg in query(prompt=inst.prompt, options=options):  # PROMPT ONLY
                 if isinstance(msg, AssistantMessage):
                     text_parts.extend(b.text for b in msg.content if isinstance(b, TextBlock))
                 elif isinstance(msg, ResultMessage):
                     cost = getattr(msg, "total_cost_usd", None)
+                    result_subtype = getattr(msg, "subtype", None)
         except Exception as exc:  # noqa: BLE001 — a live failure FAILS the instance, never crashes
             return NO_ANSWER, {
                 "trajectory": observations,
@@ -509,6 +607,7 @@ class AgentSolver:
             "raw": "\n".join(text_parts),
             "latency_ms": latency_ms,
             "cost": cost,
+            "result_subtype": result_subtype,
         }
         return answer, extras
 

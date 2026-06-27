@@ -1,6 +1,6 @@
 """MCP server exposing legislative research tools via stdio transport.
 
-Exposes all 10 research tools (search_bills, get_bill_detail, etc.) so that
+Exposes all research tools (search_bills, get_bill_detail, etc.) so that
 MCP-capable clients — Claude Desktop, IDE extensions, and the Claude Agent SDK —
 can call them against our PostgreSQL database.
 

@@ -9,7 +9,9 @@ keys, so it must never touch the deterministic-invariant block).
 """
 
 import argparse
+import re
 import sys
+from collections import Counter
 
 from lab import templates
 from lab.harness import get_connection, run
@@ -46,6 +48,57 @@ def vote_lookup_name_collisions(conn, instances) -> set[str]:
     return collided
 
 
+def _core_name_tokens(full_name: str) -> list[str]:
+    """The natural-name tokens a reasonable agent would pass: people.name is stored
+    'Sen. Murkowski, Lisa [R-AK]' -> ['murkowski', 'lisa'] (drop the title prefix + the
+    [party-state-district] bracket, keep alphabetic tokens). Mirrors find_people's tokenization so
+    the collision check models the same query the agent makes."""
+    s = re.sub(r"\[.*?\]", " ", full_name)  # drop [party-state-district]
+    s = re.sub(r"^\s*\w+\.\s+", " ", s)  # drop a leading title ('Sen. ' / 'Rep. ')
+    return [t for t in s.lower().replace(",", " ").split() if t.isalpha()]
+
+
+def window_name_collisions(conn, instances, person_keys) -> set[str]:
+    """Answerable window-template (member_summary / pairwise) instance ids where a sampled member's
+    natural NAME (first + last) token-matches >1 voter in the SAME (congress, chamber) window. The
+    prompt names the member but gold is person_id-keyed, so a collision is INPUT AMBIGUITY, not an
+    agent error — excluded from the *reported* clean rate. `person_keys` = the params key(s) holding
+    the person id(s). The match (every core token a substring of the name; any vote in the window,
+    NO option filter) is IDENTICAL to find_people's, so the excluded set matches what the agent
+    actually sees. Read-only; never touches gold."""
+    cur = conn.cursor()
+    collided: set[str] = set()
+    for inst in instances:
+        if inst.is_refusal:
+            continue
+        congress = inst.params["congress"]
+        chamber = inst.params["chamber"]
+        for key in person_keys:
+            pid = inst.params[key]
+            cur.execute("SELECT name FROM people WHERE id = %s", (pid,))
+            row = cur.fetchone()
+            if row is None:
+                continue
+            tokens = _core_name_tokens(row[0])
+            if not tokens:
+                continue
+            like = " AND ".join(["LOWER(p.name) LIKE %s"] * len(tokens))
+            params = [f"%{t}%" for t in tokens] + [congress, chamber]
+            cur.execute(
+                "SELECT COUNT(DISTINCT p.id) FROM people p "
+                "JOIN vote_records vr ON vr.person_id = p.id "
+                "JOIN vote_events ve ON ve.id = vr.vote_event_id "
+                "JOIN bills b ON b.id = ve.bill_id "
+                "JOIN sessions s ON s.id = b.session_id "
+                f"WHERE {like} AND s.identifier = %s AND ve.chamber = %s",
+                params,
+            )
+            if cur.fetchone()[0] > 1:
+                collided.add(inst.instance_id)
+                break  # one ambiguous member is enough to exclude the instance
+    return collided
+
+
 def _trivial_baseline(template, name: str, n: int, seed: int):
     """For templates whose gold is often a trivial constant (party_defection -> 0, crossed_party ->
     ∅), the share of ANSWERABLE golds equal to that constant — the floor an agent that always
@@ -70,14 +123,25 @@ def _trivial_baseline(template, name: str, n: int, seed: int):
 
 
 def _name_collisions(template, name: str, n: int, seed: int) -> set[str]:
-    """Regenerate the (seed-deterministic) instances read-only and flag name collisions. Scoped to
-    vote_lookup (its generate ignores `precomputed`, so an empty one yields the identical set)."""
-    if name != "vote_lookup":
-        return set()
+    """Regenerate the (seed-deterministic) instances read-only and flag name collisions (INPUT
+    ambiguity — the prompt names a member but gold is id-keyed). Dispatches per template:
+    vote_lookup is event-scoped (and ignores `precomputed`, so an empty one yields the identical
+    set); member_summary / pairwise are window-scoped and CONSUME precompute (the fully-complete-
+    window gate), so they MUST regenerate with the REAL precompute (P4) — an empty one yields zero
+    instances and
+    the exclusion would silently never fire."""
     conn = get_connection()
     try:
-        instances = template.generate(conn, n, seed, Precomputed())
-        return vote_lookup_name_collisions(conn, instances)
+        if name == "vote_lookup":
+            instances = template.generate(conn, n, seed, Precomputed())
+            return vote_lookup_name_collisions(conn, instances)
+        if name == "member_summary":
+            instances = template.generate(conn, n, seed, precompute(conn))
+            return window_name_collisions(conn, instances, ["person_id"])
+        if name == "pairwise_agreement":
+            instances = template.generate(conn, n, seed, precompute(conn))
+            return window_name_collisions(conn, instances, ["person_a", "person_b"])
+        return set()
     finally:
         conn.close()
 
@@ -153,6 +217,20 @@ def _run_agent(
         print("  WARNING: agent-errors present — high count = harness/API problem, not the agent")
     if no_retrieval_pass:
         print("  WARNING: passes WITHOUT retrieval — possible base-rate/phrasing game; inspect")
+
+    # P7: SDK stop-reason distribution. A budget/turn-truncated rollout submits nothing ->
+    # NO_ANSWER, which looks identical to a wrong answer. Surface the subtypes so a truncation is
+    # distinguishable from a miss (only the agent-sdk backend populates result_subtype; else None).
+    subtypes = Counter(h["result_subtype"] for h in solver.history if h.get("result_subtype"))
+    if subtypes:
+        dist = ", ".join(f"{k}={v}" for k, v in sorted(subtypes.items()))
+        print(f"  SDK result subtypes: {dist}")
+        non_success = sum(v for k, v in subtypes.items() if k != "success")
+        if non_success:
+            print(
+                f"  NOTE: {non_success} rollout(s) ended non-success (budget/turn truncation?) — "
+                "their NO_ANSWER is a protocol miss, not a wrong answer; inspect before trusting"
+            )
 
     # Trivial-constant baseline (additive; never touches a grader): defection gold is often 0,
     # crossed often ∅ — an agent that always answers 0/[] hits this floor WITHOUT reasoning.

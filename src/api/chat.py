@@ -27,6 +27,7 @@ from src.models.conversation import Conversation, ConversationMessage
 from src.models.jurisdiction import Jurisdiction
 from src.models.person import Person
 from src.models.person_party_span import PersonPartySpan
+from src.models.session import LegislativeSession
 from src.models.sponsorship import Sponsorship
 from src.models.vote import VoteEvent, VoteRecord
 from src.schemas.chat import (
@@ -260,6 +261,149 @@ async def _tool_get_vote_event(
         return json.dumps({"error": "Failed to retrieve the vote event."})
 
 
+async def _tool_list_vote_events(
+    arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
+) -> str:
+    """Every roll-call event in a (congress, chamber) window with its official yea/nay tally.
+
+    RAW per-event rows (the agent ranks/compares). NULL-tally events are OMITTED (an unrankable
+    margin) — the same filter the benchmark's rankable gold uses. The whole body is guarded so a
+    malformed/absent window can never surface a DB traceback; it returns a clean JSON error.
+    """
+    congress = arguments.get("congress", "")
+    chamber = arguments.get("chamber", "")
+    try:
+        stmt = (
+            select(VoteEvent.id, VoteEvent.yes_count, VoteEvent.no_count)
+            .join(Bill, Bill.id == VoteEvent.bill_id)
+            .join(LegislativeSession, LegislativeSession.id == Bill.session_id)
+            .where(
+                LegislativeSession.identifier == congress,
+                VoteEvent.chamber == chamber,
+                VoteEvent.yes_count.isnot(None),
+                VoteEvent.no_count.isnot(None),
+            )
+            .order_by(VoteEvent.id)
+        )
+        rows = (await db.execute(stmt)).all()
+        if not rows:
+            # Only on an empty result do we pay the existence check: a missing congress is the
+            # refusal basis; a real-but-empty window is impossible in practice.
+            exists = (
+                await db.execute(
+                    select(LegislativeSession.id).where(LegislativeSession.identifier == congress)
+                )
+            ).first()
+            if exists is None:
+                return json.dumps({"error": f"Congress '{congress}' not found."})
+        events = [
+            {"vote_event_id": eid, "yes_count": yes, "no_count": no} for (eid, yes, no) in rows
+        ]
+        return json.dumps(
+            {"congress": congress, "chamber": chamber, "events": events, "count": len(events)}
+        )
+    except Exception:
+        logger.exception("list_vote_events failed for congress=%r chamber=%r", congress, chamber)
+        return json.dumps({"error": "Failed to list vote events."})
+
+
+async def _tool_find_people(
+    arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
+) -> str:
+    """Legislators matching a name who voted in a (congress, chamber) window.
+
+    NAME-FIRST + TOKEN match: `people.name` is stored formatted ('Sen. Murkowski, Lisa [R-AK]'), but
+    an agent naturally passes 'Lisa Murkowski' — so we match when EVERY alphabetic token of the
+    query is a (case-insensitive) substring of the name (order-independent; commas ignored). Then
+    keep only those with >=1 vote_record in the window (index-backed EXISTS via ix_vote_records_pid;
+    NO option filter, so a present/not_voting-only member still resolves — matching how gold samples
+    the roster). Empty list = not found; >1 = a shared name (input ambiguity). Guarded.
+    """
+    name = arguments.get("name", "")
+    congress = arguments.get("congress", "")
+    chamber = arguments.get("chamber", "")
+    try:
+        # Alphabetic tokens only (drops 'Jr.', commas, a bioguide id, etc.). `isalpha` guarantees no
+        # LIKE wildcards (%/_) in a token, so the f-string pattern is injection-safe.
+        tokens = [t for t in name.lower().replace(",", " ").split() if t.isalpha()]
+        if not tokens:
+            return json.dumps(
+                {"people": [], "count": 0}
+            )  # no name to match (e.g. an id was passed)
+        name_query = select(Person.id, Person.name)
+        for tok in tokens:
+            name_query = name_query.where(func.lower(Person.name).like(f"%{tok}%"))
+        candidates = (await db.execute(name_query)).all()
+        people = []
+        for pid, pname in candidates:
+            voted = (
+                await db.execute(
+                    select(VoteRecord.vote_event_id)
+                    .join(VoteEvent, VoteEvent.id == VoteRecord.vote_event_id)
+                    .join(Bill, Bill.id == VoteEvent.bill_id)
+                    .join(LegislativeSession, LegislativeSession.id == Bill.session_id)
+                    .where(
+                        VoteRecord.person_id == pid,
+                        LegislativeSession.identifier == congress,
+                        VoteEvent.chamber == chamber,
+                    )
+                    .limit(1)
+                )
+            ).first()
+            if voted is not None:
+                people.append({"person_id": pid, "name": pname})
+        return json.dumps({"people": people, "count": len(people)})
+    except Exception:
+        logger.exception("find_people failed for name=%r congress=%r", name, congress)
+        return json.dumps({"error": "Failed to find people."})
+
+
+async def _tool_get_member_voting_record(
+    arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
+) -> str:
+    """One member's recorded option on each roll call they voted on in a (congress, chamber) window.
+
+    RAW per-record rows (the agent counts; members do not vote every roll call). 0 records -> the
+    member did not vote in this window (the not-found / refusal basis). Guarded.
+    """
+    person_id = arguments.get("person_id", "")
+    congress = arguments.get("congress", "")
+    chamber = arguments.get("chamber", "")
+    try:
+        stmt = (
+            select(VoteRecord.vote_event_id, VoteRecord.option)
+            .join(VoteEvent, VoteEvent.id == VoteRecord.vote_event_id)
+            .join(Bill, Bill.id == VoteEvent.bill_id)
+            .join(LegislativeSession, LegislativeSession.id == Bill.session_id)
+            .where(
+                VoteRecord.person_id == person_id,
+                LegislativeSession.identifier == congress,
+                VoteEvent.chamber == chamber,
+            )
+            .order_by(VoteRecord.vote_event_id)
+        )
+        rows = (await db.execute(stmt)).all()
+        if not rows:
+            return json.dumps(
+                {"error": f"Member '{person_id}' not found in {chamber} Congress {congress}."}
+            )
+        records = [{"vote_event_id": eid, "option": opt} for (eid, opt) in rows]
+        return json.dumps(
+            {
+                "person_id": person_id,
+                "congress": congress,
+                "chamber": chamber,
+                "records": records,
+                "count": len(records),
+            }
+        )
+    except Exception:
+        logger.exception(
+            "get_member_voting_record failed for person=%r congress=%r", person_id, congress
+        )
+        return json.dumps({"error": "Failed to retrieve the member voting record."})
+
+
 async def _tool_list_jurisdictions(
     arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
 ) -> str:
@@ -486,6 +630,9 @@ _TOOL_HANDLERS: dict[str, _ToolHandler] = {
     "search_bills": _tool_search_bills,
     "get_bill_detail": _tool_get_bill_detail,
     "get_vote_event": _tool_get_vote_event,
+    "list_vote_events": _tool_list_vote_events,
+    "find_people": _tool_find_people,
+    "get_member_voting_record": _tool_get_member_voting_record,
     "list_jurisdictions": _tool_list_jurisdictions,
     "find_similar_bills": _tool_find_similar_bills,
     "analyze_version_diff": _tool_analyze_version_diff,

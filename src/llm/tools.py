@@ -75,6 +75,82 @@ RESEARCH_TOOLS = [
         },
     },
     {
+        "name": "list_vote_events",
+        "description": (
+            "List every roll-call vote event in a (congress, chamber) window with its official "
+            "tally: one row per roll call with its vote_event_id, yes_count, and no_count. Use this "
+            "for questions that span all the roll-call votes of a whole Congress. Roll calls whose "
+            "official tally is unavailable are omitted."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "congress": {
+                    "type": "string",
+                    "description": "The Congress number (e.g. '115').",
+                },
+                "chamber": {
+                    "type": "string",
+                    "description": "The chamber: 'house' or 'senate'.",
+                },
+            },
+            "required": ["congress", "chamber"],
+        },
+    },
+    {
+        "name": "find_people",
+        "description": (
+            "Find legislators by name within a (congress, chamber) window: returns each matching "
+            "member's person_id and name. Use this to resolve a member's name to the person_id "
+            "that get_member_voting_record needs. An empty list means no member with that name "
+            "voted in that window; more than one result means the name is shared by multiple "
+            "members."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "The member's full name."},
+                "congress": {
+                    "type": "string",
+                    "description": "The Congress number (e.g. '115').",
+                },
+                "chamber": {
+                    "type": "string",
+                    "description": "The chamber: 'house' or 'senate'.",
+                },
+            },
+            "required": ["name", "congress", "chamber"],
+        },
+    },
+    {
+        "name": "get_member_voting_record",
+        "description": (
+            "Get one member's recorded option on each roll call they voted on in a (congress, "
+            "chamber) window: one row per record, each with its vote_event_id and the member's "
+            "option (yea / nay / present / not_voting). Members do not vote on every roll call, "
+            "so count the records returned. Use the person_id from find_people. An error means no "
+            "such member voted in that window."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "person_id": {
+                    "type": "string",
+                    "description": "The member's person id (from find_people).",
+                },
+                "congress": {
+                    "type": "string",
+                    "description": "The Congress number (e.g. '115').",
+                },
+                "chamber": {
+                    "type": "string",
+                    "description": "The chamber: 'house' or 'senate'.",
+                },
+            },
+            "required": ["person_id", "congress", "chamber"],
+        },
+    },
+    {
         "name": "list_jurisdictions",
         "description": (
             "List all available jurisdictions (states, territories, and federal) with their "

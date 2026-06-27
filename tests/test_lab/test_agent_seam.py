@@ -70,3 +70,44 @@ class TestBuildRecordExtras:
         assert rec.trajectory == []
         assert rec.raw == "yea"  # str(answer) default preserved
         assert rec.latency_ms is None
+
+
+class TestTemplateTools:
+    """Per-template tool provisioning (TEMPLATE_TOOLS) — the single source of truth both backends
+    read. Event-keyed templates get get_vote_event; window-keyed templates get the window tools."""
+
+    def test_event_templates_get_vote_event_only(self):
+        from lab.solvers import TEMPLATE_TOOLS
+
+        for tid in (
+            "family1.vote_lookup",
+            "family1.tally",
+            "family1.party_breakdown",
+            "family1.party_defection",
+            "family1.crossed_party",
+        ):
+            assert TEMPLATE_TOOLS[tid] == ["get_vote_event"]
+
+    def test_window_templates_get_minimal_window_subsets(self):
+        from lab.solvers import TEMPLATE_TOOLS
+
+        assert TEMPLATE_TOOLS["family1.closest_by_margin"] == ["list_vote_events"]
+        member = ["find_people", "get_member_voting_record"]
+        assert TEMPLATE_TOOLS["family1.member_summary"] == member
+        assert TEMPLATE_TOOLS["family1.pairwise_agreement"] == member
+
+    def test_template_tools_covers_all_family1_templates(self):
+        # P9: an unmapped template would KeyError at solve() time, mid-run, after spending tokens.
+        from lab import templates
+        from lab.solvers import TEMPLATE_TOOLS
+
+        family1 = {f"family1.{name}" for name in templates.TEMPLATE_REGISTRY}
+        missing = family1 - set(TEMPLATE_TOOLS)
+        assert not missing, f"unmapped templates: {missing}"
+
+    def test_research_tool_for_resolves_every_provisioned_tool(self):
+        from lab.solvers import TEMPLATE_TOOLS, research_tool_for
+
+        for names in TEMPLATE_TOOLS.values():
+            for name in names:
+                assert research_tool_for(name)["name"] == name
