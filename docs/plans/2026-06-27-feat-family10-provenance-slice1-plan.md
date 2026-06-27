@@ -186,26 +186,26 @@ graph TD
 
 ## Phase 2 — the `cite_record_id` template + solver wiring + deterministic validation
 *(One phase — P2: registry + wiring land together so every commit is green.)*
-- [ ] **(P1)** Give every `TEMPLATE_REGISTRY` namespace a `template_id` field (qualified id) and
+- [x] **(P1)** Give every `TEMPLATE_REGISTRY` namespace a `template_id` field (qualified id) and
   rewrite the P9 completeness test (`test_agent_seam.py`) to iterate `ns.template_id` — kills the
   `f"family1.{name}"` coupling.
-- [ ] `generate_cite_record_id` (`TEMPLATE_CITE = "family10.cite_record_id"`): **answerable** =
+- [x] `generate_cite_record_id` (`TEMPLATE_CITE = "family10.cite_record_id"`): **answerable** =
   single-roll-call (member, bill) gold built from a REAL `vote_records` row → `set_match`, gold =
   `{vote_event_id}`. **Refusal twins (P4, 2 types):** (a) **no-link centerpiece (P3)** — real X whose
   entire record is in a *different congress* than Y, proven `COUNT(X on Y's roll-calls)==0` via the
   index-backed probe, X asserted a real active voter, with a per-type **floor**; (b) **nonexistent
   bill** (synthetic id proven absent → `get_bill_votes` error arm). All → `refusal_correct`.
-- [ ] Solver wiring: `TEMPLATE_TOOLS[TEMPLATE_CITE] = [get_bill_votes, get_vote_event]`;
+- [x] Solver wiring: `TEMPLATE_TOOLS[TEMPLATE_CITE] = [get_bill_votes, get_vote_event]`;
   `SET_MATCH_FIELD[TEMPLATE_CITE] = "vote_event_ids"`; `SUBMIT_SCHEMAS[TEMPLATE_CITE] =
   {vote_event_ids: array<string> (P6 array-steering, leak-safe), refused}`. NOT in
   `GOLD_KEYS`/`NUMERIC_FIELDS`. Both backends via the existing `_make_sdk_product_tool` factory.
-- [ ] Deterministic invariants pass (oracle 100% / wrong 0% / over-refuse fails answerable) —
+- [x] Deterministic invariants pass (oracle 100% / wrong 0% / over-refuse fails answerable) —
   `set_match` keeps `WrongBaselineSolver` off the no-int-field crash; no solver edit.
-- [ ] Net-new tests only (the `TEMPLATE_REGISTRY` auto-loop covers the coerce spec): **gold-uniqueness**
+- [x] Net-new tests only (the `TEMPLATE_REGISTRY` auto-loop covers the coerce spec): **gold-uniqueness**
   (sampled (member, bill) has exactly 1 roll-call → gold is that id) + **no-link airtightness** (X
   truly 0 votes on Y; X's record is in a different congress; X is a real voter). Leak-safe prompt
   (names X + Y, never the gold id). `test_hashes` (content flips, contract unmoved).
-- [ ] ruff; full suite green; `test_hashes` green. **Commit. Checkpoint.**
+- [x] ruff; full suite green; `test_hashes` green. **Commit. Checkpoint.**
 
 ## Phase 3 — HAIKU checkpoint (manual; STOP)
 - [ ] `uv run python -m lab.run --template cite_record_id --agent --model claude-haiku-4-5 --n 10`.

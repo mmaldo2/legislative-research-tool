@@ -96,13 +96,15 @@ class TestTemplateTools:
         assert TEMPLATE_TOOLS["family1.member_summary"] == member
         assert TEMPLATE_TOOLS["family1.pairwise_agreement"] == member
 
-    def test_template_tools_covers_all_family1_templates(self):
+    def test_template_tools_covers_every_registered_template(self):
         # P9: an unmapped template would KeyError at solve() time, mid-run, after spending tokens.
+        # Key off ns.template_id (family-qualified), NOT f"family1.{name}" — Family 10 is the first
+        # non-family-1 family, so the registry no longer encodes the family in its bare-name key.
         from lab import templates
         from lab.solvers import TEMPLATE_TOOLS
 
-        family1 = {f"family1.{name}" for name in templates.TEMPLATE_REGISTRY}
-        missing = family1 - set(TEMPLATE_TOOLS)
+        registered = {ns.template_id for ns in templates.TEMPLATE_REGISTRY.values()}
+        missing = registered - set(TEMPLATE_TOOLS)
         assert not missing, f"unmapped templates: {missing}"
 
     def test_research_tool_for_resolves_every_provisioned_tool(self):
