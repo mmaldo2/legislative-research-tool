@@ -102,3 +102,76 @@ def test_sdk_backend_policy_records_backend():
     solver = solvers.AgentSolver(backend="agent-sdk")
     assert solver.policy["backend"] == "agent-sdk"
     assert solver.kind == "agent"
+
+
+def _member_summary_inst() -> Instance:
+    return Instance(
+        instance_id="family1.member_summary:42:115:house:p1",
+        template_id="family1.member_summary",
+        tier="C",
+        params={"person_id": "p1", "congress": "115", "chamber": "house"},
+        prompt="Across the house roll-call votes of Congress 115, how did X vote (yea/nay/other)?",
+        gold={"yea": 10, "nay": 5, "other": 2},
+        grader="fields",
+        is_refusal=False,
+    )
+
+
+def _fake_exec_window(tool_name, args, db, harness):
+    if tool_name == "submit_answer":
+        return json.dumps({"status": "recorded"})
+    if tool_name == "find_people":
+        return json.dumps({"people": [{"person_id": "p1", "name": "X"}], "count": 1})
+    return json.dumps({"records": [{"vote_event_id": "e1", "option": "yea"}], "count": 1})
+
+
+def test_sdk_backend_window_template_provisions_window_tools(monkeypatch):
+    """P9 + the @tool factory: a window template gets ONLY its window tools (built via
+    _make_sdk_product_tool), allowed_tools is the lockstep whitelist, and the multi-tool trajectory
+    is captured."""
+    captured: dict = {}
+    sdk_tools: dict = {}
+
+    def fake_create_server(name, version="1.0.0", tools=None):
+        for t in tools or []:
+            sdk_tools[t.name] = t
+        return {"server": name}
+
+    async def fake_query(*, prompt, options):
+        captured["options"] = options
+        # drive the REAL factory-built @tools for the member-summary subset
+        await sdk_tools["find_people"].handler({"name": "X", "congress": "115", "chamber": "house"})
+        await sdk_tools["get_member_voting_record"].handler(
+            {"person_id": "p1", "congress": "115", "chamber": "house"}
+        )
+        await sdk_tools["submit_answer"].handler({"yea": 10, "nay": 5, "other": 2})
+        if False:
+            yield
+
+    monkeypatch.setattr("claude_agent_sdk.create_sdk_mcp_server", fake_create_server)
+    monkeypatch.setattr("claude_agent_sdk.query", fake_query)
+    monkeypatch.setattr("lab.solvers.lab_execute_tool", AsyncMock(side_effect=_fake_exec_window))
+    monkeypatch.setattr("src.database.async_session_factory", lambda: _FakeSession())
+
+    solver = solvers.AgentSolver(backend="agent-sdk")
+    ans = solver.solve(_member_summary_inst())
+    solver.close()
+
+    # the fields shape maps (all-int coercion)
+    assert ans == {"yea": 10, "nay": 5, "other": 2}
+    # exactly the member subset built (no get_vote_event), submit always present
+    assert set(sdk_tools) == {"find_people", "get_member_voting_record", "submit_answer"}
+    # P9 lockstep: allowed_tools == the mcp__lab__* whitelist for THIS subset + submit
+    assert captured["options"].allowed_tools == [
+        "mcp__lab__find_people",
+        "mcp__lab__get_member_voting_record",
+        "mcp__lab__submit_answer",
+    ]
+    # multi-tool trajectory captured with bare names, in order
+    traj = solver.trace_extras["trajectory"]
+    assert [o["tool"] for o in traj] == [
+        "find_people",
+        "get_member_voting_record",
+        "submit_answer",
+    ]
+    assert solver.history[-1]["retrieved"] is True

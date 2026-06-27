@@ -308,26 +308,26 @@ graph TD
 
 ## Phase 2 — solver provisioning + answer shapes + diagnostics
 
-- [ ] `TEMPLATE_TOOLS` map + `research_tool_for(name: str) -> dict`; rewire `_asolve_messages` to the
+- [x] `TEMPLATE_TOOLS` map + `research_tool_for(name: str) -> dict`; rewire `_asolve_messages` to the
   per-template tool list.
-- [ ] `_make_sdk_product_tool` factory; rewire `_asolve_sdk` (per-template `@tools` + `allowed_tools`
+- [x] `_make_sdk_product_tool` factory; rewire `_asolve_sdk` (per-template `@tools` + `allowed_tools`
   derived from the SAME comprehension — **P9** lockstep); `max_turns 8→10`.
-- [ ] **(P3)** Generalize `_AGENT_SYSTEM_PROMPT` to tool-neutral phrasing (no `get_vote_event` name).
-- [ ] `GOLD_KEYS`/`SUBMIT_SCHEMAS` for `member_summary`{yea,nay,other} + `pairwise`
+- [x] **(P3)** Generalize `_AGENT_SYSTEM_PROMPT` to tool-neutral phrasing (no `get_vote_event` name).
+- [x] `GOLD_KEYS`/`SUBMIT_SCHEMAS` for `member_summary`{yea,nay,other} + `pairwise`
   {agreements,shared_events}; **(P8)** `NUMERIC_FIELDS[tid] == GOLD_KEYS[tid]` for BOTH (all-int).
   `closest` `SUBMIT_SCHEMAS` with field **`roll_call_ids`**. Leak-safe descriptions.
-- [ ] **(P1)** `SET_MATCH_FIELD` map; generalize the `member_ids` literal in BOTH `coerce` AND
+- [x] **(P1)** `SET_MATCH_FIELD` map; generalize the `member_ids` literal in BOTH `coerce` AND
   `_answer_present` to resolve the field per-template.
-- [ ] **(P4/P12)** `window_name_collisions(conn, instances, person_keys)` (one parametrized helper);
+- [x] **(P4/P12)** `window_name_collisions(conn, instances, person_keys)` (one parametrized helper);
   `_name_collisions` regenerates member/pairwise with **real `precompute(conn)`**; `_trivial_baseline`
   N/A guard for window templates.
-- [ ] **(P7)** Capture the SDK `ResultMessage` stop/result reason into `trace_extras`; bucket
+- [x] **(P7)** Capture the SDK `ResultMessage` stop/result reason into `trace_extras`; bucket
   budget/turn-truncated rollouts separately in the run.py agent diagnostics.
-- [ ] Tests: `test_answer_spec` additions (incl. **P1** set_match round-trip + **P8** stringized-int
+- [x] Tests: `test_answer_spec` additions (incl. **P1** set_match round-trip + **P8** stringized-int
   for both new templates); the **P9** completeness + `allowed_tools` lockstep invariants + window
   tool-set cases **folded into `test_agent_seam`** (P13); `test_agent_sdk_backend` extension drives
   the real generalized `@tools`. Existing agent/seam/sdk tests stay green.
-- [ ] `ruff`; full suite green; **`test_hashes` green**.
+- [x] `ruff`; full suite green; **`test_hashes` green**.
 - **Checkpoint:** Option X (messages-api) can run the 3 window templates end-to-end on a cheap
   model. Commit.
 

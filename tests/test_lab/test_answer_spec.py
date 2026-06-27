@@ -11,6 +11,7 @@ from lab.graders import REFUSAL, grade
 from lab.solvers import (
     GOLD_KEYS,
     NO_ANSWER,
+    NUMERIC_FIELDS,
     SUBMIT_SCHEMAS,
     _map_answer,
     _to_int,
@@ -22,6 +23,9 @@ TALLY = "family1.tally"
 BREAKDOWN = "family1.party_breakdown"
 DEFECTION = "family1.party_defection"
 CROSSED = "family1.crossed_party"
+MEMBER = "family1.member_summary"
+PAIRWISE = "family1.pairwise_agreement"
+CLOSEST = "family1.closest_by_margin"
 
 
 def _submit(args: dict) -> list[dict]:
@@ -96,6 +100,12 @@ class TestCoerceSetMatch:
     def test_non_list_to_no_answer(self, payload):
         assert coerce("set_match", CROSSED, payload) == NO_ANSWER  # str/dict iterable -> guarded
 
+    def test_closest_uses_roll_call_ids_field(self):
+        # P1: the set_match field NAME is per-template (closest -> roll_call_ids, not member_ids)
+        assert coerce("set_match", CLOSEST, {"roll_call_ids": ["rc1", "rc2"]}) == ["rc1", "rc2"]
+        assert coerce("set_match", CLOSEST, {"roll_call_ids": []}) == []  # ∅ is a valid answer
+        assert coerce("set_match", CLOSEST, {"member_ids": ["rc1"]}) == NO_ANSWER  # wrong field
+
 
 class TestCoerceExact:
     def test_string_passthrough_and_non_string(self):
@@ -123,14 +133,48 @@ class TestMapAnswerOrder:
         assert _ma(full, "fields", TALLY) == full
         assert _ma({"refused": True}, "fields", TALLY) == REFUSAL
 
+    def test_closest_set_match_roundtrip(self):
+        # P1: an answerable closest submit must map to a non-NO_ANSWER list, not silently fail
+        assert _ma({"roll_call_ids": ["x", "y"]}, "set_match", CLOSEST) == ["x", "y"]
+        assert _ma({"refused": True}, "set_match", CLOSEST) == REFUSAL
+        assert _ma({"roll_call_ids": ["x"], "refused": True}, "set_match", CLOSEST) == NO_ANSWER
+
+    def test_window_fields_roundtrip(self):
+        member = {"yea": 10, "nay": 5, "other": 2}
+        assert _ma(member, "fields", MEMBER) == member
+        pairwise = {"agreements": 7, "shared_events": 10}
+        assert _ma(pairwise, "fields", PAIRWISE) == pairwise
+        assert _ma({"refused": True}, "fields", MEMBER) == REFUSAL
+
+
+class TestCoerceFieldsWindowTemplates:
+    """P8: member_summary + pairwise golds are ALL-int -> every key must coerce (NUMERIC_FIELDS ==
+    GOLD_KEYS), else a stringized "5" would str()-through and false-fail a correct count."""
+
+    def test_member_summary_stringized_ints(self):
+        out = coerce("fields", MEMBER, {"yea": "5", "nay": 3, "other": "0"})
+        assert out == {"yea": 5, "nay": 3, "other": 0}
+
+    def test_pairwise_stringized_ints(self):
+        out = coerce("fields", PAIRWISE, {"agreements": "7", "shared_events": "10"})
+        assert out == {"agreements": 7, "shared_events": 10}
+
+    @pytest.mark.parametrize("tid", [MEMBER, PAIRWISE])
+    def test_numeric_fields_equals_gold_keys(self, tid):
+        assert set(NUMERIC_FIELDS[tid]) == set(GOLD_KEYS[tid])
+
 
 class TestNoMethodLeakInSchemas:
+    # The submit_answer field descriptions restate the QUANTITY, never the computation METHOD or the
+    # answer VALUE: no minority/majority side leak, no "same way" / "closest" ranking hand-holding.
+    FORBIDDEN = ("min(", "minority", "majority", "same way", "closest")
+
     def test_descriptions_state_quantity_not_method(self):
         for tid, props in SUBMIT_SCHEMAS.items():
             for field, spec in props.items():
                 desc = spec.get("description", "").lower()
-                assert "min(" not in desc, f"{tid}.{field} leaks the computation"
-                assert "minority" not in desc, f"{tid}.{field} leaks the computation"
+                for tok in self.FORBIDDEN:
+                    assert tok not in desc, f"{tid}.{field} leaks the computation: {tok!r}"
 
 
 @pytest.mark.requires_pg
@@ -138,7 +182,15 @@ class TestKeySetConsistency:
     """The frozen-spec coupling guard: GOLD_KEYS / the coerce-built dict must equal the ACTUAL
     frozen template gold key-set, or every `fields` instance silently false-fails."""
 
-    @pytest.mark.parametrize("name,tid", [("tally", TALLY), ("party_breakdown", BREAKDOWN)])
+    @pytest.mark.parametrize(
+        "name,tid",
+        [
+            ("tally", TALLY),
+            ("party_breakdown", BREAKDOWN),
+            ("member_summary", MEMBER),
+            ("pairwise_agreement", PAIRWISE),
+        ],
+    )
     def test_gold_keys_match_real_gold(self, name, tid):
         from lab import templates
         from lab.harness import get_connection
