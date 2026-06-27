@@ -1,7 +1,7 @@
 ---
 title: "feat(lab): Family 10 provenance — slice 1 (cite-record-id + refusal-calibration)"
 type: feat
-status: active
+status: completed
 revision: 2
 date: 2026-06-27
 origin: docs/scopes/2026-06-27-family10-integrity-provenance-scope.md
