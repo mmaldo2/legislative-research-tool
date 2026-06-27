@@ -572,8 +572,8 @@ class AgentSolver:
             disallowed_tools=_DISALLOWED_BUILTINS,
             permission_mode="bypassPermissions",
             setting_sources=[],  # no ambient CLAUDE.md / .claude config / project MCP servers
-            max_turns=10,  # window templates need more rounds (pairwise: find x2 + record x2)
-            max_budget_usd=3.0,  # per-rollout guard ($1 truncated sonnet mid-count)
+            max_turns=14,  # headroom for the largest windows (sonnet hit 10 on a 1138-event pairwise)
+            max_budget_usd=6.0,  # per-rollout guard ($3 truncated the largest sonnet window rollouts)
             system_prompt=self.system_prompt,
         )
         started = time.monotonic()
