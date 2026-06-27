@@ -1,7 +1,7 @@
 ---
 title: "feat(lab): Family 1 Phase B — multi-event window tools (closest / member_summary / pairwise)"
 type: feat
-status: active
+status: completed
 revision: 2
 date: 2026-06-26
 ---
@@ -345,9 +345,12 @@ graph TD
 
 ## Phase 4 — sonnet/opus via the SDK backend (Option W)
 
-- [ ] After the haiku checkpoint approves: `--backend agent-sdk --model {claude-sonnet-4-6,
+- [x] After the haiku checkpoint approves: `--backend agent-sdk --model {claude-sonnet-4-6,
   claude-opus-4-1}` per template; reuse the one-time **scheduled-task** pattern if a limit reset is
   needed. Read traces; compare to the event-keyed gradient.
+
+
+**RESULT (sonnet, SDK backend):** closest 10/10, member_summary 10/10, pairwise 9/10 (haiku 4/0/0 → clean discrimination; passes verified exact). The 2 large-window truncations ($3/10-turn) resolved cleanly after raising to $6/14 turns — they were limit-truncations, not miscounts. Cost ~$0.3–0.6/rollout. **Opus deferred** (low marginal value — sonnet ~solves it).
 
 ## System-Wide Impact
 
