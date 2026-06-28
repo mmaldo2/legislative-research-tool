@@ -230,11 +230,11 @@ def test_sdk_web_surface_websearch_only_locks_out_lab_and_folds_vocab(monkeypatc
 
     # vocab fold: web's "Aye" -> canonical "yea"
     assert ans == "yea"
-    # ONLY the submit @tool is built (NO get_vote_event / lab product tool)
-    assert set(sdk_tools) == {"submit_answer"}
+    # web @tools = the guarded fetch_url + submit ONLY (NO get_vote_event / lab DATA tool)
+    assert set(sdk_tools) == {"fetch_url", "submit_answer"}
     opts = captured["options"]
-    # web allowed_tools = exactly WebSearch + submit (positive whitelist; NO WebFetch)
-    assert opts.allowed_tools == ["WebSearch", "mcp__lab__submit_answer"]
+    # web allowed_tools = WebSearch + the guarded fetch_url + submit (NO built-in WebFetch)
+    assert opts.allowed_tools == ["WebSearch", "mcp__lab__fetch_url", "mcp__lab__submit_answer"]
     assert "WebFetch" not in opts.allowed_tools
     # disallowed: WebSearch removed (so web works); WebFetch + the rest STAY blocked
     assert "WebSearch" not in opts.disallowed_tools

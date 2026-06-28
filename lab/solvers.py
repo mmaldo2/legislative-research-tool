@@ -440,6 +440,86 @@ def _make_sdk_product_tool(tool_def: dict, observations: list):
     return _product_tool
 
 
+# --- web-surface fetch_url (ablation): a GUARDED conduit to the public web ---------------------
+# The built-in WebFetch is uncontrollable (no URL allowlist), so the web arm uses THIS instead: it
+# can read public pages (Congress.gov / GovTrack / the Clerk) but an SSRF guard blocks any path to
+# OUR data (loopback / private / link-local IPs, non-http schemes incl. file://). Lives in lab code
+# (not a product RESEARCH_TOOL) — it's an experiment conduit, only provisioned for surface="web".
+_FETCH_URL_DESC = (
+    "Fetch the text of a PUBLIC web page by https/http URL (e.g. a Congress.gov, GovTrack, or "
+    "House Clerk page found via WebSearch) and return its content. Use this to read the page after "
+    "WebSearch gives you a link. Private/internal URLs are refused."
+)
+_FETCH_URL_SCHEMA = {
+    "type": "object",
+    "properties": {"url": {"type": "string", "description": "The public https/http URL to fetch."}},
+    "required": ["url"],
+}
+
+
+def _is_safe_public_url(url: str) -> bool:
+    """SSRF guard: True only for an http(s) URL whose host resolves ENTIRELY to public IPs. Blocks
+    file://-and-other schemes, loopback/private/link-local/reserved ranges (our DB, localhost), and
+    unresolvable hosts. Block-on-ANY-bad-IP defeats DNS-rebinding (one private A record => block).
+    Pure + synchronous → unit-testable without network."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, parsed.port or 80, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError, OSError):
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            return False
+    return True
+
+
+def _make_fetch_url_tool(observations: list):
+    """The web-arm guarded fetch @tool: SSRF-checked, bounded redirects (each hop re-guarded),
+    size-capped. Records the URL + a result snippet into the trajectory (the trust bar sees what web
+    actually read)."""
+    from urllib.parse import urljoin
+
+    from claude_agent_sdk import tool
+
+    @tool("fetch_url", _FETCH_URL_DESC, _FETCH_URL_SCHEMA)
+    async def _fetch_url(args):
+        import httpx
+
+        url = (args.get("url") or "").strip()
+
+        async def _result(text: str):
+            observations.append({"tool": "fetch_url", "arguments": {"url": url}, "result": text})
+            return {"content": [{"type": "text", "text": text}]}
+
+        try:
+            async with httpx.AsyncClient(follow_redirects=False, timeout=20.0) as client:
+                for _ in range(4):  # bounded redirect chain; re-guard EVERY hop
+                    if not _is_safe_public_url(url):
+                        return await _result(f"Refused: '{url}' is not a fetchable public URL.")
+                    resp = await client.get(url, headers={"User-Agent": "condorcet-lab/ablation"})
+                    if resp.is_redirect and resp.headers.get("location"):
+                        url = urljoin(url, resp.headers["location"])
+                        continue
+                    return await _result(resp.text[:20000])
+                return await _result("Refused: too many redirects.")
+        except Exception:  # noqa: BLE001 — a fetch failure must never crash the rollout
+            return await _result(f"Failed to fetch '{url}'.")
+
+    return _fetch_url
+
+
 class AgentSolver:
     """The live LLM solver over {get_vote_event, submit_answer}, constrained to the per-template
     shape-aware submit_answer. `backend` selects messages-api (Option X, run_agentic_chat) or
@@ -580,13 +660,16 @@ class AgentSolver:
         """Build (mcp_tools, allowed_tools, disallowed_tools) for the instance's SURFACE.
 
         ours: the template's product @tools + submit; mcp__lab__* allowed; built-ins disallowed.
-        web:  submit @tool ONLY (no lab tools); WebSearch + submit allowed; WebFetch stays blocked
-              (the localhost/file:// DB-leak vector). NEVER mutates the global disallow list — web
-              builds a FRESH list with only WebSearch removed."""
+        web:  WebSearch (built-in) + a GUARDED fetch_url (lab @tool, SSRF-blocked) + submit — NO lab
+              data tools. The built-in WebFetch STAYS blocked (uncontrollable target); fetch_url is
+              our own guarded conduit so web can read public pages but not reach our DB. NEVER
+              mutates the global disallow list (web builds a FRESH list, only WebSearch removed).
+        """
         if self.surface == "web":
-            allowed = ["WebSearch", "mcp__lab__submit_answer"]
+            fetch_url = _make_fetch_url_tool(observations)
+            allowed = ["WebSearch", "mcp__lab__fetch_url", "mcp__lab__submit_answer"]
             disallowed = [t for t in _DISALLOWED_BUILTINS if t != "WebSearch"]  # WebFetch stays
-            return [submit_tool], allowed, disallowed
+            return [fetch_url, submit_tool], allowed, disallowed
         tool_names = TEMPLATE_TOOLS[inst.template_id]
         product_tools = [
             _make_sdk_product_tool(research_tool_for(n), observations) for n in tool_names

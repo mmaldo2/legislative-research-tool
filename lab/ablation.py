@@ -28,10 +28,12 @@ _MODEL_IDS = {
     "sonnet": "claude-sonnet-4-6",
     "opus": "claude-opus-4-1",
 }
-# Tight per-rollout caps for pass 1: a simple lookup has no excuse for 14 turns / $6 (those are the
-# big-window defaults). The smoke confirmed total_cost_usd IS populated under subscription, so the
-# budget cap is a real guard; max_turns is the turn backstop, timeout the wall-clock backstop.
-_MAX_TURNS = 6
+# Per-rollout caps. max_turns=10 gives the WEB arm room for its real workflow (WebSearch ->
+# fetch_url -> sometimes re-search/re-fetch past a landing/Cloudflare page -> submit); the smoke
+# showed 6 truncates a multi-fetch navigation (a fairness fix for web, NOT a moat tweak). ours
+# submits in ~3 turns so it's unaffected. The $1 budget (total_cost_usd IS populated under
+# subscription, ~$0.1/rollout observed) + the 180s timeout bound cost/latency regardless.
+_MAX_TURNS = 10
 _MAX_BUDGET_USD = 1.0
 _TIMEOUT_S = 180.0
 
