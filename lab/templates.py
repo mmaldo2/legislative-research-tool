@@ -24,7 +24,11 @@ TEMPLATE_PARTY_BREAKDOWN = "family1.party_breakdown"
 TEMPLATE_PARTY_DEFECTION = "family1.party_defection"
 TEMPLATE_CROSSED_PARTY = "family1.crossed_party"
 TEMPLATE_CITE = "family10.cite_record_id"  # Family 10 (provenance): cite the roll-call vote id
+TEMPLATE_COSPONSOR_VOTE = "family2.cosponsored_and_voted_against"  # Family 2: cosponsor x vote join
 CLOSEST_K = 5  # how many "closest" roll calls a closest_by_margin instance asks for
+# "cosponsored" = signed-on supporter, NOT the primary author. Kept identical to the
+# get_bill_cosponsors tool's filter (src/api/chat.py) — the gold ⊆ tool superset test guards drift.
+_COSPONSOR_ROLES = ("cosponsor", "original-cosponsor")
 
 
 def _in_clause(n: int) -> str:
@@ -928,6 +932,151 @@ def generate_cite_record_id(conn, n: int, seed: int, precomputed) -> list[Instan
     return instances
 
 
+def _stratified_bills(
+    has_defectors: list[str], clean: list[str], n: int, seed: int
+) -> list[tuple[str, str]]:
+    """Pick ~n bills as (bill_id, kind), a floor of ~n//2 from EACH pool (the 94/6 skew would
+    otherwise let an always-empty model score ~94%). If a pool is short, EXTEND the donor's
+    hash-ordered sample by the deficit (slice the tail -- deterministic + dup-free), never restart.
+    The pools are disjoint (a bill is has_defectors XOR clean)."""
+    half = n // 2
+    picks = {"has_defectors": sample(has_defectors, half, seed), "clean": sample(clean, half, seed)}
+    chosen = [(b, k) for k, bs in picks.items() for b in bs]
+    # fill any deficit (a pool had < half) from whichever pool still has spare — clean first.
+    for kind, pool in (("clean", clean), ("has_defectors", has_defectors)):
+        deficit = n - len(chosen)
+        if deficit <= 0:
+            break
+        taken = len(picks[kind])
+        extra = sample(pool, taken + deficit, seed)[taken:]  # the tail beyond what was taken
+        chosen += [(b, kind) for b in extra]
+    return chosen
+
+
+def generate_cosponsored_and_voted_against(conn, n: int, seed: int, precomputed) -> list[Instance]:
+    """Family 2 #1 (cosponsor x vote join): "Among the members who cosponsored bill Y, which voted
+    nay on its roll-call vote?" The lab's first Tier-3 two-table join. gold = the SET of person_ids
+    who cosponsored Y (`_COSPONSOR_ROLES`, NOT the primary author) AND voted nay on the bill's one
+    roll call (empty is valid when all voting cosponsors supported it). grader `set_match` (the
+    crossed_party `member_ids` shape -- no new grader).
+
+    Eligibility: a single-roll-call bill (exactly one vote_event) with >=1 cosponsor who cast a
+    RECORDED yea/nay vote on it -- so empty gold means "the voting cosponsors didn't defect", not
+    "no vote data". The prompt is MECHANICAL (a nay on a *procedural* motion isn't "against the
+    bill"): it names the motion + asks for nay-voters, so it describes the mechanical gold. Sampled
+    stratified across `has_defectors` (non-empty) / `clean` (empty) kinds; the partition uses the
+    SAME nay-cosponsor predicate as the gold (it cannot drift). `precomputed` is accepted for the
+    signature but unused (a cosponsor's own nay record is unambiguous even on an overcount event --
+    like cite, it consults neither the overcount nor completed sets). "cosponsor of record" ~=
+    "cosponsor at vote time" (the schema has no withdrawn-* classification)."""
+    cur = conn.cursor()
+    instances: list[Instance] = []
+    roles = "(" + ",".join(["%s"] * len(_COSPONSOR_ROLES)) + ")"
+
+    # ONE set-based pass: per single-roll-call bill, the eid + whether any cosponsor who cast a
+    # yea/nay vote on it voted NAY. The inner JOIN to vote_records (yea/nay only) is the resolve
+    # gate: a bill appears iff >=1 cosponsor cast a recorded yea/nay vote, so empty gold is "no
+    # defection", not "no data". SUM(CASE) (not bool_or/FILTER) keeps the gold SQL obviously
+    # portable. A double (cosponsor + original-cosponsor) row inflates the SUM, but only `> 0` is
+    # used -- moot.
+    cur.execute(
+        "WITH single AS ("
+        "  SELECT bill_id, MIN(id) AS eid FROM vote_events "
+        "  WHERE bill_id IS NOT NULL GROUP BY bill_id HAVING COUNT(*) = 1) "
+        "SELECT s2.bill_id, s2.eid, b.identifier, ve.motion_text, "
+        "  SUM(CASE WHEN vr.\"option\" = 'nay' THEN 1 ELSE 0 END) AS nay_n "
+        "FROM single s2 "
+        "JOIN bills b ON b.id = s2.bill_id "
+        "JOIN vote_events ve ON ve.id = s2.eid "
+        f"JOIN sponsorships sp ON sp.bill_id = s2.bill_id AND sp.classification IN {roles} "
+        "JOIN vote_records vr ON vr.vote_event_id = s2.eid AND vr.person_id = sp.person_id "
+        "WHERE vr.\"option\" IN ('yea', 'nay') "
+        "GROUP BY s2.bill_id, s2.eid, b.identifier, ve.motion_text",
+        _COSPONSOR_ROLES,
+    )
+    meta: dict[str, tuple[str, str, str | None]] = {}  # bill_id -> (eid, identifier, motion_text)
+    has_defectors: list[str] = []
+    clean: list[str] = []
+    for bill_id, eid, identifier, motion_text, nay_n in cur.fetchall():
+        meta[bill_id] = (eid, identifier, motion_text)
+        (has_defectors if nay_n > 0 else clean).append(bill_id)
+
+    for bill_id, kind in _stratified_bills(sorted(has_defectors), sorted(clean), n, seed):
+        eid, identifier, motion_text = meta[bill_id]
+        # gold from the SAME predicate, DISTINCT (the double-role person must not double-count).
+        cur.execute(
+            "SELECT DISTINCT vr.person_id FROM sponsorships sp "
+            "JOIN vote_records vr ON vr.vote_event_id = %s AND vr.person_id = sp.person_id "
+            f"WHERE sp.bill_id = %s AND sp.classification IN {roles} AND vr.\"option\" = 'nay'",
+            (eid, bill_id, *_COSPONSOR_ROLES),
+        )
+        gold = {r[0] for r in cur.fetchall()}
+        # emit-assert: the kind label and the gold-emptiness are bound — a mismatch is un-emittable.
+        assert (len(gold) > 0) == (kind == "has_defectors"), f"{bill_id}: kind/gold mismatch"
+        motion = (motion_text or "the recorded motion").strip()
+        instances.append(
+            Instance(
+                instance_id=f"{TEMPLATE_COSPONSOR_VOTE}:{seed}:{kind}:{bill_id}",
+                template_id=TEMPLATE_COSPONSOR_VOTE,
+                tier="C",
+                params={"bill_id": bill_id, "vote_event_id": eid, "kind": kind},
+                prompt=f"Among the members who cosponsored bill {identifier} (bill id {bill_id}), "
+                f"which voted nay on its roll-call vote ({motion})? List the member ids.",
+                gold=gold,
+                grader="set_match",
+                is_refusal=False,
+            )
+        )
+
+    # --- refusal twin A: NONEXISTENT BILL (synthetic id proven absent) -> REFUSE (cite's pattern) -
+    n_each = max(2, len(instances) // 8)
+    synthetic = [f"NX-BILL-{seed}-{i:04d}" for i in range(n_each)]
+    cur.execute(f"SELECT id FROM bills WHERE id IN ({_in_clause(len(synthetic))})", synthetic)
+    if cur.fetchall():
+        raise AssertionError("synthetic refusal bill ids unexpectedly exist in bills")
+    for bid in synthetic:
+        instances.append(_cosponsor_refusal(bid, seed, "nobill", "bill_not_in_data"))
+
+    # --- refusal twin B: real bill WITH cosponsors but NO roll-call vote -> REFUSE (no-vote != [])
+    # candidate = cosponsored bills with no vote_event (anti-join, one pass); proven per-emit below.
+    cur.execute(
+        f"SELECT DISTINCT sp.bill_id FROM sponsorships sp WHERE sp.classification IN {roles} "
+        "AND NOT EXISTS (SELECT 1 FROM vote_events ve WHERE ve.bill_id = sp.bill_id)",
+        _COSPONSOR_ROLES,
+    )
+    novote = sorted(r[0] for r in cur.fetchall())
+    for bid in sample(novote, n_each, seed):
+        # per-emit proof: 0 vote_events BY bill_id (the tool's column) AND >=1 cosponsor.
+        cur.execute("SELECT COUNT(*) FROM vote_events WHERE bill_id = %s", (bid,))
+        if cur.fetchone()[0] != 0:
+            raise AssertionError(f"twin-B bill {bid} unexpectedly has a roll call")
+        cur.execute(
+            f"SELECT 1 FROM sponsorships WHERE bill_id = %s AND classification IN {roles} LIMIT 1",
+            (bid, *_COSPONSOR_ROLES),
+        )
+        if cur.fetchone() is None:
+            raise AssertionError(f"twin-B bill {bid} unexpectedly has no cosponsor")
+        instances.append(_cosponsor_refusal(bid, seed, "novote", "bill_has_no_rollcall"))
+    return instances
+
+
+def _cosponsor_refusal(bid: str, seed: int, tag: str, reason: str) -> Instance:
+    """A cosponsored_and_voted_against refusal twin (identical prompt shape; the agent distinguishes
+    it only by verifying the data — a nonexistent bill, or a real bill with no roll call)."""
+    return Instance(
+        instance_id=f"{TEMPLATE_COSPONSOR_VOTE}:{seed}:{tag}:{bid}",
+        template_id=TEMPLATE_COSPONSOR_VOTE,
+        tier="C",
+        params={"bill_id": bid, "vote_event_id": None, "kind": "refusal"},
+        prompt=f"Among the members who cosponsored bill {bid}, which voted nay on its roll-call "
+        f"vote? List the member ids.",
+        gold=REFUSAL,
+        grader="refusal_correct",
+        is_refusal=True,
+        refusal_reason=reason,
+    )
+
+
 # Template registry — each entry exposes `.generate(conn, n, seed, precomputed)` for the harness +
 # `.template_id` (the family-qualified id). The flat bare-name key no longer encodes the family: a
 # template's family lives in `template_id`, so cross-family wiring (TEMPLATE_TOOLS, P9) keys
@@ -963,5 +1112,10 @@ TEMPLATE_REGISTRY = {
     ),
     "cite_record_id": SimpleNamespace(
         name="cite_record_id", template_id=TEMPLATE_CITE, generate=generate_cite_record_id
+    ),
+    "cosponsored_and_voted_against": SimpleNamespace(
+        name="cosponsored_and_voted_against",
+        template_id=TEMPLATE_COSPONSOR_VOTE,
+        generate=generate_cosponsored_and_voted_against,
     ),
 }

@@ -162,30 +162,28 @@ graph TD
   full suite when not first; passes in isolation). ruff clean; full test_api/test_mcp/test_lab suite
   green; `test_hashes` UNMOVED (no lab file touched). Commit.
 
-## Phase 2 — the template + wiring
-- [ ] `generate_cosponsored_and_voted_against`: eligibility (single-roll-call ∩ has-cosponsor ∩ **≥1
+## Phase 2 — the template + wiring ✅ COMPLETE
+- [x] `generate_cosponsored_and_voted_against`: eligibility (single-roll-call ∩ has-cosponsor ∩ **≥1
   cosponsor with a yea/nay record on `eid`**, PR-1); gold = the nay-voting cosponsor set (one
-  `DISTINCT` query, NO count-assert, PR-4); the **set-based** `has_defectors`/`clean` partition from
-  the same gold predicate (PR-3) + floor-of-each sampling with the deterministic fill (PR-11) +
-  `params["kind"]="has_defectors"|"clean"` (PR-5) + the emit assert `(len(gold)>0)==(kind=="has_
-  defectors")`; Twin A (clone cite's nonexistent-bill block, PR-7) + Twin B (real bill, cosponsors,
-  0 `vote_events`-by-`bill_id`, proven per-emit, PR-6). Docstring notes `precomputed` accepted-but-
-  unused (B6) + the "cosponsor of record ≈ at vote time" approximation (no `withdrawn-*` class).
-  Register `TEMPLATE_REGISTRY["cosponsored_and_voted_against"]`.
-- [ ] Solver wiring: `SUBMIT_SCHEMAS` (`member_ids`, clone `crossed_party`), `SET_MATCH_FIELD`,
-  `TEMPLATE_TOOLS`. (No coerce change — existing set_match path; `family2…` absent from
-  `SET_MATCH_SCALAR_FOLD`.)
-- [ ] Deterministic invariants: oracle 100% (incl. an ∅-gold item → set_match(∅,∅) passes) / wrong 0%
-  (`WrongBaselineSolver` adds `NX-wrong`) / over-refuse fails answerable (incl. ∅ items) /
-  refusal_correct passes the twins.
-- [ ] `test_cosponsored_and_voted_against.py` (`requires_pg`): every gold member IS a cosponsor AND
-  has a `nay` record on the single roll call; **gold ⊆ `get_bill_cosponsors(bill)` person_ids (PR-10
-  — the OURS tool is a faithful superset of gold, closing the two-layer "cosponsored"-literal drift
-  seam)**; a person with BOTH a cosponsor + original-cosponsor row + a nay vote appears in gold
-  exactly once (PR-4); the bill has exactly 1 vote_event with ≥1 cosponsor yea/nay (PR-1); both kinds
-  sampled + the kind/gold-emptiness assert holds; Twin A bill absent; Twin B bill has cosponsors AND
-  0 roll calls; prompts contain `motion_text` + leak no gold (only bill id/identifier). ruff; full
-  suite green; **`test_hashes` green**. Commit.
+  `DISTINCT` query + a Python set, NO count-assert, PR-4); the **set-based** `has_defectors`/`clean`
+  partition from the same `SUM(CASE … nay …)` predicate (PR-3) + `_stratified_bills` floor-of-each
+  with the deterministic tail-extension fill (PR-11) + `params["kind"]` (PR-5) + the emit assert
+  `(len(gold)>0)==(kind=="has_defectors")`; Twin A (cloned cite's `NX-BILL-*` block, PR-7) + Twin B
+  (real bill, cosponsors, 0 `vote_events`-by-`bill_id`, proven per-emit via an anti-join candidate +
+  per-bill assert, PR-6). Registered in `TEMPLATE_REGISTRY`. SQL is portable (`SUM(CASE)`/CTE — passes
+  `test_sql_portability`).
+- [x] Solver wiring: `SUBMIT_SCHEMAS` (`member_ids`, cloned `crossed_party`), `SET_MATCH_FIELD`,
+  `TEMPLATE_TOOLS=[get_bill_cosponsors, get_bill_votes, get_vote_event]`. NO coerce change (existing
+  set_match path). `test_agent_seam` (TEMPLATE_TOOLS↔RESEARCH_TOOLS parity) green.
+- [x] **Validated vs real PG:** 5/5 `has_defectors`/`clean` split + 2+2 refusal twins; oracle 14/14,
+  wrong 0/14, over-refuse 0/10 (answerable, incl. ∅); 0 prompt leaks; **gold ⊆ `get_bill_cosponsors`
+  10/10 (PR-10)**.
+- [x] `test_cosponsored_and_voted_against.py`: hermetic `_stratified_bills` (balanced/fill/determinism)
+  + `requires_pg` gold-predicate (cosponsor + nay on the single roll call; kind↔gold-emptiness;
+  leak-safe), refusal twins (A absent; B has cosponsors + 0 roll calls), deterministic invariants, and
+  the async **gold⊆tool superset** (PR-10). **185 lab tests pass; `test_hashes` green** (`content_hash`
+  moved — new template; `grading_contract_hash` UNMOVED). ruff clean (ASCII-only per the cp1252 rule).
+  Commit.
 
 ## Phase 3 — MANUAL live-agent discrimination check (optional, STOP)
 - [ ] Run the live AgentSolver (haiku/sonnet, agent-sdk) on the template; **read traces**: does the
