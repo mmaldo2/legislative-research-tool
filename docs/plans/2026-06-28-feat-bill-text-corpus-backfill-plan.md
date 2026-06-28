@@ -64,14 +64,14 @@ report: enumerated / introduced / resolved / inserted / missed ; coverage = pres
 - **API surface parity:** the new method is the canonical text path; the dead method is deleted. `get_bill_detail` / text-tab already read `bill_texts` → light up free. No new MCP/chat tool.
 
 ## Acceptance Criteria
-- [ ] `_parse_bills_filename` parses `BILLS-119hr1234ih.xml` / `BILLS-119s21is.xml`; returns `None` for non-`BILLS-`, `BILLSTATUS-…`, malformed, and version-less ids; case-insensitive; `number` is `str`.
-- [ ] Introduced predicate keeps **exactly** `ih`/`is`; rejects `rih`/`ris`/`rfh`/`rfs`/`pcs`/`es`/`rs`/`eh`/`rh`/`enr`.
-- [ ] `_extract_bill_text_from_uslm` (on the embedded probe XML) excludes dublinCore boilerplate (`"Pursuant to Title 17"`/copyright absent), includes bill-body markers (`"A BILL"`), preserves newlines (line-count > 1), leaves no `<…>` tag or `&lt;`/`&gt;`/`&amp;` entity.
+- [x] `_parse_bills_filename` parses `BILLS-119hr1234ih.xml` / `BILLS-119s21is.xml`; returns `None` for non-`BILLS-`, `BILLSTATUS-…`, malformed, and version-less ids; case-insensitive; `number` is `str`.
+- [x] Introduced predicate keeps **exactly** `ih`/`is`; rejects `rih`/`ris`/`rfh`/`rfs`/`pcs`/`es`/`rs`/`eh`/`rh`/`enr`.
+- [x] `_extract_bill_text_from_uslm` (on the embedded probe XML) excludes dublinCore boilerplate (`"Pursuant to Title 17"`/copyright absent), includes bill-body markers (`"A BILL"`), preserves newlines (line-count > 1), leaves no `<…>` tag or `&lt;`/`&gt;`/`&amp;` entity.
 - [ ] `backfill_bill_texts` deletes the congress's existing rows, downloads the bulkdata ZIPs, attaches text **only to bills in `bills`**, batch-upserts, and is deterministic on re-run (identical corpus).
 - [ ] `content_xml` populated (raw USLM), `content_text` newline-preserving, `version_name` "Introduced in House"/"Introduced in Senate", `version_date` from `<dc:date>`.
 - [ ] Coverage measured as **rows-present / distinct-119-HR+S** (not rows-inserted), reported with distinct-bill counts (di I1/I2); persisted to `run.metadata_`.
 - [ ] `python -m scripts.backfill_bill_text --congress 119` runs end-to-end and prints the coverage report. `source_url` contains no key; nothing logs a key.
-- [ ] Hermetic tests pass; `ruff check`/`format` clean (ASCII-only, line-length 100); frozen `lab/` untouched (`grading_contract_hash` + `content_hash` unmoved).
+- [x] Hermetic tests pass; `ruff check`/`format` clean (ASCII-only, line-length 100); frozen `lab/` untouched (`grading_contract_hash` + `content_hash` unmoved).
 - [ ] **Execution (Phase 3):** corpus 68 → resolved introduced stratum (target ~10–11k); 5-row spot-check (resolution + readable text) + re-run-deterministic recorded in the PR.
 
 ## Success Metrics
@@ -88,14 +88,14 @@ report: enumerated / introduced / resolved / inserted / missed ; coverage = pres
 ## Implementation Phases (checkpoints — STOP after each)
 
 ### Phase 0 — Branch + carry-over docs
-- [ ] New branch `feat/lab-bill-text-corpus` off `main`.
-- [ ] First commit carries the uncommitted working-tree docs: the scope, this plan (rev 2), and the backlog-doc edit (`docs/condorcet/2026-06-28-task-suite-build-backlog.md`).
-- [ ] Confirm `autoresearch/prepare.py` does not read `bill_texts` (arch N4).
+- [x] New branch `feat/lab-bill-text-corpus` off `main`.
+- [x] First commit carries the uncommitted working-tree docs: the scope, this plan (rev 2), and the backlog-doc edit (`docs/condorcet/2026-06-28-task-suite-build-backlog.md`).
+- [x] Confirm `autoresearch/prepare.py` does not read `bill_texts` (arch N4). **PASS** — zero refs to `bill_texts`/`content_*` anywhere in `autoresearch/`.
 
 ### Phase 1 — Pure helpers + hermetic tests  → STOP
-- [ ] `_parse_bills_filename`, `_extract_bill_text_from_uslm`, the introduced predicate, bill_id resolution; new ZIP/listing URL constants; **delete** `fetch_bill_text`/`_strip_html`/regexes.
-- [ ] `tests/test_ingestion/test_bill_text_backfill.py` (hermetic): filename parse (hr/s/various/`rih`/`ris`/non-bills/malformed), USLM extraction on an embedded `BILLS-119s21is.xml` fixture (assert boilerplate-out, body-in, newlines, no tags/entities), predicate, resolution, version_name mapping.
-- [ ] `uv run python -m pytest tests/test_ingestion -q` + `ruff` green; commit; **STOP**.
+- [x] `_parse_bills_filename`, `_extract_bill_text_from_uslm`, the introduced predicate (`_is_introduced`), bill_id resolution (`_resolve_bill_id`); new `GOVINFO_BILLS_LISTING_URL`/`GOVINFO_BILLS_ZIP_URL` constants + `INTRODUCED_VERSIONS`/`_VERSION_NAMES`; **deleted** `fetch_bill_text`/`_strip_html`/`_RE_HTML_TAG`/`_RE_WHITESPACE` (zero refs remaining repo-wide).
+- [x] `tests/test_ingestion/test_bill_text_backfill.py` (hermetic, 17 tests): filename parse (hr/s/versions/`rih`/`ris`/non-bills/`BILLSTATUS`/malformed), USLM extraction on an embedded `BILLS-119s21is`-style fixture (boilerplate-out, body-in, newlines, no tags/entities, entity-unescaping), predicate, resolution, version_name mapping.
+- [x] Tests green (17 new; full suite **868 passed, 30 skipped** — the documented async-pg skips); `ruff check`/`format` clean on changed files; frozen `lab/` untouched. Commit; **STOP**.
 
 ### Phase 2 — Ingest method + script  → STOP
 - [ ] `backfill_bill_texts(self, doc_classes=("hr","s"), limit=None)` on `GovInfoIngester`: delete-for-congress → enumerate sessions → download/parse ZIPs → filter/resolve/extract → batched upsert → coverage report → `IngestionRun` tallies. Entry-loop carved so it's unit-testable with an **in-memory zip** fixture (kieran I6 — no live network).
