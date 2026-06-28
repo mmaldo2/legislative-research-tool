@@ -1,7 +1,7 @@
 ---
 title: Bill-text corpus backfill (GovInfo BILLS bulkdata, 119th HR+S introduced)
 type: feat
-status: active
+status: completed
 date: 2026-06-28
 revision: 2 (5-lens panel folded — authoritative; supersedes the body where rev 1 conflicts)
 origin: docs/scopes/2026-06-28-bill-text-corpus-backfill-scope.md
@@ -67,17 +67,17 @@ report: enumerated / introduced / resolved / inserted / missed ; coverage = pres
 - [x] `_parse_bills_filename` parses `BILLS-119hr1234ih.xml` / `BILLS-119s21is.xml`; returns `None` for non-`BILLS-`, `BILLSTATUS-…`, malformed, and version-less ids; case-insensitive; `number` is `str`.
 - [x] Introduced predicate keeps **exactly** `ih`/`is`; rejects `rih`/`ris`/`rfh`/`rfs`/`pcs`/`es`/`rs`/`eh`/`rh`/`enr`.
 - [x] `_extract_bill_text_from_uslm` (on the embedded probe XML) excludes dublinCore boilerplate (`"Pursuant to Title 17"`/copyright absent), includes bill-body markers (`"A BILL"`), preserves newlines (line-count > 1), leaves no `<…>` tag or `&lt;`/`&gt;`/`&amp;` entity.
-- [ ] `backfill_bill_texts` deletes the congress's existing rows, downloads the bulkdata ZIPs, attaches text **only to bills in `bills`**, batch-upserts, and is deterministic on re-run (identical corpus).
+- [x] `backfill_bill_texts` deletes the congress's existing rows, downloads the bulkdata ZIPs, attaches text **only to bills in `bills`**, batch-upserts, and is deterministic on re-run (identical corpus). **Live-verified.**
 - [x] `content_xml` populated (raw USLM), `content_text` newline-preserving, `version_name` "Introduced in House"/"Introduced in Senate", `version_date` from `<dc:date>` (asserted by the in-memory-zip row-fields test; live-confirmed Phase 3).
-- [ ] Coverage measured as **rows-present / distinct-119-HR+S** (not rows-inserted), reported with distinct-bill counts (di I1/I2); persisted to `run.metadata_`.
-- [ ] `python -m scripts.backfill_bill_text --congress 119` runs end-to-end and prints the coverage report. `source_url` contains no key; nothing logs a key.
+- [x] Coverage measured as **rows-present / distinct-119-HR+S** (not rows-inserted), reported with distinct-bill counts (di I1/I2); persisted to `run.metadata_`.
+- [x] `python -m scripts.backfill_bill_text --congress 119` runs end-to-end and prints the coverage report. `source_url` contains no key; nothing logs a key.
 - [x] Hermetic tests pass; `ruff check`/`format` clean (ASCII-only, line-length 100); frozen `lab/` untouched (`grading_contract_hash` + `content_hash` unmoved).
-- [ ] **Execution (Phase 3):** corpus 68 → resolved introduced stratum (target ~10–11k); 5-row spot-check (resolution + readable text) + re-run-deterministic recorded in the PR.
+- [x] **Execution (Phase 3):** corpus 68 → **11,833** introduced rows (99.4%); 5-row spot-check (resolution + readable text) + re-run-deterministic recorded.
 
-## Success Metrics
-- Distinct 119 HR+S bills with introduced text: **68 → ~10–11k**; coverage = present / distinct-119-HR+S (expected <100%, reported honestly).
-- Corpus homogeneity: **0** rows with `&lt;` in `content_text`; **0** newline-free rows (all from the one extractor).
-- Re-run determinism: identical row set (same `content_hash`es).
+## Success Metrics (actuals, 2026-06-28)
+- Distinct 119 HR+S bills with introduced text: **68 → 11,833** (7,861 House + 3,972 Senate); coverage **99.4%** of 11,904.
+- Corpus homogeneity: **0** rows with `&lt;`/`<` in `content_text`; **0** newline-free rows; **0** null `content_xml`; **0** key-in-`source_url`; all FK-valid.
+- Re-run determinism: identical fingerprint `2fca12bb…` (11,833 distinct `content_hash`es).
 
 ## Dependencies & Risks
 - **Coverage <100%** (a bill may lack an `ih/is` package) — by design; frame = "the resolved corpus."
@@ -103,8 +103,8 @@ report: enumerated / introduced / resolved / inserted / missed ; coverage = pres
 - [x] In-memory-zip tests for the filter/resolve/miss-count loop (+ sessions-listing + dc:date parsers). Full suite **876 passed, 30 skipped**; `ruff` clean on changed files; commit; **STOP**.
 
 ### Phase 3 — Execute + verify (user-triggered)  → STOP
-- [ ] Run `python -m scripts.backfill_bill_text --congress 119`.
-- [ ] Record coverage + 5-row spot-check + re-run-determinism; grep for key leakage. Open PR.
+- [x] Smoke `--limit 50` (50 rows, 0 missed/errors, clean) then full `python -m scripts.backfill_bill_text --congress 119` (4 ZIPs, ~34s).
+- [x] **Recorded:** coverage **99.4%** (11,833 / 11,904 HR+S bills); 0 residual `<`/`&lt;`, 0 missing-newline, 0 key-in-`source_url`, 0 null `content_xml`, all 11,833 FK-valid, 11,833 distinct hashes; 5-row spot-check resolves to real bills with clean text; re-run is **deterministic** (identical fingerprint `2fca12bb…`). 2,303 "missed" = GovInfo introduced packages with no matching `bills` row (a `bills` completeness gap, not a resolver bug — separate follow-up).
 
 ## Testing Strategy
 - **Hermetic (CI):** all helpers + the entry-loop (in-memory `zipfile` fixture, embedded probe XML). No live network/DB in CI. The extraction test is the regression guard for boilerplate-exclusion + newline-preservation.
