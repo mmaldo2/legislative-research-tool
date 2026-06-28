@@ -1,7 +1,7 @@
 ---
 title: "feat(lab): tool-surface moat ablation — pass 1 (vote_lookup control)"
 type: feat
-status: active
+status: completed
 revision: 2
 date: 2026-06-27
 origin: docs/scopes/2026-06-27-tool-surface-moat-ablation-scope.md
@@ -263,8 +263,8 @@ graph TD
 - [x] ruff; full suite green; `test_hashes` green. Commit.
 
 ## Phase 3 — MANUAL control run (STOP)
-- [ ] `uv run python -m lab.ablation --models haiku,sonnet --surfaces ours,web --n 10 --repeats 3`.
-- [ ] **Read traces — the Phase-3 interpretation discipline (appendix):** integrity per instance
+- [x] `uv run python -m lab.ablation --models haiku,sonnet --surfaces ours,web --n 10 --repeats 3`.
+- [x] **Read traces — the Phase-3 interpretation discipline (appendix):** integrity per instance
   (ours no-search / web search-only) [P8]; the **id-match** check (did web retrieve the roll call our
   `eid` denotes, vs a misparse?); accuracy is **retrieval-backed** [P9] (a memory-driven tie is a
   false validation); web `format_fail` attributed to truncation vs no-submit [P11]; the vocab-fold
@@ -272,8 +272,12 @@ graph TD
   ⇒ suspect the **metric/harness**, not a moat. **STOP** for review.
 
 ## Phase 4 — interpret + decide pass 2
-- [ ] Tie ⇒ metric validated → green-light the moat-revealing arenas (party_breakdown point-in-time +
+- [x] Tie ⇒ metric validated → green-light the moat-revealing arenas (party_breakdown point-in-time +
   the real-member no-link over-claim probe). Surprise ⇒ debug the metric before trusting any moat.
+
+## RESULT (pass 1 + 1b, 2026-06-27)
+
+Control SUCCEEDED; metric VALIDATED. Pass 1 (snippets-only web) gave a -97pp ours>web gap = a proven ARTIFACT (web found the page as a link but couldn't read it -> honestly refused). Fix = the guarded fetch_url conduit (pass 1b). Re-run: **sonnet+web 90% ~ sonnet+ours 100%** (the expected near-tie materialized; 10% residual = Cloudflare/truncation errored, not capability). **halluc=0% across ALL 60 web rollouts** (both models) -> web is HONEST here: refuses, never fabricates -> the hallucination-moat did NOT appear (a lookup can't elicit it; that's pass 2). haiku+web 20% is a NAVIGATION gap (Cloudflare blocks congress.gov; sonnet routes to the un-blocked clerk.house.gov XML, haiku doesn't) -> our tool makes the cheap model reliable by removing the navigation burden (a narrow access-moat, not a trust-moat). Cloudflare = ecological validity (a real web agent hits it), not an artifact to fix. Harness (surface knob + trust metric + integrity wall + fetch_url SSRF guard) BUILT + VALIDATED. NEXT = pass 2 (the trust-dimension arenas where web should hallucinate: party_breakdown point-in-time, aggregation, provenance/refusal).
 
 ## System-Wide Impact
 - **Interaction graph:** `surface` defaults to `"ours"` → every existing caller (run.py, the family
