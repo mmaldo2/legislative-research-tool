@@ -192,16 +192,22 @@ graph TD
 - [x] ruff clean; full lab suite green (203 passed); **`test_hashes` green** (content moves, contract
   frozen). Commit.
 
-## Phase 2 — the orchestrator split
-- [ ] `run_ablation`: `--template` selection + pass-2 banner (PR-3). Partition the shared instance
-  list by `inst.params["kind"]`; run each `(surface, model, kind)` as a cell; tag run records with
-  `kind` (and `switcher_name`). `_run_cell` classify→Counter loop **unchanged**.
-- [ ] `_print_summary`: per-cell rates **split by kind** + the **switcher-subset `ours`-vs-`web`
-  delta** (the headline, via a `kind=="switcher"` filter on `_agg`/`delta`) + the **mandatory
-  per-switcher breakdown** + a cluster caveat (n_effective ≈ k). `N==0`-guard per kind.
-- [ ] `test_ablation.py`: the split on synthetic verdicts (a mixed switcher/control batch partitions
-  + per-kind rates + the switcher-subset delta; the closed-match `classify` unchanged). NO live calls.
-- [ ] ruff; full suite green. Commit.
+## Phase 2 — the orchestrator split ✅ COMPLETE
+- [x] `run_ablation(template_name, …)`: `--template` selection + pass-2 banner + envelope log
+  (cells/rollouts/hard-cap) (PR-3/PR-5). Partition via `_partition_by_kind` (`inst.params["kind"]`,
+  → `"all"` for vote_lookup so pass 1 is unchanged); run each `(model, surface, kind)` as a cell; tag
+  run records with `kind`. `_run_cell` classify→Counter core **unchanged**; web arm gets
+  `_MAX_TURNS_WEB=20` (PR-5).
+- [x] `_print_summary(…, kinds)`: per-cell rates **split by kind** + the **switcher-subset delta**
+  (the headline, via the pure `_delta(runs, model, "switcher", rate)`) + the **mandatory per-switcher
+  breakdown** (`_print_switcher_breakdown` / `_aggregate_by_switcher` — the cluster check) + the
+  cluster caveat. `_run_cell` accumulates an additive `by_switcher` Counter (does not touch the
+  classify→Counter core; flat `rates` keep the per-rep print loop intact).
+- [x] `test_ablation.py`: the split machinery on synthetic data — `_partition_by_kind` (switcher/
+  control + the `"all"` collapse), `_delta` (switcher-subset isolation + averages-over-reps + None
+  when an arm is absent), `_aggregate_by_switcher` (merges reps). NO live calls. Verified the
+  partition on real instances ({switcher:8, control:8}; vote_lookup → {all}).
+- [x] ruff clean; full lab suite green (209 passed). Commit.
 
 ## Phase 3 — MANUAL matrix run (STOP)
 - [ ] `uv run python -m lab.ablation --template member_party_at_vote --models haiku,sonnet
