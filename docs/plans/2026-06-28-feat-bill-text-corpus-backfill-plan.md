@@ -68,7 +68,7 @@ report: enumerated / introduced / resolved / inserted / missed ; coverage = pres
 - [x] Introduced predicate keeps **exactly** `ih`/`is`; rejects `rih`/`ris`/`rfh`/`rfs`/`pcs`/`es`/`rs`/`eh`/`rh`/`enr`.
 - [x] `_extract_bill_text_from_uslm` (on the embedded probe XML) excludes dublinCore boilerplate (`"Pursuant to Title 17"`/copyright absent), includes bill-body markers (`"A BILL"`), preserves newlines (line-count > 1), leaves no `<…>` tag or `&lt;`/`&gt;`/`&amp;` entity.
 - [ ] `backfill_bill_texts` deletes the congress's existing rows, downloads the bulkdata ZIPs, attaches text **only to bills in `bills`**, batch-upserts, and is deterministic on re-run (identical corpus).
-- [ ] `content_xml` populated (raw USLM), `content_text` newline-preserving, `version_name` "Introduced in House"/"Introduced in Senate", `version_date` from `<dc:date>`.
+- [x] `content_xml` populated (raw USLM), `content_text` newline-preserving, `version_name` "Introduced in House"/"Introduced in Senate", `version_date` from `<dc:date>` (asserted by the in-memory-zip row-fields test; live-confirmed Phase 3).
 - [ ] Coverage measured as **rows-present / distinct-119-HR+S** (not rows-inserted), reported with distinct-bill counts (di I1/I2); persisted to `run.metadata_`.
 - [ ] `python -m scripts.backfill_bill_text --congress 119` runs end-to-end and prints the coverage report. `source_url` contains no key; nothing logs a key.
 - [x] Hermetic tests pass; `ruff check`/`format` clean (ASCII-only, line-length 100); frozen `lab/` untouched (`grading_contract_hash` + `content_hash` unmoved).
@@ -98,9 +98,9 @@ report: enumerated / introduced / resolved / inserted / missed ; coverage = pres
 - [x] Tests green (17 new; full suite **868 passed, 30 skipped** — the documented async-pg skips); `ruff check`/`format` clean on changed files; frozen `lab/` untouched. Commit; **STOP**.
 
 ### Phase 2 — Ingest method + script  → STOP
-- [ ] `backfill_bill_texts(self, doc_classes=("hr","s"), limit=None)` on `GovInfoIngester`: delete-for-congress → enumerate sessions → download/parse ZIPs → filter/resolve/extract → batched upsert → coverage report → `IngestionRun` tallies. Entry-loop carved so it's unit-testable with an **in-memory zip** fixture (kieran I6 — no live network).
-- [ ] `scripts/backfill_bill_text.py`: argparse **`--congress` (int, default 119), `--limit`** only (cut `--versions`/`--doc-class`/`--concurrency`/`--request-delay`/`--api-key` — simplicity P1/P3/P4/P5, all moot under bulkdata); `async_session_factory`; `await ingester.close()` in `finally`.
-- [ ] One in-memory-zip test for the enumerate→filter→miss-count loop. Full suite + `ruff` green; commit; **STOP**.
+- [x] `backfill_bill_texts(self, doc_classes=("hr","s"), limit=None)` on `GovInfoIngester`: delete-for-congress → enumerate sessions (`_fetch_bills_sessions`) → download ZIPs (`_download_bills_zip`, 404-skip / loud-otherwise) → `_bill_text_rows_from_zip` (pure) → `_insert_bill_text_rows` (batched, `begin_nested`) → `_bill_text_coverage` → `IngestionRun` tallies in `metadata_`. Entry-loop carved as the pure module-level `_bill_text_rows_from_zip` (kieran I6 — no live network).
+- [x] `scripts/backfill_bill_text.py`: argparse **`--congress` (int, default 119), `--limit`** only (cut `--versions`/`--doc-class`/`--concurrency`/`--request-delay`/`--api-key` — simplicity P1/P3/P4/P5, all moot under bulkdata); `async_session_factory`; `await ingester.close()` in `finally`.
+- [x] In-memory-zip tests for the filter/resolve/miss-count loop (+ sessions-listing + dc:date parsers). Full suite **876 passed, 30 skipped**; `ruff` clean on changed files; commit; **STOP**.
 
 ### Phase 3 — Execute + verify (user-triggered)  → STOP
 - [ ] Run `python -m scripts.backfill_bill_text --congress 119`.

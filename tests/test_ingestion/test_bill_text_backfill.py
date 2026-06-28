@@ -1,16 +1,24 @@
-"""Hermetic unit tests for the bill-text corpus backfill helpers (Slice A, Phase 1).
+"""Hermetic unit tests for the bill-text corpus backfill helpers (Slice A, Phases 1-2).
 
 No network, no DB: these cover the pure helpers only -- the GovInfo BILLS filename parser,
-the introduced-version predicate, the bill_id resolver, and the USLM XML text extractor.
-The extractor is exercised against an embedded BILLS-119s21is-style fixture so a regression
-in metadata-exclusion or newline-preservation fails fast.
+the introduced-version predicate, the bill_id resolver, the USLM XML text/date extractors,
+the bulkdata session listing parser, and the in-memory ZIP -> BillText-rows builder (the
+filter/resolve/miss-count loop). The extractor is exercised against an embedded
+BILLS-119s21is-style fixture so a regression in metadata-exclusion fails fast.
 """
+
+import io
+import zipfile
+from datetime import date
 
 from src.ingestion.govinfo import (
     _VERSION_NAMES,
+    _bill_text_rows_from_zip,
     _extract_bill_text_from_uslm,
     _is_introduced,
     _parse_bills_filename,
+    _parse_sessions_from_listing,
+    _parse_uslm_date,
     _resolve_bill_id,
 )
 from src.ingestion.normalizer import generate_bill_id, normalize_identifier
@@ -139,3 +147,99 @@ class TestExtractBillTextFromUslm:
     def test_entities_are_unescaped(self):
         out = _extract_bill_text_from_uslm(SAMPLE_USLM)
         assert "teleworking & remote employees" in out
+
+
+class TestParseUslmDate:
+    def test_reads_dublincore_date(self):
+        assert _parse_uslm_date(SAMPLE_USLM) == date(2025, 1, 7)
+
+    def test_none_when_absent_or_unparseable(self):
+        assert _parse_uslm_date("<bill><form><legis-type>A BILL</legis-type></form></bill>") is None
+        assert _parse_uslm_date("<bill") is None  # malformed XML -> None, not a raise
+
+
+class TestParseSessionsFromListing:
+    def test_extracts_digit_session_dirs(self):
+        listing = {
+            "files": [
+                {"justFileName": "1"},
+                {"justFileName": "2"},
+                {"justFileName": "sitemap.xml"},
+                {"name": "README"},
+            ]
+        }
+        assert _parse_sessions_from_listing(listing) == ["1", "2"]
+
+    def test_empty_listing(self):
+        assert _parse_sessions_from_listing({}) == []
+
+
+def _make_zip(entries: dict[str, str]) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, content in entries.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
+_MINIMAL_USLM = (
+    '<?xml version="1.0"?>'
+    '<bill bill-stage="{stage}"><form><legis-type>A BILL</legis-type></form>'
+    "<legis-body><section><text>Body of {tag}.</text></section></legis-body></bill>"
+)
+
+
+class TestBillTextRowsFromZip:
+    def _zip(self):
+        return _make_zip(
+            {
+                "BILLS-119s21is.xml": SAMPLE_USLM,  # introduced, known bill -> resolved
+                "BILLS-119s500is.xml": _MINIMAL_USLM.format(  # introduced, UNKNOWN bill -> missed
+                    stage="Introduced-in-Senate", tag="s500"
+                ),
+                "BILLS-119s99rs.xml": _MINIMAL_USLM.format(  # reported, not introduced -> skipped
+                    stage="Reported-in-Senate", tag="s99"
+                ),
+                "BILLSTATUS-119s1.xml": "<x/>",  # different collection -> parse None
+                "manifest.txt": "ignored, not xml",
+            }
+        )
+
+    def test_filters_resolves_and_counts(self):
+        known = {_resolve_bill_id(119, "s", "21")}
+        rows, stats = _bill_text_rows_from_zip(self._zip(), 119, "1", "s", known)
+
+        assert len(rows) == 1
+        assert stats == {
+            "entries": 4,  # four .xml entries (manifest.txt excluded)
+            "introduced": 2,  # s21is + s500is
+            "resolved": 1,  # only s21 is a known bill
+            "missed": 1,  # s500 introduced but not in `known`
+            "errors": 0,
+        }
+
+    def test_row_fields(self):
+        known = {_resolve_bill_id(119, "s", "21")}
+        rows, _ = _bill_text_rows_from_zip(self._zip(), 119, "1", "s", known)
+        row = rows[0]
+        assert row["bill_id"] == _resolve_bill_id(119, "s", "21")
+        assert row["version_name"] == "Introduced in Senate"
+        assert row["version_date"] == date(2025, 1, 7)
+        assert row["content_xml"] == SAMPLE_USLM
+        assert "Be it enacted" in row["content_text"]
+        assert row["word_count"] > 0 and row["content_hash"]
+        assert row["source_url"].endswith("#BILLS-119s21is.xml")
+        assert "BILLS-119-1-s.zip" in row["source_url"]
+        assert "api_key" not in row["source_url"]
+
+    def test_remaining_caps_rows(self):
+        known = {_resolve_bill_id(119, "s", "21"), _resolve_bill_id(119, "s", "500")}
+        rows, stats = _bill_text_rows_from_zip(self._zip(), 119, "1", "s", known, remaining=1)
+        assert len(rows) == 1  # capped, even though two bills are now known
+
+    def test_skips_when_congress_mismatch(self):
+        # a stray cross-congress entry must not resolve against this congress's bill set
+        known = {_resolve_bill_id(118, "s", "21")}
+        zip_bytes = _make_zip({"BILLS-118s21is.xml": SAMPLE_USLM})
+        rows, stats = _bill_text_rows_from_zip(zip_bytes, 119, "1", "s", known)
+        assert rows == [] and stats["introduced"] == 0

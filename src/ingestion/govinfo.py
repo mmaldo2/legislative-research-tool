@@ -15,6 +15,7 @@ from datetime import UTC, date, datetime
 
 import defusedxml.ElementTree as SafeET
 import httpx
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -23,12 +24,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import settings
 from src.ingestion.base import BaseIngester
 from src.ingestion.normalizer import (
+    content_hash,
     generate_bill_id,
+    generate_text_id,
     normalize_bill_status,
     normalize_identifier,
+    word_count,
 )
 from src.models.bill import Bill
 from src.models.bill_action import BillAction
+from src.models.bill_text import BillText
 from src.models.jurisdiction import Jurisdiction
 from src.models.person import Person
 from src.models.session import LegislativeSession
@@ -161,6 +166,91 @@ def _extract_bill_text_from_uslm(raw_xml: str) -> str:
             parent.remove(child)
     segments = [seg.strip() for seg in root.itertext() if seg.strip()]
     return re.sub(r"[ \t]+", " ", "\n".join(segments))
+
+
+def _parse_uslm_date(raw_xml: str) -> date | None:
+    """Return the dublinCore <dc:date> (issued date) from a USLM bill XML, or None."""
+    try:
+        root = SafeET.fromstring(raw_xml)
+    except SafeET.ParseError:
+        return None
+    for el in root.iter():
+        if el.tag.rsplit("}", 1)[-1] == "date" and (el.text or "").strip():
+            try:
+                return date.fromisoformat(el.text.strip()[:10])
+            except ValueError:
+                continue
+    return None
+
+
+def _parse_sessions_from_listing(listing: dict) -> list[str]:
+    """Extract the session numbers (e.g. ['1', '2']) from a GovInfo BILLS bulkdata listing."""
+    sessions: set[str] = set()
+    for entry in listing.get("files", []):
+        name = (entry.get("justFileName") or entry.get("name") or "").strip().strip("/")
+        if name.isdigit():
+            sessions.add(name)
+    return sorted(sessions)
+
+
+def _bill_text_rows_from_zip(
+    zip_bytes: bytes,
+    congress: int,
+    session: str,
+    doc_class: str,
+    known_bill_ids: set[str],
+    remaining: int | None = None,
+) -> tuple[list[dict], dict[str, int]]:
+    """Turn one GovInfo BILLS ZIP into BillText value-dicts for the introduced versions.
+
+    Pure (no network, no DB): filters entries to introduced (ih/is), resolves each to a
+    known bill id, extracts clean text, and returns (rows, stats). `stats` counts entries /
+    introduced / resolved / missed (introduced but no matching bill) / errors (parse
+    failures). `remaining` caps how many rows are emitted (for the --limit smoke path).
+    """
+    zip_url = GOVINFO_BILLS_ZIP_URL.format(congress=congress, session=session, doc_class=doc_class)
+    rows: list[dict] = []
+    stats = {"entries": 0, "introduced": 0, "resolved": 0, "missed": 0, "errors": 0}
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        for entry in zf.namelist():
+            if not entry.endswith(".xml"):
+                continue
+            stats["entries"] += 1
+            parsed = _parse_bills_filename(entry)
+            if parsed is None:
+                continue
+            entry_congress, entry_doc_class, number, version = parsed
+            if not _is_introduced(version) or entry_congress != congress:
+                continue
+            stats["introduced"] += 1
+            bill_id = _resolve_bill_id(congress, entry_doc_class, number)
+            if bill_id not in known_bill_ids:
+                stats["missed"] += 1
+                continue
+            if remaining is not None and len(rows) >= remaining:
+                break
+            try:
+                raw = zf.read(entry).decode("utf-8", "replace")
+                text = _extract_bill_text_from_uslm(raw)
+            except Exception:  # noqa: BLE001 -- a single bad XML must not abort the corpus
+                stats["errors"] += 1
+                continue
+            version_name = _VERSION_NAMES[version]
+            rows.append(
+                {
+                    "id": generate_text_id(bill_id, version_name),
+                    "bill_id": bill_id,
+                    "version_name": version_name,
+                    "version_date": _parse_uslm_date(raw),
+                    "content_text": text,
+                    "content_xml": raw,
+                    "source_url": f"{zip_url}#{entry}",
+                    "word_count": word_count(text),
+                    "content_hash": content_hash(text),
+                }
+            )
+            stats["resolved"] += 1
+    return rows, stats
 
 
 class GovInfoIngester(BaseIngester):
@@ -911,6 +1001,139 @@ class GovInfoIngester(BaseIngester):
                 index_elements=["bill_id", "person_id", "classification"],
             )
             await self.session.execute(sp_stmt)
+
+    # ------------------------------------------------------------------
+    # Bill-text corpus backfill (GovInfo BILLS bulkdata -> bill_texts)
+    # ------------------------------------------------------------------
+
+    async def backfill_bill_texts(
+        self, doc_classes: tuple[str, ...] = ("hr", "s"), limit: int | None = None
+    ) -> dict:
+        """Rebuild the introduced bill-text corpus for self.congress from GovInfo BILLS bulkdata.
+
+        Deletes the congress's existing bill_texts (homogeneous rebuild from the one extractor),
+        downloads the per-(session, type) USLM ZIPs, attaches introduced text only to bills
+        already present, and batch-upserts. Returns a coverage report. Deterministic -- a re-run
+        reconstructs the same corpus (resumable by reconstruction). `limit` caps total rows for
+        smoke runs.
+        """
+        await self.start_run("text")
+        session_id = f"us-{self.congress}"
+        try:
+            known_rows = (
+                await self.session.execute(select(Bill.id).where(Bill.session_id == session_id))
+            ).all()
+            known_bill_ids = {row[0] for row in known_rows}
+
+            # Delete-and-rebuild: drop ALL existing text for the congress so the corpus is
+            # homogeneous (one extractor); scoped via subquery on the congress's bills.
+            await self.session.execute(
+                sa_delete(BillText).where(
+                    BillText.bill_id.in_(select(Bill.id).where(Bill.session_id == session_id))
+                )
+            )
+            await self.session.commit()
+
+            sessions = await self._fetch_bills_sessions()
+            totals = {"entries": 0, "introduced": 0, "resolved": 0, "missed": 0, "errors": 0}
+            inserted = 0
+            for session in sessions:
+                for doc_class in doc_classes:
+                    if limit is not None and inserted >= limit:
+                        break
+                    remaining = None if limit is None else limit - inserted
+                    zip_bytes = await self._download_bills_zip(session, doc_class)
+                    if zip_bytes is None:
+                        continue
+                    rows, stats = _bill_text_rows_from_zip(
+                        zip_bytes, self.congress, session, doc_class, known_bill_ids, remaining
+                    )
+                    inserted += await self._insert_bill_text_rows(rows)
+                    for key in totals:
+                        totals[key] += stats[key]
+                if limit is not None and inserted >= limit:
+                    break
+
+            coverage = await self._bill_text_coverage(session_id)
+            report = {**totals, "inserted": inserted, **coverage}
+            if self.run:
+                self.run.records_created = inserted
+                self.run.metadata_ = report
+            await self.finish_run("completed")
+            logger.info("Bill-text backfill for Congress %d complete: %s", self.congress, report)
+            return report
+        except Exception as e:
+            logger.error("Bill-text backfill failed: %s", e)
+            await self.finish_run("failed")
+            raise
+
+    async def _fetch_bills_sessions(self) -> list[str]:
+        """Enumerate the congress's session numbers from the BILLS bulkdata listing."""
+        url = GOVINFO_BILLS_LISTING_URL.format(congress=self.congress)
+        resp = await self.client.get(
+            url, headers={"Accept": "application/json"}, follow_redirects=True
+        )
+        resp.raise_for_status()
+        sessions = _parse_sessions_from_listing(resp.json())
+        if not sessions:
+            raise RuntimeError(f"No BILLS sessions found for Congress {self.congress}")
+        return sessions
+
+    async def _download_bills_zip(self, session: str, doc_class: str) -> bytes | None:
+        """Download one BILLS bulkdata ZIP. A 404 (no such session/type) is skipped; other
+        HTTP errors fail the run loudly."""
+        url = GOVINFO_BILLS_ZIP_URL.format(
+            congress=self.congress, session=session, doc_class=doc_class
+        )
+        try:
+            resp = await self.client.get(url, follow_redirects=True, timeout=180.0)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                logger.warning(
+                    "No BILLS ZIP for %d/%s/%s (404) -- skipping", self.congress, session, doc_class
+                )
+                return None
+            raise
+        return resp.content
+
+    async def _insert_bill_text_rows(self, rows: list[dict], batch_size: int = 200) -> int:
+        """Batch-upsert BillText rows (on_conflict_do_nothing backstop). Returns rows inserted."""
+        inserted = 0
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i : i + batch_size]
+            async with self.session.begin_nested():
+                stmt = pg_insert(BillText).values(batch)
+                stmt = stmt.on_conflict_do_nothing(index_elements=["id"])
+                result = await self.session.execute(stmt)
+            inserted += result.rowcount
+        if rows:
+            await self.session.commit()
+        return inserted
+
+    async def _bill_text_coverage(self, session_id: str) -> dict:
+        """Coverage = distinct bills with text / distinct HR+S ('bill'-class) bills in the congress.
+
+        Measured from rows present (not rows inserted), so an idempotent re-run still reports
+        the true corpus size.
+        """
+        denom = (
+            await self.session.execute(
+                select(func.count())
+                .select_from(Bill)
+                .where(Bill.session_id == session_id, Bill.classification.op("@>")(["bill"]))
+            )
+        ).scalar_one()
+        present = (
+            await self.session.execute(
+                select(func.count(func.distinct(BillText.bill_id)))
+                .select_from(BillText)
+                .join(Bill, Bill.id == BillText.bill_id)
+                .where(Bill.session_id == session_id)
+            )
+        ).scalar_one()
+        pct = round(100.0 * present / denom, 1) if denom else 0.0
+        return {"bills_with_text": present, "distinct_bills_hr_s": denom, "coverage_pct": pct}
 
     async def close(self) -> None:
         await self.client.aclose()
