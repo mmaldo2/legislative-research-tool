@@ -19,7 +19,7 @@ import time
 
 from lab.graders import REFUSAL
 from lab.harness import Instance
-from src.ingestion.vote_parsers import OPTION_BUCKETS
+from src.ingestion.vote_parsers import OPTION_BUCKETS, VOTE_OPTION_MAP
 
 
 class _DeterministicSolver:
@@ -313,6 +313,22 @@ def _to_int(value) -> int | None:
     return None
 
 
+# Case-insensitive fold of a faithful vote vocabulary to the canonical option. SAME map the ingest
+# pipeline uses (vote_parsers.VOTE_OPTION_MAP) — so an agent reading Congress.gov's "Aye"/"No"/
+# "Not Voting" grades on VOTE DIRECTION, not on matching our snake_case token. Already-canonical
+# tokens map to themselves; a genuinely-not-an-option string passes through (still grades wrong).
+# A no-op for the `ours` arm (get_vote_event already returns the canonical token). Lives here (the
+# swappable answer-mapping layer), NOT in the frozen grader.
+_ALIAS_FOLD = {
+    **{raw.lower(): canon for raw, canon in VOTE_OPTION_MAP.items()},
+    **{o: o for o in OPTION_BUCKETS},
+}
+
+
+def _fold_option(answer: str) -> str:
+    return _ALIAS_FOLD.get(answer.strip().lower(), answer)
+
+
 def coerce(grader: str, template_id: str, payload: dict):
     """Grader-dispatched, TOTAL coercion of the submit_answer payload to the grader's expected type
     (NO_ANSWER on anything malformed — never crashes). Deliberate asymmetry: a bare non-int for
@@ -321,7 +337,7 @@ def coerce(grader: str, template_id: str, payload: dict):
     try:
         if grader == "exact":
             ans = payload.get("answer")
-            return ans if isinstance(ans, str) else NO_ANSWER
+            return _fold_option(ans) if isinstance(ans, str) else NO_ANSWER
         if grader == "exact_int":
             n = _to_int(payload.get("count"))
             return n if n is not None else NO_ANSWER
@@ -424,6 +440,86 @@ def _make_sdk_product_tool(tool_def: dict, observations: list):
     return _product_tool
 
 
+# --- web-surface fetch_url (ablation): a GUARDED conduit to the public web ---------------------
+# The built-in WebFetch is uncontrollable (no URL allowlist), so the web arm uses THIS instead: it
+# can read public pages (Congress.gov / GovTrack / the Clerk) but an SSRF guard blocks any path to
+# OUR data (loopback / private / link-local IPs, non-http schemes incl. file://). Lives in lab code
+# (not a product RESEARCH_TOOL) — it's an experiment conduit, only provisioned for surface="web".
+_FETCH_URL_DESC = (
+    "Fetch the text of a PUBLIC web page by https/http URL (e.g. a Congress.gov, GovTrack, or "
+    "House Clerk page found via WebSearch) and return its content. Use this to read the page after "
+    "WebSearch gives you a link. Private/internal URLs are refused."
+)
+_FETCH_URL_SCHEMA = {
+    "type": "object",
+    "properties": {"url": {"type": "string", "description": "The public https/http URL to fetch."}},
+    "required": ["url"],
+}
+
+
+def _is_safe_public_url(url: str) -> bool:
+    """SSRF guard: True only for an http(s) URL whose host resolves ENTIRELY to public IPs. Blocks
+    file://-and-other schemes, loopback/private/link-local/reserved ranges (our DB, localhost), and
+    unresolvable hosts. Block-on-ANY-bad-IP defeats DNS-rebinding (one private A record => block).
+    Pure + synchronous → unit-testable without network."""
+    import ipaddress
+    import socket
+    from urllib.parse import urlparse
+
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    try:
+        infos = socket.getaddrinfo(parsed.hostname, parsed.port or 80, proto=socket.IPPROTO_TCP)
+    except (socket.gaierror, UnicodeError, OSError):
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        ip = ipaddress.ip_address(info[4][0])
+        if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            return False
+    return True
+
+
+def _make_fetch_url_tool(observations: list):
+    """The web-arm guarded fetch @tool: SSRF-checked, bounded redirects (each hop re-guarded),
+    size-capped. Records the URL + a result snippet into the trajectory (the trust bar sees what web
+    actually read)."""
+    from urllib.parse import urljoin
+
+    from claude_agent_sdk import tool
+
+    @tool("fetch_url", _FETCH_URL_DESC, _FETCH_URL_SCHEMA)
+    async def _fetch_url(args):
+        import httpx
+
+        url = (args.get("url") or "").strip()
+
+        async def _result(text: str):
+            observations.append({"tool": "fetch_url", "arguments": {"url": url}, "result": text})
+            return {"content": [{"type": "text", "text": text}]}
+
+        try:
+            async with httpx.AsyncClient(follow_redirects=False, timeout=20.0) as client:
+                for _ in range(4):  # bounded redirect chain; re-guard EVERY hop
+                    if not _is_safe_public_url(url):
+                        return await _result(f"Refused: '{url}' is not a fetchable public URL.")
+                    resp = await client.get(url, headers={"User-Agent": "condorcet-lab/ablation"})
+                    if resp.is_redirect and resp.headers.get("location"):
+                        url = urljoin(url, resp.headers["location"])
+                        continue
+                    return await _result(resp.text[:20000])
+                return await _result("Refused: too many redirects.")
+        except Exception:  # noqa: BLE001 — a fetch failure must never crash the rollout
+            return await _result(f"Failed to fetch '{url}'.")
+
+    return _fetch_url
+
+
 class AgentSolver:
     """The live LLM solver over {get_vote_event, submit_answer}, constrained to the per-template
     shape-aware submit_answer. `backend` selects messages-api (Option X, run_agentic_chat) or
@@ -442,9 +538,26 @@ class AgentSolver:
         client=None,
         system_prompt: str | None = None,
         backend: str = "messages-api",
+        surface: str = "ours",
+        max_turns: int | None = None,
+        max_budget_usd: float | None = None,
+        timeout_s: float | None = None,
     ):
+        # `surface` is the tool-surface ablation axis (agent-sdk only): "ours" = the lab tools;
+        # "web" = WebSearch + submit_answer ONLY. Default "ours" → behavior unchanged.
+        if surface not in ("ours", "web"):
+            raise ValueError(f"unknown surface: {surface!r}")
+        if surface == "web" and backend != "agent-sdk":
+            raise ValueError(
+                "surface='web' requires backend='agent-sdk' (the web arm needs the SDK)"
+            )
         self.model = model
         self.backend = backend  # "messages-api" (Option X) | "agent-sdk" (Option W)
+        self.surface = surface
+        # Per-rollout overrides (None → the _asolve_sdk defaults for the big window templates).
+        self.max_turns = max_turns
+        self.max_budget_usd = max_budget_usd
+        self.timeout_s = timeout_s  # per-rollout wall-clock backstop (None → no timeout)
         self._client = client  # injectable (tests pass a Mock; prod builds the OAuth client lazily)
         self.system_prompt = system_prompt or _AGENT_SYSTEM_PROMPT
         self.trace_extras: dict | None = None
@@ -457,6 +570,7 @@ class AgentSolver:
         return {
             "name": self.name,
             "backend": self.backend,
+            "surface": self.surface,
             "model": self.model,
             "system_prompt_id": "lab_family1_v1",
         }
@@ -542,26 +656,47 @@ class AgentSolver:
         extras = {"trajectory": observations, "raw": final_text, "latency_ms": latency_ms}
         return answer, extras
 
-    async def _asolve_sdk(self, inst: Instance):
-        """Option W: drive the in-process Agent SDK (subscription-native, no rate wall). Builds a
-        fresh in-process MCP server per instance (fresh capture closures); the @tools route through
-        the SAME lab_execute_tool seam as Option X (data parity) + record bare-name observations.
-        Constrained to the template's tool subset (TEMPLATE_TOOLS); built-ins disallowed."""
-        import os
+    def _sdk_tool_config(self, inst: Instance, observations: list, submit_tool):
+        """Build (mcp_tools, allowed_tools, disallowed_tools) for the instance's SURFACE.
 
-        from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, query, tool
-        from claude_agent_sdk.types import AssistantMessage, ResultMessage, TextBlock
-
-        observations: list[dict] = []
-        submit_box: list[dict] = []
-
-        # Per-template product @tools (single source of truth: TEMPLATE_TOOLS) + the shape-aware
-        # submit; allowed_tools derives from the SAME list (P9 lockstep — the whitelist can't drift
-        # wider/narrower than the provisioned set).
+        ours: the template's product @tools + submit; mcp__lab__* allowed; built-ins disallowed.
+        web:  WebSearch (built-in) + a GUARDED fetch_url (lab @tool, SSRF-blocked) + submit — NO lab
+              data tools. The built-in WebFetch STAYS blocked (uncontrollable target); fetch_url is
+              our own guarded conduit so web can read public pages but not reach our DB. NEVER
+              mutates the global disallow list (web builds a FRESH list, only WebSearch removed).
+        """
+        if self.surface == "web":
+            fetch_url = _make_fetch_url_tool(observations)
+            allowed = ["WebSearch", "mcp__lab__fetch_url", "mcp__lab__submit_answer"]
+            disallowed = [t for t in _DISALLOWED_BUILTINS if t != "WebSearch"]  # WebFetch stays
+            return [fetch_url, submit_tool], allowed, disallowed
         tool_names = TEMPLATE_TOOLS[inst.template_id]
         product_tools = [
             _make_sdk_product_tool(research_tool_for(n), observations) for n in tool_names
         ]
+        allowed = [f"mcp__lab__{n}" for n in tool_names] + ["mcp__lab__submit_answer"]
+        return [*product_tools, submit_tool], allowed, _DISALLOWED_BUILTINS
+
+    async def _asolve_sdk(self, inst: Instance):
+        """Option W: drive the in-process Agent SDK (subscription-native, no rate wall). Builds a
+        fresh in-process MCP server per instance (fresh capture closures); the @tools route through
+        the SAME lab_execute_tool seam as Option X (data parity) + record bare-name observations.
+        Surface-configured (ours = lab tools; web = WebSearch + submit only)."""
+        import os
+
+        from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, query, tool
+        from claude_agent_sdk.types import (
+            AssistantMessage,
+            ResultMessage,
+            TextBlock,
+            ToolResultBlock,
+            ToolUseBlock,
+            UserMessage,
+        )
+
+        observations: list[dict] = []
+        submit_box: list[dict] = []
+        builtin_by_id: dict[str, dict] = {}  # tool_use_id -> the built-in observation (for results)
 
         submit_schema = {"type": "object", "properties": SUBMIT_SCHEMAS[inst.template_id]}
 
@@ -572,8 +707,10 @@ class AgentSolver:
             observations.append({"tool": "submit_answer", "arguments": dict(args), "result": ack})
             return {"content": [{"type": "text", "text": ack}]}
 
-        server = create_sdk_mcp_server(name="lab", tools=[*product_tools, _sdk_submit])
-        allowed_tools = [f"mcp__lab__{n}" for n in tool_names] + ["mcp__lab__submit_answer"]
+        mcp_tools, allowed_tools, disallowed_tools = self._sdk_tool_config(
+            inst, observations, _sdk_submit
+        )
+        server = create_sdk_mcp_server(name="lab", tools=mcp_tools)
         # subscription creds ONLY: pop ANTHROPIC_API_KEY so query() can't silently bill the Messages
         # API (and hit the rate wall Option W exists to dodge); restored in finally.
         saved_key = os.environ.pop("ANTHROPIC_API_KEY", None)
@@ -581,24 +718,51 @@ class AgentSolver:
             model=self.model,
             mcp_servers={"lab": server},
             allowed_tools=allowed_tools,
-            disallowed_tools=_DISALLOWED_BUILTINS,
+            disallowed_tools=disallowed_tools,
             permission_mode="bypassPermissions",
             setting_sources=[],  # no ambient CLAUDE.md / .claude config / project MCP servers
-            max_turns=14,  # headroom for big windows (sonnet hit 10 on a 1138-event pairwise)
-            max_budget_usd=6.0,  # per-rollout guard ($3 truncated the largest sonnet windows)
+            # per-rollout overrides (None → window defaults); the ablation sets these tight.
+            max_turns=self.max_turns if self.max_turns is not None else 14,
+            max_budget_usd=self.max_budget_usd if self.max_budget_usd is not None else 6.0,
             system_prompt=self.system_prompt,
         )
         started = time.monotonic()
         text_parts: list[str] = []
         cost = None
         result_subtype = None  # P7: SDK stop reason — tells truncation apart from a wrong answer
-        try:
+
+        async def _drive():
+            nonlocal cost, result_subtype
             async for msg in query(prompt=inst.prompt, options=options):  # PROMPT ONLY
                 if isinstance(msg, AssistantMessage):
-                    text_parts.extend(b.text for b in msg.content if isinstance(b, TextBlock))
+                    for b in msg.content:
+                        if isinstance(b, TextBlock):
+                            text_parts.append(b.text)
+                        # P7: capture BUILT-IN tool calls (WebSearch etc.) from the stream — they do
+                        # NOT route through our @tool side-effects, so the web trajectory would be
+                        # opaque otherwise. Lab tools (mcp__) self-capture; filter them out here so
+                        # they aren't double-counted. No-op for `ours` (built-ins disallowed).
+                        elif isinstance(b, ToolUseBlock) and not b.name.startswith("mcp__"):
+                            obs = {"tool": b.name, "arguments": dict(b.input), "result": None}
+                            observations.append(obs)
+                            builtin_by_id[b.id] = obs
+                elif isinstance(msg, UserMessage):
+                    # built-in tool RESULTS arrive here (not on the AssistantMessage) — attach by id
+                    # so the trust bar sees what the web search actually returned.
+                    for b in msg.content if isinstance(msg.content, list) else []:
+                        if isinstance(b, ToolResultBlock) and b.tool_use_id in builtin_by_id:
+                            builtin_by_id[b.tool_use_id]["result"] = b.content
                 elif isinstance(msg, ResultMessage):
                     cost = getattr(msg, "total_cost_usd", None)
                     result_subtype = getattr(msg, "subtype", None)
+
+        try:
+            # per-rollout wall-clock backstop (a hung WebSearch must fail this instance, not stall
+            # the matrix); a TimeoutError is an Exception → falls into the NO_ANSWER arm below.
+            if self.timeout_s is not None:
+                await asyncio.wait_for(_drive(), timeout=self.timeout_s)
+            else:
+                await _drive()
         except Exception as exc:  # noqa: BLE001 — a live failure FAILS the instance, never crashes
             return NO_ANSWER, {
                 "trajectory": observations,
