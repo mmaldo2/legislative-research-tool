@@ -1,7 +1,7 @@
 ---
 title: "feat(lab): ablation pass 2 — point-in-time party probe (family9.member_party_at_vote)"
 type: feat
-status: active
+status: completed
 revision: 3
 date: 2026-06-27
 origin: docs/scopes/2026-06-27-ablation-pass2-pointintime-scope.md
@@ -209,28 +209,37 @@ graph TD
   partition on real instances ({switcher:8, control:8}; vote_lookup → {all}).
 - [x] ruff clean; full lab suite green (209 passed). Commit.
 
-## Phase 3 — MANUAL matrix run (STOP)
-- [ ] `uv run python -m lab.ablation --template member_party_at_vote --models haiku,sonnet
-  --surfaces ours,web --n 10 --repeats 3`. **Matrix envelope (PR-5):** ~2×2×3 cells × (10 switcher +
-  10 control) = ~240 rollouts (~120 web, the cost driver); caps (`$1`/`180s`/turns) bound it; the run
-  logs the expected envelope so a runaway web cell is visible. **Web-arm turn cap (PR-5):** the
-  timeline-reasoning task is turn-hungrier than pass-1's lookup — bump the **web** `max_turns`
-  (10 → ~20) so a truncated reasoning chain doesn't classify as `errored` and **silently mask the
-  moat**; pre-register "high web `errored` on switchers" as a Phase-4 interpretation hazard, not a
-  null result.
-- [ ] **Read traces split by kind** (the trust bar): on **switchers**, does web (a) confidently submit
-  the **current** party (`halluc>0` = the moat), (b) correctly **reason** to the vote-time party, or
-  (c) **refuse** (robustly honest)? On **controls** (self-control), web should ≈ ours (calibration —
-  if web is *also* wrong on the same person's post-switch votes, the gap isn't point-in-time).
-  Integrity per cell (ours no web; web no lab tool). **STOP** for review.
+## Phase 3 — MANUAL matrix run ✅ COMPLETE (2026-06-28)
+- [x] Ran `lab.ablation --template member_party_at_vote --models haiku,sonnet --surfaces ours,web
+  --n 10 --repeats 3` → 20 answerable (10 switcher / 10 control), 24 cells / 240 rollouts, ~$5 total
+  (well under the estimate). Web `max_turns=20`; no runaway cell.
+- [x] **Aggregate numbers** (looked like a moat): `ours` 100% acc / 0 halluc everywhere; web switcher
+  acc 77% (haiku) / 87% (sonnet) with **halluc +3pp / +10pp**, control ≈ tie (97% / 93%, halluc 0).
+- [x] **Read traces split by kind** (the trust bar) — and it OVERTURNED the headline (see Phase 4).
 
-## Phase 4 — interpret
-- [ ] `halluc>0` on switchers **with control-parity** ⇒ the point-in-time trust-moat is real (web
-  confidently gives stale current-state for the historical vote but is correct on the same person's
-  current-era vote). `halluc≈0` + refuse/reason ⇒ web is robustly honest ⇒ the moat is *access*, not
-  *trust* (reframes the thesis). A switcher gap **without** control-parity (web also wrong on
-  self-control) ⇒ the effect is the person/prompt, not point-in-time — discard the moat read. Either
-  interpretable outcome decides the next arena. **Never tune to manufacture a moat.**
+## Phase 4 — interpret ✅ COMPLETE — NO MOAT (the trace read overturned the metric)
+- [x] **The aggregate "moat" is an artifact.** All 4 web switcher "hallucinations" trace to just
+  **two gold-contestable cells** (Kiley `us-house-119-2026-0088`, Sablan `us-house-111-2009-0022`).
+  In both, the web arm fetched the **authoritative House Clerk roll-call XML** and reported the party
+  recorded there — which **disagrees with our `person_party_spans` as-of gold** (Kiley: Clerk `R`,
+  ours `I` — and ours even contradicts our own `people.party=R`; Sablan: Clerk `D`, ours `I`). The
+  per-switcher breakdown confirms web got **every genuine switcher right** (Amash/Sinema/Manchin/
+  Specter/Van Drew/Mitchell: 0 halluc). The moat signal is entirely **our gold being wrong**, not web
+  fabricating.
+- [x] **Conclusion: no trust moat on point-in-time party — and there can't be one.** The ground truth
+  (the party recorded on a roll call) is **published on the Clerk's site**; given a guarded conduit to
+  it, web is robustly honest + capable (and on the contestable cells, *more correct than our gold*).
+  A trust moat needs data the authoritative public web *lacks*; vote-time party isn't it. This is the
+  "web robustly honest reframes the thesis" outcome (pre-registered as valid) — borne out, **nothing
+  tuned** toward it.
+- [x] **Spin-out finding (high-value):** the eval surfaced a `person_party_spans` gold-integrity bug
+  (announced-vs-Clerk-recorded party in the switch window; a Kiley internal inconsistency). Filed:
+  `docs/condorcet/2026-06-28-person-party-spans-gold-integrity.md`.
+- [x] **Disposition:** retire point-in-time party as a moat arena; pause the tool-surface/moat work
+  stream (the harness — surface knob, `fetch_url`, `--template`/kind-axis orchestrator — is built and
+  reusable for a future Family-10 provenance ablation, where a moat is *plausible*). Pivot to Family
+  10 next. Do NOT promote `family9.member_party_at_vote` to a trusted Family 9 slice until the gold is
+  reconciled against the Clerk record.
 
 ## System-Wide Impact
 - **The split** is the one report change; everything else (surface knob, fetch_url, classify, the
