@@ -140,24 +140,27 @@ graph TD
     P3{"Phase 3 (MANUAL, optional): live-agent discrimination check\n(haiku/sonnet) — does it separate models? STOP"}
 ```
 
-## Phase 1 — the `get_bill_cosponsors` tool
-- [ ] `_tool_get_bill_cosponsors` in `src/api/chat.py` (mirror `_tool_get_bill_votes`: `SELECT
-  DISTINCT person_id, name`, guarded body, empty-result existence check); register in `_TOOL_HANDLERS`
-  (NOT `_HARNESS_REQUIRED_TOOLS`). Filter `classification IN ('cosponsor','original-cosponsor')`.
-- [ ] `get_bill_cosponsors` def in `src/llm/tools.py` `RESEARCH_TOOLS` (minimal schema: `bill_id`).
-- [ ] **The green-suite gate requires three test/manifest edits (PR-8 — the panel caught these as
-  Phase-1 blockers):** (a) add `sponsorships: {id, bill_id, person_id, classification}` to
-  `tests/test_lab/conftest.py::REQUIRED_COLUMNS`; (b) import `Sponsorship` + add it to the hardcoded
-  `_MODELS` tuple in `tests/test_lab/test_schema_columns.py` (else it `KeyError`s on the new manifest
-  key); (c) add `get_bill_cosponsors` to the hardcoded `EXPECTED_TOOLS` list in
-  `tests/test_mcp/test_server.py` (else `test_no_extra_tools` fails — it's the author's add-a-tool
-  reminder). The MCP server itself auto-enumerates `RESEARCH_TOOLS` → no `server.py` change.
-- [ ] Tool tests (`tests/test_api/test_vote_tool.py`) (PR-9): returns cosponsors (person_id+name);
-  **excludes `primary` + includes BOTH `cosponsor` and `original-cosponsor`** (insert all three under
-  `requires_pg` — `original-cosponsor` is only 345 rows so a sampled bill won't hit it naturally);
-  nonexistent bill → error; real bill, no cosponsors → empty list; **hermetic DB-error guard**
-  (`db.execute` raises → the generic `"Failed to retrieve the bill cosponsors."`, no traceback leak).
-  ruff; suite green. Commit.
+## Phase 1 — the `get_bill_cosponsors` tool ✅ COMPLETE (branch feat/lab-family2-cosponsor-vote)
+- [x] `_tool_get_bill_cosponsors` in `src/api/chat.py` (mirrors `_tool_get_bill_votes`: `SELECT
+  DISTINCT person_id, name`, guarded body, empty-result existence check); registered in
+  `_TOOL_HANDLERS` (NOT `_HARNESS_REQUIRED_TOOLS`). Filter `classification IN ('cosponsor',
+  'original-cosponsor')`. **Real-data smoke OK** (a 3-cosponsor bill resolves; nonexistent → clean
+  error).
+- [x] `get_bill_cosponsors` def in `src/llm/tools.py` `RESEARCH_TOOLS` (minimal schema: `bill_id`).
+- [x] **The green-suite gate edits (PR-8) — the panel caught two; execution found a THIRD:**
+  (a) `sponsorships` added to `tests/test_lab/conftest.py::REQUIRED_COLUMNS`; (b) `Sponsorship`
+  imported + added to the `_MODELS` tuple in `tests/test_lab/test_schema_columns.py`;
+  (c) `get_bill_cosponsors` added to `EXPECTED_TOOLS` in `tests/test_mcp/test_server.py`; **(d) NEW —
+  `test_convert_all_research_tools` had a SECOND hardcoded count (`len==15`, two asserts) the panel
+  missed → bumped to 16.** MCP server auto-enumerates `RESEARCH_TOOLS` (verified) → no `server.py`
+  change.
+- [x] Tool tests in `tests/test_api/test_provenance_tools.py` (the actual `get_bill_votes` sibling,
+  NOT test_vote_tool.py) (PR-9): 4 hermetic (shape; nonexistent→error; real-bill-no-cosponsors→empty;
+  DB-error guard → generic error, no traceback leak) + 1 `requires_pg` (primary EXCLUDED; BOTH
+  `cosponsor` and `original-cosponsor` included; the double-role person DISTINCT-deduped). The
+  `requires_pg` test follows the codebase's best-effort-skip convention (async pg tests skip in the
+  full suite when not first; passes in isolation). ruff clean; full test_api/test_mcp/test_lab suite
+  green; `test_hashes` UNMOVED (no lab file touched). Commit.
 
 ## Phase 2 — the template + wiring
 - [ ] `generate_cosponsored_and_voted_against`: eligibility (single-roll-call ∩ has-cosponsor ∩ **≥1

@@ -307,6 +307,44 @@ async def _tool_get_bill_votes(
         return json.dumps({"error": "Failed to retrieve the bill votes."})
 
 
+async def _tool_get_bill_cosponsors(
+    arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
+) -> str:
+    """The cosponsors of a bill (RAW per-cosponsor rows; the agent intersects them with votes).
+
+    One index-backed query on `sponsorships.bill_id`, filtered to the cosponsor roles (NOT the
+    `primary` author), `DISTINCT`-ed so a member holding both a `cosponsor` and an
+    `original-cosponsor` row on the bill is returned once. The body is guarded so a malformed/absent
+    id can never surface
+    a DB traceback. A real bill with no cosponsors returns an empty list; a nonexistent bill returns
+    a clean not-found error (the distinction is the agent's refusal signal).
+    """
+    bill_id = arguments.get("bill_id", "")
+    try:
+        stmt = (
+            select(Sponsorship.person_id, Person.name)
+            .join(Person, Person.id == Sponsorship.person_id)
+            .where(
+                Sponsorship.bill_id == bill_id,
+                Sponsorship.classification.in_(("cosponsor", "original-cosponsor")),
+            )
+            .distinct()
+            .order_by(Sponsorship.person_id)
+        )
+        rows = (await db.execute(stmt)).all()
+        if not rows:
+            # Only on an empty result do we pay the existence check: a missing bill is the refusal
+            # basis; a real bill with no cosponsors is a distinct (empty-list) answer.
+            exists = (await db.execute(select(Bill.id).where(Bill.id == bill_id))).first()
+            if exists is None:
+                return json.dumps({"error": f"Bill '{bill_id}' not found."})
+        cosponsors = [{"person_id": pid, "name": name} for (pid, name) in rows]
+        return json.dumps({"bill_id": bill_id, "cosponsors": cosponsors, "count": len(cosponsors)})
+    except Exception:
+        logger.exception("get_bill_cosponsors failed for bill_id=%r", bill_id)
+        return json.dumps({"error": "Failed to retrieve the bill cosponsors."})
+
+
 async def _tool_list_vote_events(
     arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
 ) -> str:
@@ -677,6 +715,7 @@ _TOOL_HANDLERS: dict[str, _ToolHandler] = {
     "get_bill_detail": _tool_get_bill_detail,
     "get_vote_event": _tool_get_vote_event,
     "get_bill_votes": _tool_get_bill_votes,
+    "get_bill_cosponsors": _tool_get_bill_cosponsors,
     "list_vote_events": _tool_list_vote_events,
     "find_people": _tool_find_people,
     "get_member_voting_record": _tool_get_member_voting_record,

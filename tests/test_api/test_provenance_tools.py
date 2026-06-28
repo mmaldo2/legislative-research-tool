@@ -1,8 +1,8 @@
-"""Tests for the Family 10 provenance tool (get_bill_votes).
+"""Tests for the bill-keyed provenance tools (get_bill_votes, get_bill_cosponsors).
 
 Two layers, mirroring test_window_tools.py: hermetic (mocked AsyncSession) for the error/guard arms
-(incl. the no-DB-leak property + the bill-not-found vs real-bill-no-roll-calls distinction), and one
-`requires_pg` integration test over a real bill.
+(incl. the no-DB-leak property + the bill-not-found vs real-bill-empty distinction), and one
+`requires_pg` integration test per tool over real rows.
 """
 
 import json
@@ -11,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy import text
 
-from src.api.chat import _tool_get_bill_votes
+from src.api.chat import _tool_get_bill_cosponsors, _tool_get_bill_votes
 
 
 def _rows(values):
@@ -82,3 +82,98 @@ async def test_get_bill_votes_against_real_bill():
 
         nf = json.loads(await _tool_get_bill_votes({"bill_id": "ZZ-NX-BILL-PROV"}, db, None))
         assert nf == {"error": "Bill 'ZZ-NX-BILL-PROV' not found."}
+
+
+# --- get_bill_cosponsors (Family 2) ------------------------------------------------------------
+
+
+async def test_get_bill_cosponsors_returns_person_id_and_name():
+    db = AsyncMock()
+    db.execute.return_value = _rows([("p1", "Rep. A"), ("p2", "Rep. B")])
+    out = json.loads(await _tool_get_bill_cosponsors({"bill_id": "b1"}, db, None))
+    assert out == {
+        "bill_id": "b1",
+        "cosponsors": [
+            {"person_id": "p1", "name": "Rep. A"},
+            {"person_id": "p2", "name": "Rep. B"},
+        ],
+        "count": 2,
+    }
+
+
+async def test_get_bill_cosponsors_unknown_bill_returns_error():
+    db = AsyncMock()
+    # cosponsor query → no rows; then the existence check → absent
+    db.execute.side_effect = [_rows([]), _first(None)]
+    out = json.loads(await _tool_get_bill_cosponsors({"bill_id": "NX-BILL"}, db, None))
+    assert out == {"error": "Bill 'NX-BILL' not found."}
+
+
+async def test_get_bill_cosponsors_real_bill_no_cosponsors_returns_empty():
+    db = AsyncMock()
+    # cosponsor query → no rows; existence check → the bill IS present
+    db.execute.side_effect = [_rows([]), _first(("some-bill-id",))]
+    out = json.loads(await _tool_get_bill_cosponsors({"bill_id": "some-bill-id"}, db, None))
+    assert out == {"bill_id": "some-bill-id", "cosponsors": [], "count": 0}
+
+
+async def test_get_bill_cosponsors_db_error_no_traceback_leak():
+    db = AsyncMock()
+    db.execute.side_effect = RuntimeError("DataError: invalid input syntax for type ...")
+    out = json.loads(await _tool_get_bill_cosponsors({"bill_id": "weird"}, db, None))
+    assert out == {"error": "Failed to retrieve the bill cosponsors."}
+    assert "DataError" not in json.dumps(out)  # DB internals must not reach the agent/trace
+
+
+@pytest.mark.requires_pg
+async def test_get_bill_cosponsors_filters_to_cosponsor_roles():
+    """The tool returns the cosponsor-role members and EXCLUDES the primary sponsor; a member who
+    holds BOTH a `cosponsor` and `original-cosponsor` row on the bill is returned once (DISTINCT).
+    Inserts a synthetic bill + sponsorships, asserts, rolls back (no residue). Skips if PG down."""
+    from src.database import async_session_factory
+    from src.models.bill import Bill
+    from src.models.person import Person
+    from src.models.sponsorship import Sponsorship
+
+    # Best-effort like the sibling async requires_pg tests (test_vote_tool / test_window_tools): a
+    # prior async pg test binds the asyncpg pool to its now-closed loop, so this skips gracefully in
+    # the full suite and runs when it's the first pg test (e.g. in isolation / a focused CI shard).
+    bid = "ZZ-COSPON-BILL"
+    async with async_session_factory() as db:
+        try:
+            await db.execute(text("SELECT 1"))
+        except Exception as exc:  # noqa: BLE001 — unreachable means skip, not fail
+            pytest.skip(f"Postgres unreachable: {exc}")
+        juris = (await db.execute(text("SELECT id FROM jurisdictions LIMIT 1"))).scalar()
+        sid = (await db.execute(text("SELECT id FROM sessions LIMIT 1"))).scalar()
+        if juris is None or sid is None:
+            pytest.skip("no jurisdiction/session to anchor a synthetic bill")
+        try:
+            db.add(
+                Bill(
+                    id=bid,
+                    jurisdiction_id=juris,
+                    session_id=sid,
+                    identifier="ZZ COSPON 1",
+                    title="Synthetic cosponsor test bill",
+                )
+            )
+            db.add(Person(id="ZZ-PRIMARY", name="Rep. Primary", party="D"))
+            db.add(Person(id="ZZ-CO", name="Rep. Co", party="R"))
+            db.add(Person(id="ZZ-DOUBLE", name="Rep. Double", party="I"))
+            db.add(Sponsorship(bill_id=bid, person_id="ZZ-PRIMARY", classification="primary"))
+            db.add(Sponsorship(bill_id=bid, person_id="ZZ-CO", classification="cosponsor"))
+            db.add(Sponsorship(bill_id=bid, person_id="ZZ-DOUBLE", classification="cosponsor"))
+            db.add(
+                Sponsorship(bill_id=bid, person_id="ZZ-DOUBLE", classification="original-cosponsor")
+            )
+            await db.flush()  # FK-checked INSERTs WITHOUT committing
+            out = json.loads(await _tool_get_bill_cosponsors({"bill_id": bid}, db, None))
+        finally:
+            await db.rollback()  # discard all synthetic rows
+
+    ids = {c["person_id"] for c in out["cosponsors"]}
+    assert ids == {"ZZ-CO", "ZZ-DOUBLE"}, "primary EXCLUDED; both cosponsor roles included"
+    assert out["count"] == 2, "the double-role person must be deduped (DISTINCT)"
+    names = {c["person_id"]: c["name"] for c in out["cosponsors"]}
+    assert names["ZZ-CO"] == "Rep. Co"
