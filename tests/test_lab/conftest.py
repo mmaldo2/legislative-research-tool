@@ -22,6 +22,7 @@ REQUIRED_COLUMNS = {
     "sessions": {"id", "identifier", "end_date"},
     "bills": {"id", "identifier", "session_id"},
     "person_party_spans": {"id", "person_id", "party", "start_date", "end_date"},
+    "sponsorships": {"id", "bill_id", "person_id", "classification"},
 }
 
 

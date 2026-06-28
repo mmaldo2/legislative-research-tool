@@ -95,6 +95,25 @@ RESEARCH_TOOLS = [
         },
     },
     {
+        "name": "get_bill_cosponsors",
+        "description": (
+            "List the cosponsors of a bill by its bill_id: one row per cosponsor with their "
+            "person_id and name. Cosponsors are the members who signed on to support the bill — "
+            "NOT the primary sponsor (the author). An empty list means the bill has no cosponsors; "
+            "an error means no such bill exists."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "bill_id": {
+                    "type": "string",
+                    "description": "The internal bill ID.",
+                },
+            },
+            "required": ["bill_id"],
+        },
+    },
+    {
         "name": "list_vote_events",
         "description": (
             "List every roll-call vote event in a (congress, chamber) window with its official "

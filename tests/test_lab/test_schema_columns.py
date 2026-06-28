@@ -7,13 +7,22 @@ from src.models import (
     LegislativeSession,
     Person,
     PersonPartySpan,
+    Sponsorship,
     VoteEvent,
     VoteRecord,
 )
 
 _MODELS = {
     m.__tablename__: m
-    for m in (VoteEvent, VoteRecord, Person, LegislativeSession, Bill, PersonPartySpan)
+    for m in (
+        VoteEvent,
+        VoteRecord,
+        Person,
+        LegislativeSession,
+        Bill,
+        PersonPartySpan,
+        Sponsorship,
+    )
 }
 
 

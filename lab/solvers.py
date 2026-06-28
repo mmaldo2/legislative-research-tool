@@ -193,6 +193,14 @@ SUBMIT_SCHEMAS = {
         },
         **_REFUSED_FIELD,
     },
+    "family2.cosponsored_and_voted_against": {
+        "member_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "The member ids the question asks you to list (an empty list if none).",
+        },
+        **_REFUSED_FIELD,
+    },
     "family9.member_party_at_vote": {
         "party": {
             "type": "string",
@@ -209,6 +217,7 @@ SET_MATCH_FIELD = {
     "family1.crossed_party": "member_ids",
     "family10.cite_record_id": "vote_event_ids",
     "family1.closest_by_margin": "roll_call_ids",
+    "family2.cosponsored_and_voted_against": "member_ids",
     "family9.member_party_at_vote": "party",
 }
 
@@ -247,6 +256,12 @@ TEMPLATE_TOOLS = {
     "family1.pairwise_agreement": _MEMBER_TOOLS,
     # Family 10: bill->roll-call resolution + per-event verification (cite the id, or refuse).
     "family10.cite_record_id": ["get_bill_votes", "get_vote_event"],
+    # Family 2: cosponsors x the bill's roll-call votes (the join the agent computes).
+    "family2.cosponsored_and_voted_against": [
+        "get_bill_cosponsors",
+        "get_bill_votes",
+        "get_vote_event",
+    ],
     # Family 9: the OURS arm reads vote-time party straight from get_vote_event's as-of join.
     "family9.member_party_at_vote": _EVENT_TOOLS,
 }
