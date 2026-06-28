@@ -13,6 +13,7 @@ from lab.solvers import (
     NO_ANSWER,
     NUMERIC_FIELDS,
     SUBMIT_SCHEMAS,
+    _fold_party,
     _map_answer,
     _to_int,
     coerce,
@@ -26,6 +27,7 @@ CROSSED = "family1.crossed_party"
 MEMBER = "family1.member_summary"
 PAIRWISE = "family1.pairwise_agreement"
 CLOSEST = "family1.closest_by_margin"
+PARTY = "family9.member_party_at_vote"
 
 
 def _submit(args: dict) -> list[dict]:
@@ -105,6 +107,74 @@ class TestCoerceSetMatch:
         assert coerce("set_match", CLOSEST, {"roll_call_ids": ["rc1", "rc2"]}) == ["rc1", "rc2"]
         assert coerce("set_match", CLOSEST, {"roll_call_ids": []}) == []  # ∅ is a valid answer
         assert coerce("set_match", CLOSEST, {"member_ids": ["rc1"]}) == NO_ANSWER  # wrong field
+
+
+class TestPartyFold:
+    """The party-alias fold (PR-2): web's faithful labels -> the canonical span token {D,I,L,R}.
+    Surface-agnostic; a no-op for `ours` (which submits the bare letter). Under-folding penalizes
+    the web arm only (a false moat), so the alias set + the 'party'/'caucus' strip matter."""
+
+    @pytest.mark.parametrize(
+        "raw,canon",
+        [
+            ("Democrat", "D"),
+            ("Democratic", "D"),
+            ("Democratic Party", "D"),  # trailing 'party' stripped
+            ("dem", "D"),
+            ("D", "D"),  # already canonical -> identity (so the ORACLE/letter path is a no-op)
+            ("Republican", "R"),
+            ("GOP", "R"),
+            ("R", "R"),
+            ("Independent", "I"),
+            ("Independent Caucus", "I"),  # trailing 'caucus' stripped
+            ("Libertarian", "L"),
+        ],
+    )
+    def test_known_aliases_fold(self, raw, canon):
+        assert _fold_party(raw) == canon
+
+    def test_unknown_passes_through(self):
+        # a genuinely unrecognized string is NOT snapped to a party -> it still grades wrong.
+        assert _fold_party("Whig") == "Whig"
+
+
+class TestCoerceSetMatchScalarParty:
+    """family9 set_match is a SCALAR party field (PR-2/PR-4): coerce accepts a bare string, wraps to
+    a 1-element list, and folds each element BEFORE grading — the deterministic invariants go via
+    grade() not coerce, so this is the ONLY coverage of the live-agent fold + scalar path."""
+
+    def test_bare_string_accepted_and_folded(self):
+        assert coerce("set_match", PARTY, {"party": "Republican"}) == ["R"]
+        assert coerce("set_match", PARTY, {"party": "D"}) == ["D"]
+        assert coerce("set_match", PARTY, {"party": "Democratic Party"}) == ["D"]
+
+    def test_one_element_list_also_accepted(self):
+        assert coerce("set_match", PARTY, {"party": ["Independent"]}) == ["I"]
+
+    def test_multi_or_missing_to_no_answer(self):
+        assert coerce("set_match", PARTY, {"party": ["D", "R"]}) == ["D", "R"]  # 2-elem -> wrong
+        assert coerce("set_match", PARTY, {}) == NO_ANSWER  # no field
+
+    def test_web_current_party_on_switcher_is_hallucination_not_format_fail(self):
+        # THE load-bearing assertion: a switcher's gold is the VOTE-TIME party {"D"}; web answers
+        # the CURRENT party "Independent" -> folds to ["I"] -> set_match fails -> it must land in
+        # HALLUCINATION (confident-wrong), NOT format_fail (which would hide the moat).
+        answer = _ma({"party": "Independent"}, "set_match", PARTY)
+        assert answer == ["I"]  # a substantive (wrong) answer, present + well-formed
+        v = grade("set_match", {"D"}, answer, is_refusal=False)
+        assert v.subscores["format_valid"] == 1.0  # well-formed -> NOT format_fail
+        assert v.subscores["decision_correct"] == 1.0  # attempted (didn't refuse)
+        assert v.subscores["answer_correct"] == 0.0 and not v.passed  # confident-WRONG
+
+    def test_oracle_letter_grades_correct(self):
+        # the ours/oracle path submits the canonical letter -> fold is a no-op -> passes vs gold.
+        answer = _ma({"party": "D"}, "set_match", PARTY)
+        v = grade("set_match", {"D"}, answer, is_refusal=False)
+        assert v.passed and v.subscores["answer_correct"] == 1.0
+
+    def test_refusal_path(self):
+        assert _ma({"refused": True}, "set_match", PARTY) == REFUSAL
+        assert _ma({"party": "D", "refused": True}, "set_match", PARTY) == NO_ANSWER  # both -> fail
 
 
 class TestCoerceExact:

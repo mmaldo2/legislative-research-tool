@@ -201,6 +201,14 @@ SUBMIT_SCHEMAS = {
         },
         **_REFUSED_FIELD,
     },
+    "family9.member_party_at_vote": {
+        "party": {
+            "type": "string",
+            "description": "The party the member was representing at the time of that roll-call "
+            "vote, as a short code: D, R, I, or L.",
+        },
+        **_REFUSED_FIELD,
+    },
 }
 
 # set_match is keyed per-template (the submit field NAME differs: crossed lists members, closest
@@ -210,6 +218,7 @@ SET_MATCH_FIELD = {
     "family10.cite_record_id": "vote_event_ids",
     "family1.closest_by_margin": "roll_call_ids",
     "family2.cosponsored_and_voted_against": "member_ids",
+    "family9.member_party_at_vote": "party",
 }
 
 _SUBMIT_DESCRIPTION = (
@@ -253,6 +262,8 @@ TEMPLATE_TOOLS = {
         "get_bill_votes",
         "get_vote_event",
     ],
+    # Family 9: the OURS arm reads vote-time party straight from get_vote_event's as-of join.
+    "family9.member_party_at_vote": _EVENT_TOOLS,
 }
 
 
@@ -344,6 +355,42 @@ def _fold_option(answer: str) -> str:
     return _ALIAS_FOLD.get(answer.strip().lower(), answer)
 
 
+# Party-alias fold (NON-frozen, beside _fold_option): maps a faithful party label ("Democrat",
+# "Democratic Party", "GOP") to the canonical span token {D,I,L,R} so the WEB arm grades on the
+# PARTY, not the spelling. A no-op for `ours` (get_vote_event returns the canonical token already).
+# Strips a trailing "party"/"caucus" then token-matches; an unknown string passes through (still
+# grades wrong). NO "ID" entry — that's a current-only people.party code no web page or gold token
+# emits (point-in-time gold is always one of {D,I,L,R}). Under-folding penalizes the WEB arm ONLY
+# (ours submits the bare letter), which would INFLATE web hallucination = a FALSE moat, so keep the
+# alias set generous.
+_PARTY_FOLD = {
+    "democrat": "D",
+    "democratic": "D",
+    "dem": "D",
+    "d": "D",
+    "republican": "R",
+    "gop": "R",
+    "r": "R",
+    "independent": "I",
+    "i": "I",
+    "libertarian": "L",
+    "l": "L",
+}
+
+
+def _fold_party(answer: str) -> str:
+    s = re.sub(r"\s+(party|caucus)$", "", answer.strip().lower()).strip()
+    return _PARTY_FOLD.get(s, answer)
+
+
+# set_match templates whose submit field is SCALAR (a bare party string, not a list) AND need a
+# per-element fold. PRESENCE here => coerce accepts a bare string (wrapping to a 1-element list) +
+# applies the mapped fold to each element BEFORE grading. ABSENT (crossed/closest/cite) => the
+# existing list-gate + identity fold (byte-identical behavior, tests stay green). One registry, not
+# two parallel maps: scalar-acceptance and the party-fold are co-extensive for this template.
+SET_MATCH_SCALAR_FOLD = {"family9.member_party_at_vote": _fold_party}
+
+
 def coerce(grader: str, template_id: str, payload: dict):
     """Grader-dispatched, TOTAL coercion of the submit_answer payload to the grader's expected type
     (NO_ANSWER on anything malformed — never crashes). Deliberate asymmetry: a bare non-int for
@@ -369,9 +416,13 @@ def coerce(grader: str, template_id: str, payload: dict):
             return out
         if grader == "set_match":
             ids = payload.get(SET_MATCH_FIELD[template_id])  # per-template field name (P1)
+            fold = SET_MATCH_SCALAR_FOLD.get(template_id)  # present => scalar field + per-elem fold
+            if fold is not None and isinstance(ids, str):
+                ids = [ids]  # scalar party: accept a bare string as a 1-element set
             if not isinstance(ids, list | tuple):  # a str/dict is iterable -> would mis-grade
                 return NO_ANSWER
-            return [str(x) for x in ids]
+            out = [str(x) for x in ids]
+            return [fold(x) for x in out] if fold is not None else out
         return NO_ANSWER
     except Exception:  # noqa: BLE001 — TOTAL: any malformed payload -> NO_ANSWER, never crash the run
         return NO_ANSWER

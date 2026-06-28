@@ -7,11 +7,12 @@ Phase 0 ships Template #1 (vote lookup). Gold is read directly from `vote_record
 We do NOT claim an eligible/ineligible distinction (the schema can't support it).
 """
 
+import re
 from collections import defaultdict
 from types import SimpleNamespace
 from typing import Literal
 
-from lab.generate import pick_one, sample
+from lab.generate import hash_order, pick_one, sample
 from lab.graders import REFUSAL
 from lab.harness import Instance
 
@@ -25,10 +26,31 @@ TEMPLATE_PARTY_DEFECTION = "family1.party_defection"
 TEMPLATE_CROSSED_PARTY = "family1.crossed_party"
 TEMPLATE_CITE = "family10.cite_record_id"  # Family 10 (provenance): cite the roll-call vote id
 TEMPLATE_COSPONSOR_VOTE = "family2.cosponsored_and_voted_against"  # Family 2: cosponsor x vote join
+TEMPLATE_PARTY = "family9.member_party_at_vote"  # Family 9 (temporal): vote-time party
 CLOSEST_K = 5  # how many "closest" roll calls a closest_by_margin instance asks for
 # "cosponsored" = signed-on supporter, NOT the primary author. Kept identical to the
 # get_bill_cosponsors tool's filter (src/api/chat.py) — the gold ⊆ tool superset test guards drift.
 _COSPONSOR_ROLES = ("cosponsor", "original-cosponsor")
+
+# person_party_spans.party vocabulary (the gold draws from this). people.party (CURRENT, what the
+# web sees) additionally carries "ID" (Independent-Democrat) — folded to "I" before the
+# switcher/control comparison so an always-independent member isn't mislabeled a switcher.
+_SPAN_PARTY_VOCAB = frozenset({"D", "I", "L", "R"})
+
+
+def _norm_current_party(party: str) -> str:
+    """Normalize a CURRENT people.party token to the span vocab for the switcher/control test:
+    "ID" (a current-only Independent-Democrat code) -> "I". Everything else is already in
+    {D,I,L,R}. NEVER applied to the gold (which comes from the span join, already canonical)."""
+    return "I" if party == "ID" else party
+
+
+def _strip_party_tag(name: str) -> str:
+    """Strip the trailing "[party-state-district]" tag from a people.name ("Rep. Amash, Justin
+    [R-MI-3]" -> "Rep. Amash, Justin"). That bracket is the member's CURRENT party — for a switcher
+    it is exactly the WEB arm's tempting WRONG answer, so printing it in the prompt would leak the
+    confound. The eid still resolves the vote (get_vote_event for ours / web search for web)."""
+    return re.sub(r"\s*\[[^\]]*\]\s*$", "", name).strip()
 
 
 def _in_clause(n: int) -> str:
@@ -1077,6 +1099,144 @@ def _cosponsor_refusal(bid: str, seed: int, tag: str, reason: str) -> Instance:
     )
 
 
+def _stratify(by_person: dict[str, list[str]], n: int, seed: int) -> list[tuple[str, str]]:
+    """Round-robin ~ceil(n/k)-per-person selection of (person_id, event_id) pairs, deterministic.
+    The 7,664 switcher pairs are only ~k(=10) INDEPENDENT clusters (10 people), so effective n is
+    the cluster count — hash-order over the flat pair list alone could let one famous switcher
+    (Sinema has ~3,855) take most of the sample and collapse the headline to 'does web know Sinema'.
+    Each person's events are hash-ordered; we take them round-robin so the sample spreads across
+    switchers before deepening on any one."""
+    persons = sorted(by_person)
+    ordered = {pid: hash_order(by_person[pid], seed) for pid in persons}
+    out: list[tuple[str, str]] = []
+    depth = 0
+    while len(out) < n and any(depth < len(ordered[pid]) for pid in persons):
+        for pid in persons:
+            if len(out) >= n:
+                break
+            if depth < len(ordered[pid]):
+                out.append((pid, ordered[pid][depth]))
+        depth += 1
+    return out
+
+
+def generate_member_party_at_vote(conn, n: int, seed: int, precomputed) -> list[Instance]:
+    """Family 9 (temporal reconstruction): "What party was {name} representing when they voted on
+    roll call {eid}?" ANSWERABLE-ONLY (no refusal twins — deferred to a full Family 9 slice).
+    Doubles as the tool-surface ablation PASS-2 arena: gold is the VOTE-TIME party (the half-open
+    person_party_spans as-of join) — what OUR DB preserves and the open web (which returns a
+    member's CURRENT/famous party) gets confidently WRONG unless it reasons to the EXACT vote date.
+
+    THE SHARPENED ("switch-year") ARENA (rev 3 — the eid leaks the YEAR but not the DAY): our vote
+    event ids embed the calendar year (e.g. `us-house-116-2019-0580`), so a year-clean pre-switch
+    vote is NOT a moat (web can decode the era and be right). The clean moat lives where the eid's
+    year is INSUFFICIENT: a vote in a calendar year that SPANS the member's switch. There,
+    year-knowledge can't tell pre- from post-switch — only the exact day (our as-of join) resolves
+    it; web has the year, not the day.
+
+    Two MARKED kinds, BOTH drawn from party-SWITCHERS (members whose spans show >1 distinct party),
+    so member-fame is held constant:
+      - switcher (params["kind"]="switcher", the HARD set): the as-of party != the
+        (ID->I-normalized) CURRENT party (web's current default is WRONG) AND the vote falls in a
+        SWITCH-SPANNING year (the eid's year can't rescue web). gold = as-of (the OLD party).
+      - control (params["kind"]="control", the self-control): as-of == current -> web's current
+        default is RIGHT. A switcher-only halluc WITH control-parity is a real exact-date point-in-
+        time effect, not member-fame and not a leaked date. gold = as-of (== current).
+    A pre-switch vote in a NON-switch year (as-of != current but the year is unambiguous) is
+    DROPPED: the eid's year trivializes it for web — neither a clean hard instance nor a control.
+
+    Gold is the UNIQUE covering-span party via ONE grouped query
+    (`HAVING COUNT(DISTINCT pps.party)=1` -> no-cover (the inner JOIN drops it) and truly-ambiguous
+    (currently 0) are excluded at the source; under the gate `MIN(pps.party)` IS that unique party).
+    The half-open `vote_date < end_date` resolves current-term votes because open spans use a
+    term-end SENTINEL, not NULL (end_date is NOT NULL — migration 014); a NULL-dated span can't
+    produce a covering row (NULL comparisons are false in the JOIN). The member name's
+    "[party-state]" tag is STRIPPED from the prompt (it leaks the current party). Sampling is
+    STRATIFIED ~1-per-switcher per kind. Gold comes ONLY from the as-of join, NEVER people.party
+    (that's the web's wrong answer). `precomputed` is accepted for the frozen signature but unused
+    (a single member's vote-time party is unambiguous given the gate; like vote_lookup it consults
+    neither the overcount nor completed sets)."""
+    cur = conn.cursor()
+    instances: list[Instance] = []
+
+    # switcher persons: >1 DISTINCT span party (spans are {D,I,L,R}; a >1 here is a real D/R/I/L
+    # change, never I-vs-ID noise — "ID" lives only in current people.party, never in the spans).
+    cur.execute(
+        "SELECT person_id FROM person_party_spans "
+        "GROUP BY person_id HAVING COUNT(DISTINCT party) > 1"
+    )
+    switchers = [r[0] for r in cur.fetchall()]
+    if not switchers:
+        return instances  # no switchers in this DB -> nothing to generate (e.g. a thin test DB)
+
+    # one grouped query: per (switcher, event), the unique covering-span party (the gate + gold) +
+    # the vote_date (for the switch-year test). The inner JOIN (not LEFT) drops no-cover pairs;
+    # HAVING COUNT(DISTINCT party)=1 drops the (currently 0) truly-ambiguous. people.party is read
+    # ONLY to classify switcher vs control, NEVER used as gold.
+    cur.execute(
+        "SELECT vr.person_id, vr.vote_event_id, p.name, p.party, MIN(pps.party), ve.vote_date "
+        "FROM vote_records vr "
+        "JOIN vote_events ve ON ve.id = vr.vote_event_id "
+        "JOIN people p ON p.id = vr.person_id "
+        "JOIN person_party_spans pps ON pps.person_id = vr.person_id "
+        "AND ve.vote_date >= pps.start_date AND ve.vote_date < pps.end_date "
+        f"WHERE vr.person_id IN ({_in_clause(len(switchers))}) "
+        "AND ve.vote_date IS NOT NULL AND p.party IS NOT NULL "
+        "GROUP BY vr.person_id, vr.vote_event_id, p.name, p.party, ve.vote_date "
+        "HAVING COUNT(DISTINCT pps.party) = 1",
+        switchers,
+    )
+    rows = cur.fetchall()
+    # (person, year) cells that SPAN a switch: >1 distinct as-of party among the year's votes -> the
+    # eid's year is insufficient there (this grain matches exactly what the eid leaks: the year).
+    year_parties: dict[tuple[str, int], set[str]] = {}
+    for pid, _eid, _name, _current, asof, vote_date in rows:
+        year_parties.setdefault((pid, vote_date.year), set()).add(asof)
+    switch_year = {cell for cell, parties in year_parties.items() if len(parties) > 1}
+
+    by_kind_person: dict[str, dict[str, list[str]]] = {"switcher": {}, "control": {}}
+    meta: dict[tuple[str, str], tuple[str, str, str]] = {}  # (pid,eid) -> (name, asof, norm)
+    for pid, eid, name, current, asof, vote_date in rows:
+        norm_current = _norm_current_party(current)
+        if asof != norm_current and (pid, vote_date.year) in switch_year:
+            kind = "switcher"  # HARD: web's current default is wrong AND the year can't rescue it
+        elif asof == norm_current:
+            kind = "control"  # self-control: web's current default is RIGHT
+        else:
+            continue  # pre-switch in a non-switch year: the eid's year trivializes it -> drop
+        by_kind_person[kind].setdefault(pid, []).append(eid)
+        meta[(pid, eid)] = (_strip_party_tag(name), asof, norm_current)
+
+    for kind in ("switcher", "control"):
+        for pid, eid in _stratify(by_kind_person[kind], n, seed):
+            name, asof, norm_current = meta[(pid, eid)]
+            # emit-asserts (PR-1): an inverted/out-of-vocab gold is UN-EMITTABLE, not test-caught.
+            assert asof in _SPAN_PARTY_VOCAB, f"{eid}/{pid}: as-of party {asof!r} not in span vocab"
+            if kind == "switcher":
+                assert asof != norm_current, f"switcher {eid}/{pid}: as-of=={asof!r}==current"
+            else:
+                assert asof == norm_current, f"control {eid}/{pid}: as-of {asof!r} != current"
+            prompt = f"What party was {name} representing when they voted on roll call {eid}?"
+            instances.append(
+                Instance(
+                    instance_id=f"{TEMPLATE_PARTY}:{seed}:{kind}:{eid}:{pid}",
+                    template_id=TEMPLATE_PARTY,
+                    tier="C",
+                    params={
+                        "person_id": pid,
+                        "vote_event_id": eid,
+                        "kind": kind,
+                        "switcher_name": name,
+                    },
+                    prompt=prompt,
+                    gold={asof},  # singleton set -> set_match (party isn't an OPTION_BUCKET)
+                    grader="set_match",
+                    is_refusal=False,
+                )
+            )
+    return instances
+
+
 # Template registry — each entry exposes `.generate(conn, n, seed, precomputed)` for the harness +
 # `.template_id` (the family-qualified id). The flat bare-name key no longer encodes the family: a
 # template's family lives in `template_id`, so cross-family wiring (TEMPLATE_TOOLS, P9) keys
@@ -1117,5 +1277,10 @@ TEMPLATE_REGISTRY = {
         name="cosponsored_and_voted_against",
         template_id=TEMPLATE_COSPONSOR_VOTE,
         generate=generate_cosponsored_and_voted_against,
+    ),
+    "member_party_at_vote": SimpleNamespace(
+        name="member_party_at_vote",
+        template_id=TEMPLATE_PARTY,
+        generate=generate_member_party_at_vote,
     ),
 }
