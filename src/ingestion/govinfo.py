@@ -15,6 +15,7 @@ from datetime import UTC, date, datetime
 
 import defusedxml.ElementTree as SafeET
 import httpx
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -49,12 +50,25 @@ GOVINFO_BULK_BASE = "https://www.govinfo.gov/bulkdata"
 # GovInfo bulk ZIP URL pattern: BILLSTATUS-{congress}-{type}.zip
 # Contains one XML file per bill with full status, actions, sponsors, cosponsors
 GOVINFO_BULK_ZIP_URL = (
-    "https://www.govinfo.gov/bulkdata/BILLSTATUS/{congress}/{type}"
-    "/BILLSTATUS-{congress}-{type}.zip"
+    "https://www.govinfo.gov/bulkdata/BILLSTATUS/{congress}/{type}/BILLSTATUS-{congress}-{type}.zip"
 )
 
 # All federal bill types for bulk ingestion
 BILL_TYPES = ["hr", "s", "hres", "sres", "hjres", "sjres", "hconres", "sconres"]
+
+# GovInfo BILLS (bill-text) bulkdata. A JSON listing of the congress's sessions, and one
+# ZIP per (congress, session, bill type) holding USLM XML for every published bill version.
+GOVINFO_BILLS_LISTING_URL = "https://www.govinfo.gov/bulkdata/json/BILLS/{congress}"
+GOVINFO_BILLS_ZIP_URL = (
+    "https://www.govinfo.gov/bulkdata/BILLS/{congress}/{session}/{doc_class}"
+    "/BILLS-{congress}-{session}-{doc_class}.zip"
+)
+
+# Bill-text versions that count as "introduced" (House / Senate). Match the parsed version
+# code EXACTLY -- referral-instructions (rih/ris) and others also end in "ih"/"is", so an
+# endswith check would silently mislabel them as introduced.
+INTRODUCED_VERSIONS = frozenset({"ih", "is"})
+_VERSION_NAMES = {"ih": "Introduced in House", "is": "Introduced in Senate"}
 
 # Congress start/end dates for historical sessions
 CONGRESS_DATES: dict[int, tuple[str, str]] = {
@@ -95,6 +109,148 @@ def _parse_bill_type_number(congress_bill_id: str) -> tuple[str, str]:
     if match:
         return match.group(1), match.group(2)
     return stem, ""
+
+
+_BILLS_FILENAME_RE = re.compile(r"^bills-(\d+)([a-z]+)(\d+)([a-z]+)(?:\.xml)?$")
+
+
+def _parse_bills_filename(name: str) -> tuple[int, str, str, str] | None:
+    """Parse a GovInfo BILLS package/entry name into (congress, doc_class, number, version).
+
+    Examples: 'BILLS-119hr1234ih.xml' -> (119, 'hr', '1234', 'ih');
+    'BILLS-119s21is' -> (119, 's', '21', 'is'). Case-insensitive. Total -- returns None for
+    anything that is not a well-formed BILLS-* name: a different collection
+    ('BILLSTATUS-119hr1234'), a version-less name ('BILLS-119hr9417'), or junk. `number`
+    stays a str (identifiers are not arithmetic; no int coercion).
+    """
+    if not name:
+        return None
+    match = _BILLS_FILENAME_RE.match(name.strip().lower())
+    if match is None:
+        return None
+    congress, doc_class, number, version = match.groups()
+    return int(congress), doc_class, number, version
+
+
+def _is_introduced(version: str) -> bool:
+    """True only for the introduced-version codes. Exact match -- never endswith."""
+    return version in INTRODUCED_VERSIONS
+
+
+def _resolve_bill_id(congress: int, doc_class: str, number: str) -> str:
+    """Map a parsed BILLS name to our canonical bill id for the given congress.
+
+    Mirrors the congress-API ingest path (normalize_identifier(f"{type}{number}") ->
+    generate_bill_id), so the result matches existing `bills` rows.
+    """
+    identifier = normalize_identifier(f"{doc_class}{number}")
+    return generate_bill_id("us", f"us-{congress}", identifier)
+
+
+def _extract_bill_text_from_uslm(raw_xml: str) -> str:
+    """Extract clean, newline-preserved bill text from a GovInfo USLM bill XML.
+
+    Drops the <metadata> subtree (dublinCore copyright/boilerplate) so only the bill body
+    (form preamble + legis-body) remains, joins the remaining text nodes with newlines, and
+    collapses intra-line runs of spaces/tabs. Newlines are preserved -- the eval's
+    quote-matching (Slice B) owns any further canonicalization.
+    """
+    root = SafeET.fromstring(raw_xml)
+    # Remove every <metadata> subtree (local-name match; namespace/depth agnostic). Collect
+    # the parents first, THEN mutate -- never remove children while iterating the tree.
+    parents = [
+        el for el in root.iter() if any(child.tag.rsplit("}", 1)[-1] == "metadata" for child in el)
+    ]
+    for parent in parents:
+        for child in [c for c in parent if c.tag.rsplit("}", 1)[-1] == "metadata"]:
+            parent.remove(child)
+    segments = [seg.strip() for seg in root.itertext() if seg.strip()]
+    return re.sub(r"[ \t]+", " ", "\n".join(segments))
+
+
+def _parse_uslm_date(raw_xml: str) -> date | None:
+    """Return the dublinCore <dc:date> (issued date) from a USLM bill XML, or None."""
+    try:
+        root = SafeET.fromstring(raw_xml)
+    except SafeET.ParseError:
+        return None
+    for el in root.iter():
+        if el.tag.rsplit("}", 1)[-1] == "date" and (el.text or "").strip():
+            try:
+                return date.fromisoformat(el.text.strip()[:10])
+            except ValueError:
+                continue
+    return None
+
+
+def _parse_sessions_from_listing(listing: dict) -> list[str]:
+    """Extract the session numbers (e.g. ['1', '2']) from a GovInfo BILLS bulkdata listing."""
+    sessions: set[str] = set()
+    for entry in listing.get("files", []):
+        name = (entry.get("justFileName") or entry.get("name") or "").strip().strip("/")
+        if name.isdigit():
+            sessions.add(name)
+    return sorted(sessions)
+
+
+def _bill_text_rows_from_zip(
+    zip_bytes: bytes,
+    congress: int,
+    session: str,
+    doc_class: str,
+    known_bill_ids: set[str],
+    remaining: int | None = None,
+) -> tuple[list[dict], dict[str, int]]:
+    """Turn one GovInfo BILLS ZIP into BillText value-dicts for the introduced versions.
+
+    Pure (no network, no DB): filters entries to introduced (ih/is), resolves each to a
+    known bill id, extracts clean text, and returns (rows, stats). `stats` counts entries /
+    introduced / resolved / missed (introduced but no matching bill) / errors (parse
+    failures). `remaining` caps how many rows are emitted (for the --limit smoke path).
+    """
+    zip_url = GOVINFO_BILLS_ZIP_URL.format(congress=congress, session=session, doc_class=doc_class)
+    rows: list[dict] = []
+    stats = {"entries": 0, "introduced": 0, "resolved": 0, "missed": 0, "errors": 0}
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        for entry in zf.namelist():
+            if not entry.endswith(".xml"):
+                continue
+            stats["entries"] += 1
+            parsed = _parse_bills_filename(entry)
+            if parsed is None:
+                continue
+            entry_congress, entry_doc_class, number, version = parsed
+            if not _is_introduced(version) or entry_congress != congress:
+                continue
+            stats["introduced"] += 1
+            bill_id = _resolve_bill_id(congress, entry_doc_class, number)
+            if bill_id not in known_bill_ids:
+                stats["missed"] += 1
+                continue
+            if remaining is not None and len(rows) >= remaining:
+                break
+            try:
+                raw = zf.read(entry).decode("utf-8", "replace")
+                text = _extract_bill_text_from_uslm(raw)
+            except Exception:  # noqa: BLE001 -- a single bad XML must not abort the corpus
+                stats["errors"] += 1
+                continue
+            version_name = _VERSION_NAMES[version]
+            rows.append(
+                {
+                    "id": generate_text_id(bill_id, version_name),
+                    "bill_id": bill_id,
+                    "version_name": version_name,
+                    "version_date": _parse_uslm_date(raw),
+                    "content_text": text,
+                    "content_xml": raw,
+                    "source_url": f"{zip_url}#{entry}",
+                    "word_count": word_count(text),
+                    "content_hash": content_hash(text),
+                }
+            )
+            stats["resolved"] += 1
+    return rows, stats
 
 
 class GovInfoIngester(BaseIngester):
@@ -376,9 +532,7 @@ class GovInfoIngester(BaseIngester):
             total_count = 0
 
             for bill_type in BILL_TYPES:
-                url = GOVINFO_BULK_ZIP_URL.format(
-                    congress=self.congress, type=bill_type
-                )
+                url = GOVINFO_BULK_ZIP_URL.format(congress=self.congress, type=bill_type)
                 logger.info("Downloading bulk ZIP for %s/%s", self.congress, bill_type)
 
                 try:
@@ -404,15 +558,15 @@ class GovInfoIngester(BaseIngester):
                         async with self.session.begin_nested():
                             xml_text = zf.read(xml_name).decode("utf-8")
                             source_url = f"{url}#{xml_name}"
-                            await self._parse_bill_status_xml(
-                                xml_text, session_id, source_url
-                            )
+                            await self._parse_bill_status_xml(xml_text, session_id, source_url)
                         count += 1
                         if count % 100 == 0:
                             await self.session.commit()
                             logger.info(
                                 "Processed %d/%d %s XMLs",
-                                count, len(xml_names), bill_type,
+                                count,
+                                len(xml_names),
+                                bill_type,
                             )
                     except Exception as e:
                         logger.warning("Failed to parse %s: %s", xml_name, e)
@@ -423,7 +577,8 @@ class GovInfoIngester(BaseIngester):
 
             logger.info(
                 "Bulk ZIP ingestion complete: %d bills for Congress %d",
-                total_count, self.congress,
+                total_count,
+                self.congress,
             )
             if self.run:
                 self.run.records_created = total_count
@@ -433,9 +588,7 @@ class GovInfoIngester(BaseIngester):
             await self.finish_run("failed")
             raise
 
-    async def _parse_bill_status_xml(
-        self, xml_text: str, session_id: str, source_url: str
-    ) -> None:
+    async def _parse_bill_status_xml(self, xml_text: str, session_id: str, source_url: str) -> None:
         """Parse a BILLSTATUS XML document and upsert the bill."""
         try:
             root = SafeET.fromstring(xml_text)
@@ -674,7 +827,9 @@ class GovInfoIngester(BaseIngester):
 
         logger.info(
             "Enriching %d bills for Congress %d (concurrency=%d)",
-            total, self.congress, concurrency,
+            total,
+            self.congress,
+            concurrency,
         )
         enriched = 0
         sem = asyncio.Semaphore(concurrency)
@@ -718,9 +873,7 @@ class GovInfoIngester(BaseIngester):
             "Enrichment complete: %d bills enriched for Congress %d", enriched, self.congress
         )
 
-    async def _fetch_actions_json(
-        self, bill_type: str, bill_number: str
-    ) -> list:
+    async def _fetch_actions_json(self, bill_type: str, bill_number: str) -> list:
         """Fetch actions JSON from Congress.gov (HTTP only, no DB writes)."""
         url = f"{CONGRESS_API_BASE}/bill/{self.congress}/{bill_type}/{bill_number}/actions"
         params = {"api_key": settings.congress_api_key, "limit": 250, "format": "json"}
@@ -731,9 +884,7 @@ class GovInfoIngester(BaseIngester):
             logger.warning("Failed to fetch actions for %s/%s", bill_type, bill_number)
             return []
 
-    async def _fetch_cosponsors_json(
-        self, bill_type: str, bill_number: str
-    ) -> list:
+    async def _fetch_cosponsors_json(self, bill_type: str, bill_number: str) -> list:
         """Fetch cosponsors JSON from Congress.gov (HTTP only, no DB writes)."""
         url = f"{CONGRESS_API_BASE}/bill/{self.congress}/{bill_type}/{bill_number}/cosponsors"
         params = {"api_key": settings.congress_api_key, "limit": 250, "format": "json"}
@@ -772,9 +923,7 @@ class GovInfoIngester(BaseIngester):
             )
 
             action_status = normalize_bill_status(action_text)
-            if STATUS_PRECEDENCE.get(action_status, 0) > STATUS_PRECEDENCE.get(
-                best_status, 0
-            ):
+            if STATUS_PRECEDENCE.get(action_status, 0) > STATUS_PRECEDENCE.get(best_status, 0):
                 best_status = action_status
 
         if action_values:
@@ -806,9 +955,9 @@ class GovInfoIngester(BaseIngester):
             if not full_name:
                 continue
 
-            person_id = bioguide if bioguide else hashlib.sha256(
-                full_name.encode()
-            ).hexdigest()[:16]
+            person_id = (
+                bioguide if bioguide else hashlib.sha256(full_name.encode()).hexdigest()[:16]
+            )
 
             person_values.append(
                 {
@@ -853,45 +1002,138 @@ class GovInfoIngester(BaseIngester):
             )
             await self.session.execute(sp_stmt)
 
-    async def fetch_bill_text(self, bill: Bill) -> BillText | None:
-        """Fetch bill text from GovInfo for a specific bill."""
-        if not bill.govinfo_package_id:
-            return None
+    # ------------------------------------------------------------------
+    # Bill-text corpus backfill (GovInfo BILLS bulkdata -> bill_texts)
+    # ------------------------------------------------------------------
 
-        url = f"https://api.govinfo.gov/packages/{bill.govinfo_package_id}/htm"
-        params = {"api_key": settings.congress_api_key} if settings.congress_api_key else {}
+    async def backfill_bill_texts(
+        self, doc_classes: tuple[str, ...] = ("hr", "s"), limit: int | None = None
+    ) -> dict:
+        """Rebuild the introduced bill-text corpus for self.congress from GovInfo BILLS bulkdata.
 
+        Deletes the congress's existing bill_texts (homogeneous rebuild from the one extractor),
+        downloads the per-(session, type) USLM ZIPs, attaches introduced text only to bills
+        already present, and batch-upserts. Returns a coverage report. Deterministic -- a re-run
+        reconstructs the same corpus (resumable by reconstruction). `limit` caps total rows for
+        smoke runs.
+        """
+        await self.start_run("text")
+        session_id = f"us-{self.congress}"
         try:
-            resp = await self.client.get(url, params=params, follow_redirects=True)
-            resp.raise_for_status()
-        except httpx.HTTPError:
-            return None
+            known_rows = (
+                await self.session.execute(select(Bill.id).where(Bill.session_id == session_id))
+            ).all()
+            known_bill_ids = {row[0] for row in known_rows}
 
-        text_content = resp.text
-        text_id = generate_text_id(bill.id, "latest")
+            # Delete-and-rebuild: drop ALL existing text for the congress so the corpus is
+            # homogeneous (one extractor); scoped via subquery on the congress's bills.
+            await self.session.execute(
+                sa_delete(BillText).where(
+                    BillText.bill_id.in_(select(Bill.id).where(Bill.session_id == session_id))
+                )
+            )
+            await self.session.commit()
 
-        bill_text = BillText(
-            id=text_id,
-            bill_id=bill.id,
-            version_name="Latest",
-            content_html=text_content,
-            content_text=_strip_html(text_content),
-            source_url=url,
-            word_count=word_count(_strip_html(text_content)),
-            content_hash=content_hash(text_content),
+            sessions = await self._fetch_bills_sessions()
+            totals = {"entries": 0, "introduced": 0, "resolved": 0, "missed": 0, "errors": 0}
+            inserted = 0
+            for session in sessions:
+                for doc_class in doc_classes:
+                    if limit is not None and inserted >= limit:
+                        break
+                    remaining = None if limit is None else limit - inserted
+                    zip_bytes = await self._download_bills_zip(session, doc_class)
+                    if zip_bytes is None:
+                        continue
+                    rows, stats = _bill_text_rows_from_zip(
+                        zip_bytes, self.congress, session, doc_class, known_bill_ids, remaining
+                    )
+                    inserted += await self._insert_bill_text_rows(rows)
+                    for key in totals:
+                        totals[key] += stats[key]
+                if limit is not None and inserted >= limit:
+                    break
+
+            coverage = await self._bill_text_coverage(session_id)
+            report = {**totals, "inserted": inserted, **coverage}
+            if self.run:
+                self.run.records_created = inserted
+                self.run.metadata_ = report
+            await self.finish_run("completed")
+            logger.info("Bill-text backfill for Congress %d complete: %s", self.congress, report)
+            return report
+        except Exception as e:
+            logger.error("Bill-text backfill failed: %s", e)
+            await self.finish_run("failed")
+            raise
+
+    async def _fetch_bills_sessions(self) -> list[str]:
+        """Enumerate the congress's session numbers from the BILLS bulkdata listing."""
+        url = GOVINFO_BILLS_LISTING_URL.format(congress=self.congress)
+        resp = await self.client.get(
+            url, headers={"Accept": "application/json"}, follow_redirects=True
         )
-        return bill_text
+        resp.raise_for_status()
+        sessions = _parse_sessions_from_listing(resp.json())
+        if not sessions:
+            raise RuntimeError(f"No BILLS sessions found for Congress {self.congress}")
+        return sessions
+
+    async def _download_bills_zip(self, session: str, doc_class: str) -> bytes | None:
+        """Download one BILLS bulkdata ZIP. A 404 (no such session/type) is skipped; other
+        HTTP errors fail the run loudly."""
+        url = GOVINFO_BILLS_ZIP_URL.format(
+            congress=self.congress, session=session, doc_class=doc_class
+        )
+        try:
+            resp = await self.client.get(url, follow_redirects=True, timeout=180.0)
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                logger.warning(
+                    "No BILLS ZIP for %d/%s/%s (404) -- skipping", self.congress, session, doc_class
+                )
+                return None
+            raise
+        return resp.content
+
+    async def _insert_bill_text_rows(self, rows: list[dict], batch_size: int = 200) -> int:
+        """Batch-upsert BillText rows (on_conflict_do_nothing backstop). Returns rows inserted."""
+        inserted = 0
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i : i + batch_size]
+            async with self.session.begin_nested():
+                stmt = pg_insert(BillText).values(batch)
+                stmt = stmt.on_conflict_do_nothing(index_elements=["id"])
+                result = await self.session.execute(stmt)
+            inserted += result.rowcount
+        if rows:
+            await self.session.commit()
+        return inserted
+
+    async def _bill_text_coverage(self, session_id: str) -> dict:
+        """Coverage = distinct bills with text / distinct HR+S ('bill'-class) bills in the congress.
+
+        Measured from rows present (not rows inserted), so an idempotent re-run still reports
+        the true corpus size.
+        """
+        denom = (
+            await self.session.execute(
+                select(func.count())
+                .select_from(Bill)
+                .where(Bill.session_id == session_id, Bill.classification.op("@>")(["bill"]))
+            )
+        ).scalar_one()
+        present = (
+            await self.session.execute(
+                select(func.count(func.distinct(BillText.bill_id)))
+                .select_from(BillText)
+                .join(Bill, Bill.id == BillText.bill_id)
+                .where(Bill.session_id == session_id)
+            )
+        ).scalar_one()
+        pct = round(100.0 * present / denom, 1) if denom else 0.0
+        return {"bills_with_text": present, "distinct_bills_hr_s": denom, "coverage_pct": pct}
 
     async def close(self) -> None:
         await self.client.aclose()
-
-
-_RE_HTML_TAG = re.compile(r"<[^>]+>")
-_RE_WHITESPACE = re.compile(r"\s+")
-
-
-def _strip_html(html: str) -> str:
-    """Basic HTML tag stripping."""
-    clean = _RE_HTML_TAG.sub(" ", html)
-    clean = _RE_WHITESPACE.sub(" ", clean).strip()
-    return clean
