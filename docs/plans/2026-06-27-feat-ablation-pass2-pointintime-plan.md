@@ -2,19 +2,30 @@
 title: "feat(lab): ablation pass 2 — point-in-time party probe (family9.member_party_at_vote)"
 type: feat
 status: active
-revision: 2
+revision: 3
 date: 2026-06-27
 origin: docs/scopes/2026-06-27-ablation-pass2-pointintime-scope.md
 ---
 
 # Tool-surface ablation — Pass 2: point-in-time party probe
 
-> **Rev 2** folds a 5-lens technical-review panel (architecture / kieran-python / data-integrity /
+> **Rev 3 (execution finding — the "switch-year" sharpening).** Phase-1 generation against real PG
+> surfaced TWO prompt leaks the design assumed away: (1) the `vote_event_id` embeds the **calendar
+> year** (`us-house-116-2019-0580`), so B2's "no explicit year → web must decode the timeline" is
+> false; (2) the `people.name` carries a **`[party-state]` tag** (`Rep. Amash, Justin [R-MI-3]`) =
+> the member's CURRENT party = the web arm's wrong answer, printed in the prompt. Resolution (user
+> decision 2026-06-27, "sharpen to switch-year"): strip the name tag; and since the eid leaks the
+> **year but not the DAY**, restrict the switcher (HARD) set to votes in a calendar year that **spans
+> the member's switch** — where year-knowledge is insufficient and only the exact-day as-of join (our
+> DB) resolves the party. The era-leak becomes a non-issue. See **DR-1/DR-2** in the resolutions
+> appendix; this SUPERSEDES B2 + B4's switcher/control definitions in the body.
+>
+> **Rev 2** folded a 5-lens technical-review panel (architecture / kieran-python / data-integrity /
 > simplicity / performance). The authoritative panel resolutions are the **"## Panel resolutions
 > (rev 2 — folded, authoritative)"** appendix; where the body and the appendix conflict, the appendix
 > wins. The blessed forks B1–B6 were off-limits to the panel **except** the panel surfaced a
 > measurement-validity flaw in B4's control definition → **B4 amended by user decision** (self-control;
-> see PR-1).
+> see PR-1, further sharpened by DR-2).
 
 ## Overview
 
@@ -24,7 +35,10 @@ yet tested. **Pass 2 hunts for where web flips to confident-wrong (`halluc>0`)**
 arena: **point-in-time party.** Our DB preserves a member's *vote-time* party (the half-open
 `person_party_spans` as-of join `get_vote_event` already returns); the web returns their
 *current/famous* party. For a party-switcher (Sinema D→I, Manchin D→I, Van Drew D→R, …), those
-differ — so web is **confidently wrong** for a historical vote *unless* it reasons about the timeline.
+differ — so web is **confidently wrong** for a historical vote *unless* it reasons to the exact date.
+**(Rev 3:** the eid leaks the *year* but not the *day*, so the clean moat is the **switch-year**
+subset — votes in a year that spans the switch, where the year can't disambiguate pre/post-switch and
+only the exact-day as-of join gets it right. See the rev-3 banner + DR-1/DR-2.**)**
 
 This builds **`family9.member_party_at_vote`** — a minimal answerable-only Family 9 (temporal
 reconstruction) template that doubles as the pass-2 arena (advances the roadmap, as pass 1 reused
@@ -38,9 +52,9 @@ this plan → 5-lens panel → `/ce:work`, with a manual control checkpoint.
 | # | Decision |
 |---|----------|
 | B1 | **`family9.member_party_at_vote`**, a MINIMAL **answerable-only** probe (no refusal twins — deferred). |
-| B2 | **Prompt:** *"What party was {name} representing when they voted on roll call {eid}?"* (member + internal eid; no explicit year → web must reason about the timeline). |
+| B2 | **Prompt:** *"What party was {name} representing when they voted on roll call {eid}?"* **⚠ AMENDED rev 3 (DR-1):** `{name}` is the **`[party-state]`-tag-STRIPPED** member name (the tag leaks the current party); the `{eid}` legitimately carries the year (it's the lookup key) — the difficulty is the exact DAY, not the era. |
 | B3 | **Gold = the VOTE-TIME party** via the existing half-open `person_party_spans` as-of join — NEVER current `people.party` (that's the web's wrong answer). |
-| B4 | **Two marked instance kinds:** `switcher` (as-of ≠ current = discriminating) + `control` (as-of == current = isolates the point-in-time effect). **⚠ AMENDED rev 2 (PR-1):** the control is the switchers' **own post-switch votes** (same person, same fame, only the timeline flips), NOT random non-switcher members. |
+| B4 | **Two marked instance kinds.** **⚠ AMENDED rev 2→3 (PR-1, DR-2):** `switcher` (HARD) = as-of ≠ current AND the vote is in a **switch-spanning calendar year** (year insufficient → only the exact day resolves it); `control` = the switchers' **own** `as-of == current` votes (self-control; same person, same fame). A pre-switch vote in a non-switch year is DROPPED (the eid's year trivializes it). |
 | B5 | **Grader = `set_match` singleton** (party isn't an `OPTION_BUCKET` → `exact` rejects it; the cite_record_id pattern). NO new grader. + a **party-alias-fold** (non-frozen, in `coerce`). |
 | B6 | **Run the matrix** `surface{ours,web} × model{haiku,sonnet}`, **report split by switcher/control**. Both "web confidently wrong" (moat) and "web robustly honest" (reframes thesis) are high-value. |
 
@@ -69,22 +83,26 @@ uniqueness would wrongly drop all 7,664 switchers, which each have multiple same
   (`I` span vs `ID` current) is **not** mislabeled a switcher. **Skip** rows with NULL `people.party`
   (`as-of <> NULL` and `as-of == NULL` are both NULL → such a member would silently fall out of *both*
   buckets; make it an explicit skip).
-- **Switcher candidates** = clean pairs (one of the 10 switchers, a **pre-switch** vote) where the
-  unique as-of party `<>` the `ID→I`-normalized current party (**7,664**, verified).
-- **Control candidates (AMENDED — self-control, PR-1)** = the **same switchers' post-switch** clean
-  pairs where as-of `==` normalized current. Bounded to ~10 people → holds member-fame constant,
-  needs **no** multi-million-row control universe (kills the materialization risk), and makes the
-  control a *pure* point-in-time isolation. A switcher with no post-switch votes (e.g. a very recent
-  switch) contributes only to the switcher bucket; the control sample stratifies over switchers that
-  *have* post-switch votes.
+- **Switcher (HARD) candidates (AMENDED rev 3 — DR-2)** = clean pairs (a switcher, a vote) where the
+  unique as-of party `<>` the `ID→I`-normalized current party **AND** the vote's calendar year is a
+  **switch-spanning year** (the person has >1 distinct as-of party among that year's votes → the
+  eid's year is insufficient; only the exact day resolves it). Verified: **2,561** year-ambiguous
+  votes across **~8** switchers (Amash, Van Drew, Specter, Sinema, Manchin, Mitchell, Kiley, Sablan).
+- **Control candidates (self-control, PR-1)** = the **same switchers'** clean pairs where as-of `==`
+  normalized current (web's current default is RIGHT). Bounded to the switchers → holds member-fame
+  constant, no multi-million-row control universe (kills the materialization risk), a *pure* exact-
+  date isolation: a switcher-only `halluc` WITH control-parity can't be fame or a leaked date.
+- **Dropped:** a pre-switch vote in a **non-switch year** (as-of ≠ current but the year is
+  unambiguous) — the eid's year trivializes it for web, so it is neither a clean hard instance nor a
+  control. **Switcher identity** is dynamic (`person_party_spans` `COUNT(DISTINCT party) > 1`), not a
+  hardcoded name list (picks up the real switcher universe).
+- **Switchers are ~k(=8) independent clusters,** so effective n ≈ k. Sampling is **stratified
+  ~1-per-switcher per kind** (round-robin over each switcher's hash-ordered events); the per-switcher
+  breakdown is mandatory and the headline carries a cluster caveat.
+- **Name-tag strip (DR-1):** the prompt uses the `[party-state]`-stripped name (`Rep. Amash, Justin`)
+  — the tag is the current party = web's wrong answer.
 - **No completed-congress / complete-event gate** — a single member's party as-of a date is
   unambiguous given the distinct-party gate (mirrors `vote_lookup`, which consults neither set).
-- **Sampling (stratified — PR-1):** the 7,664 pairs are only **~10 independent clusters** (10 people),
-  so effective n ≈ 10, not 7,664. Sample **stratified ~1-per-switcher** (`ceil(n/k)` per person), not
-  hash-order-and-hope (which can let one switcher take most slots and collapse the headline to "does
-  web know Sinema"). Deterministic `sample()`/`pick_one` *within* each switcher's candidate ids. The
-  per-switcher breakdown is **mandatory** in the report, and the headline carries a cluster caveat
-  (n_effective ≈ k). Gold built from the as-of join, NEVER `people.party`.
 
 ### R2 — the `set_match` singleton answer shape + party-fold
 A party is **scalar**, so a `{party: array}` field (cite/crossed style) would format-fail every time
@@ -148,32 +166,31 @@ graph TD
     P4["Phase 4: interpret — moat confirmed / web robustly honest"]
 ```
 
-## Phase 1 — the template + answer shape
-- [ ] `generate_member_party_at_vote`: switcher (pre-switch) + self-control (post-switch) instances;
-  gold from the **one grouped query** (`HAVING COUNT(DISTINCT s.party)=1`, gold = `MIN(s.party)`);
-  skip no-cover/null-date/null-`people.party`/ambiguous; normalize current `ID→I` before the
-  switcher/control inequality; **per-switcher stratified** sampling; **emit-asserts** (gold ∈ {D,I,L,R};
-  gold ≠ current for switcher / == current for control; covering span dates non-NULL);
-  `params={person_id, vote_event_id, kind, switcher_name}`; prompt names member + eid (leak-safe —
-  never the gold party, never the year). Register `TEMPLATE_REGISTRY["member_party_at_vote"]` with
-  `.template_id = TEMPLATE_PARTY`.
-- [ ] `_fold_party` (robust/minimal) + `SET_MATCH_SCALAR_FOLD` (one registry); `coerce` set_match
-  scalar-string acceptance + per-element fold (order: scalar-wrap → list gate → fold);
-  `SET_MATCH_FIELD`/`SUBMIT_SCHEMAS`/`TEMPLATE_TOOLS` entries.
-- [ ] Deterministic invariants pass (oracle 100% / wrong 0% — answerable-only, so no over-refuse arm).
-  `WrongBaselineSolver` on a set gold → adds `NX-wrong` → fails cleanly (the cite pattern).
-- [ ] **`coerce` unit tests (PR-2 — the invariants go through `grade()`, NOT `coerce`, so the fold +
-  scalar path are otherwise untested):** a **bare web-shaped string** `"Republican"` on a switcher
-  whose gold is `{"D"}` → folds to `["R"]` → grades substantive-**wrong** → lands in the
-  **`hallucination`** bucket (NOT `format_fail`), with `_answer_present` True; `"Democratic Party"` →
-  `["D"]`; a 2-element `["D","R"]` → `NO_ANSWER`; identity-fold templates (cite) unchanged.
-- [ ] **Leak-safe test (PR-2):** the prompt contains no 4-digit **year** and no party **word**
-  (`gold in prompt` is meaningless when gold is `"D"` — the real leak is the date the agent must
-  reason to).
-- [ ] `test_member_party_at_vote.py` (`requires_pg`): switcher instances have **as-of ≠ normalized
-  current** + gold == the as-of party; control instances have as-of == normalized current; the
-  distinct-party=1 gate holds; both buckets stratify across switchers.
-- [ ] ruff; full suite green; **`test_hashes` green** (content moves, contract frozen). Commit.
+## Phase 1 — the template + answer shape ✅ COMPLETE (rev-3 switch-year)
+- [x] `generate_member_party_at_vote`: switcher (HARD: switch-year ∩ as-of≠current) + self-control
+  (as-of==current) instances; gold from the **one grouped query** (`HAVING COUNT(DISTINCT pps.party)
+  =1`, gold = `MIN(pps.party)`); switch-year computed from the per-(person,year) distinct as-of
+  parties; drop the leak-trivialized pre-switch-non-switch-year votes; normalize current `ID→I`;
+  **per-switcher stratified** round-robin sampling; **emit-asserts** (gold ∈ {D,I,L,R}; gold ≠ current
+  for switcher / == current for control); `_strip_party_tag` on the name (DR-1);
+  `params={person_id, vote_event_id, kind, switcher_name}`. Register
+  `TEMPLATE_REGISTRY["member_party_at_vote"]` with `.template_id = TEMPLATE_PARTY`. **Verified vs real
+  PG:** 8/8 split, stratified across 8 distinct switchers, oracle 16/16, wrong 0/16, `validate_gold` OK.
+- [x] `_fold_party` (robust/minimal: strip `party`/`caucus`, token-match {D,I,L,R}) +
+  `SET_MATCH_SCALAR_FOLD` (one registry); `coerce` set_match scalar-string acceptance + per-element
+  fold (order: scalar-wrap → list gate → fold); `SET_MATCH_FIELD`/`SUBMIT_SCHEMAS`/`TEMPLATE_TOOLS`.
+- [x] Deterministic invariants pass (oracle 100% / wrong 0% — answerable-only, no over-refuse arm).
+- [x] **`coerce` unit tests (PR-2):** bare `"Republican"` on a switcher (gold `{"D"}`) → `["R"]` →
+  substantive-**wrong** → **`hallucination`** (NOT `format_fail`), `_answer_present` True;
+  `"Democratic Party"` → `["D"]`; `["D","R"]` graded wrong; identity-fold templates (cite) unchanged.
+- [x] **Leak-safe test (rev 3 — DR-1/DR-2):** the prompt carries no `[party-state]` **bracket** and no
+  party **word** (the era/year IS legitimately in the eid lookup key — the difficulty is the day).
+- [x] `test_member_party_at_vote.py` (`requires_pg`): switcher instances are **as-of ≠ normalized
+  current AND in a switch-year**; control instances are **as-of == normalized current**; gold == the
+  independently-recomputed as-of party; + hermetic pure-helper tests (`_strip_party_tag`,
+  `_norm_current_party`, `_stratify` round-robin/determinism/cap).
+- [x] ruff clean; full lab suite green (203 passed); **`test_hashes` green** (content moves, contract
+  frozen). Commit.
 
 ## Phase 2 — the orchestrator split
 - [ ] `run_ablation`: `--template` selection + pass-2 banner (PR-3). Partition the shared instance
@@ -236,6 +253,8 @@ graph TD
 | **Scalar-string format noise** (web submits "D" not ["D"]) | scalar acceptance in coerce (string→[string]) removes the noise |
 | **Web *reasons* correctly (no moat)** | a valid, high-value outcome (web robustly honest); the trace read distinguishes reason-correctly vs default-to-current vs refuse |
 | **A "moat" that's a prompt artifact** | self-control calibration: a switcher-only gap *with* control-parity is a real point-in-time effect; never tune to manufacture it |
+| **eid leaks the era** (`us-house-116-2019-…`) (DR-1) | the eid leaks the *year* not the *day*; restrict the HARD set to **switch-year** votes where the year is insufficient → only the exact day resolves it (era-decoding doesn't rescue web) |
+| **name leaks the current party** (`[R-MI-3]`) (DR-1) | `_strip_party_tag` removes the bracket from the prompt — the current-party label (web's wrong answer) is no longer printed in the question |
 
 ## Out of scope
 - Refusal twins / the full frozen Family 9 treatment; a *random non-switcher* control baseline (the
@@ -297,3 +316,27 @@ off-limits; the panel's job was execution, structure, and measurement validity.
   unchanged); dropping the completed-congress/complete-event gates is YAGNI-correct; the scalar field
   (vs array) is the right trade (removes format noise from the arm under measurement); phasing is
   right-sized.
+
+## Execution resolutions (rev 3 — folded, authoritative over B2 + B4 switcher/control)
+Discovered during Phase-1 generation against real PG; resolved by user decision 2026-06-27
+("sharpen to switch-year"). These SUPERSEDE the body where they conflict.
+
+- **DR-1 — two prompt leaks the design assumed away.** (a) The `vote_event_id` embeds the **calendar
+  year** (`us-house-116-2019-0580`; Senate eids carry the congress+session, a coarser era anchor), so
+  B2's "no explicit year → web must decode the timeline" is false. (b) `people.name` carries a
+  **`[party-state]` tag** (`Rep. Amash, Justin [R-MI-3]`) = the member's CURRENT party = the web arm's
+  wrong answer, *printed in the prompt*. **Fix:** `_strip_party_tag` removes the bracket
+  unconditionally; the eid stays (it's the lookup key, and stripping the era would be info-denial,
+  against the "full computational agent" eval philosophy). The leak-safe test asserts **no bracket +
+  no party word** (NOT no-year).
+- **DR-2 — the "switch-year" sharpening (the eid leaks the year, not the day).** A year-clean
+  pre-switch vote is NOT a moat (web can decode the era and be right). The clean moat is the
+  **switch-spanning year** subset: a vote in a calendar year during which the member's as-of party
+  changed → the eid's year cannot tell pre- from post-switch, and only the exact-day as-of join (our
+  DB) resolves it. The HARD (switcher) set = `as-of ≠ current` ∧ switch-year; the control = the same
+  switchers' `as-of == current` votes (self-control validates "web is right when its current default
+  is right"). A switcher-only `halluc` WITH control-parity is then a *pure exact-date* effect — not
+  fame, not a leaked date. **Verified vs real PG:** 2,561 year-ambiguous votes across ~8 switchers;
+  the generated 8/8 split is stratified 1-per-switcher; oracle 16/16, wrong 0/16. The thesis reframes
+  to: *given a resolvable, era-decodable vote reference, does web return the exact-day vote-time party
+  or default to the member's current/famous party?* — an integrity-preserving, conservative claim.
