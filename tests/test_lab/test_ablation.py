@@ -9,7 +9,13 @@ trust-fatal hallucination bucket).
 
 import pytest
 
-from lab.ablation import classify
+from lab.ablation import (
+    _aggregate_by_switcher,
+    _delta,
+    _partition_by_kind,
+    classify,
+)
+from lab.harness import Instance
 
 
 def _subs(fv, dc, ac):
@@ -68,3 +74,88 @@ def test_partition_is_exhaustive_and_exclusive():
     assert seen == {"correct", "hallucination", "over_refusal", "format_fail", "errored"}
     for s, want in legal:
         assert classify(s, errored=False) == want
+
+
+# --- the switcher/control SPLIT machinery (pass 2), on synthetic data — NO live calls ----------
+
+
+def _inst(kind=None):
+    params = {"x": 1} if kind is None else {"kind": kind, "switcher_name": f"Sen. {kind}"}
+    return Instance(
+        instance_id="i",
+        template_id="t",
+        tier="C",
+        params=params,
+        prompt="?",
+        gold={"D"},
+        grader="set_match",
+        is_refusal=False,
+    )
+
+
+def _cell(model, surface, kind, *, halluc=0.0, correct=0.0, by_switcher=None):
+    buckets = ("correct", "hallucination", "over_refusal", "format_fail", "errored")
+    rates = dict.fromkeys(buckets, 0.0)
+    rates["correct"], rates["hallucination"] = correct, halluc
+    return {
+        "model": model,
+        "surface": surface,
+        "kind": kind,
+        "rates": rates,
+        "by_switcher": by_switcher or {},
+    }
+
+
+class TestPartitionByKind:
+    def test_splits_switcher_and_control(self):
+        insts = [_inst("switcher"), _inst("control"), _inst("switcher")]
+        by_kind = _partition_by_kind(insts)
+        assert sorted(by_kind) == ["control", "switcher"]
+        assert len(by_kind["switcher"]) == 2 and len(by_kind["control"]) == 1
+
+    def test_no_kind_collapses_to_all(self):
+        # vote_lookup (pass 1) has no kind -> a single "all" bucket, so pass 1 is unchanged.
+        by_kind = _partition_by_kind([_inst(), _inst()])
+        assert list(by_kind) == ["all"] and len(by_kind["all"]) == 2
+
+
+class TestDelta:
+    def test_switcher_delta_isolates_the_moat(self):
+        # web hallucinates on switchers (0.6) while ours doesn't (0.0); control ties -> the headline
+        # delta is read on the SWITCHER subset, never averaged with the control.
+        runs = [
+            _cell("haiku", "ours", "switcher", halluc=0.0),
+            _cell("haiku", "web", "switcher", halluc=0.6),
+            _cell("haiku", "ours", "control", halluc=0.0),
+            _cell("haiku", "web", "control", halluc=0.0),
+        ]
+        assert _delta(runs, "haiku", "switcher", "hallucination") == pytest.approx(0.6)
+        assert _delta(runs, "haiku", "control", "hallucination") == pytest.approx(0.0)
+
+    def test_delta_averages_over_repeats(self):
+        runs = [
+            _cell("s", "ours", "switcher", correct=1.0),
+            _cell("s", "web", "switcher", correct=0.4),
+            _cell("s", "web", "switcher", correct=0.6),  # 2 web reps -> mean 0.5
+        ]
+        assert _delta(runs, "s", "switcher", "correct") == pytest.approx(-0.5)
+
+    def test_none_when_an_arm_is_absent(self):
+        runs = [_cell("s", "ours", "switcher", halluc=0.0)]  # no web cell
+        assert _delta(runs, "s", "switcher", "hallucination") is None
+
+
+class TestAggregateBySwitcher:
+    def test_merges_bucket_counts_across_reps(self):
+        cells = [
+            _cell("s", "web", "switcher", by_switcher={"Amash": {"hallucination": 1}}),
+            _cell(
+                "s",
+                "web",
+                "switcher",
+                by_switcher={"Amash": {"hallucination": 1, "correct": 1}, "Sinema": {"correct": 1}},
+            ),
+        ]
+        agg = _aggregate_by_switcher(cells)
+        assert agg["Amash"]["hallucination"] == 2 and agg["Amash"]["correct"] == 1
+        assert agg["Sinema"]["correct"] == 1
