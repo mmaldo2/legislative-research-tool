@@ -1,7 +1,7 @@
 ---
 title: "feat(lab): Family 2 cosponsor×vote join — family2.cosponsored_and_voted_against"
 type: feat
-status: active
+status: completed
 revision: 2
 date: 2026-06-28
 origin: docs/scopes/2026-06-28-family2-cosponsor-vote-join-scope.md
@@ -185,12 +185,19 @@ graph TD
   moved — new template; `grading_contract_hash` UNMOVED). ruff clean (ASCII-only per the cp1252 rule).
   Commit.
 
-## Phase 3 — MANUAL live-agent discrimination check (optional, STOP)
-- [ ] Run the live AgentSolver (haiku/sonnet, agent-sdk) on the template; **read traces**: does the
-  3-tool multi-hop join (`get_bill_cosponsors` → `get_bill_votes` → `get_vote_event` → intersect)
-  separate models (the backlog's D=High prior)? Does the agent correctly return ∅ on `clean` items
-  (no fabricated defector) and REFUSE Twin B (no-vote ≠ ∅)? STOP for review; numbers update the
-  build backlog (discrimination is empirical).
+## Phase 3 — MANUAL live-agent discrimination check ✅ COMPLETE (2026-06-28)
+- [x] Ran `lab.run --agent --backend agent-sdk` (haiku + sonnet, n=10, seed=42). **sonnet 14/14
+  (1.00); haiku 13/14 (0.96)**; clean diagnostics (0 format-fail, 0 errors, 0 no-retrieval-passes,
+  all SDK-success). Both models: `clean`→∅ correct (no fabricated defector); **both refusal twins
+  REFUSED** (Twin A nonexistent + Twin B no-roll-call — the trust-critical "no-vote ≠ ∅" holds live).
+- [x] **Trust-bar trace read:** the one haiku miss is the **8-defector** bill (HR737): haiku ran the
+  full 3-tool chain correctly but submitted **6/8** — *missed* 2 nay-voting cosponsors (no extras);
+  sonnet got all 8. So the gap is a **precision-at-scale OMISSION on the high-cardinality
+  intersection** (the predicted Tier-3 join error mode), NOT a fabrication or a harness artifact.
+- [x] **Finding:** discrimination is REAL but **cardinality-gated** — near-ceiling on the common
+  |gold|=1 defector bills (both ace), separating only on large-|gold| instances. To use this as a
+  STRONG discriminator, oversample high-defector-count bills (or larger n). Backlog updated
+  (D = "high on high-cardinality, ceiling on the common case"). No tuning; honest read.
 
 ## System-Wide Impact
 - **New product tool is exposed beyond the lab.** `get_bill_cosponsors` joins `RESEARCH_TOOLS`, so the

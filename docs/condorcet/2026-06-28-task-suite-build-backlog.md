@@ -68,7 +68,7 @@ separate — we conflated them.
 
 | # | Template | Fam | T | D | M | Data | Why this priority |
 |---|----------|-----|---|---|---|------|-------------------|
-| **1** | **Cosponsored bill Y AND voted against it** | 2 | **3** | **H** | M | ✅ 1.79M edges | The cheapest entry onto the fabrication frontier: the doc's literal "first place frontier models start to fabricate" (two-table cosponsor×vote join). Data ready, no new infra. **NEXT SLICE.** |
+| ~~1~~ | ~~Cosponsored bill Y AND voted against it~~ **SHIPPED** | 2 | 3 | H* | M | ✅ | The first Tier-3 cosponsor×vote join. **SHIPPED** (PR, 2026-06-28). *Live discrimination (haiku/sonnet, n=10): sonnet 14/14, haiku 13/14 — D is **cardinality-gated** (near-ceiling on the common |gold|=1 case; separates only on large defector sets — haiku missed 2/8 on the 8-defector bill, a precision-at-scale omission, the predicted join error mode). To use as a STRONG discriminator, oversample high-|gold| bills.* |
 | 2 | Members who never cosponsor across the aisle (window) | 2 | 3 | H | M | ✅ edges + party | Negative set membership + windowing — high fabrication risk; rides the same join infra as #1. |
 | 3 | Most frequent cosponsorship pairs / blocs | 2 | 3 | M-H | M | ✅ edges | Edge-frequency ranking over the whole graph — web can't compute it from snippets (moat surface); good RLVR. |
 | 4 | Lead-sponsor passage rate for X | 2 | 2-3 | M | M | ✅ edges + votes | Success-rate join; moderate. Bundle with the Family 2 slice if cheap. |
