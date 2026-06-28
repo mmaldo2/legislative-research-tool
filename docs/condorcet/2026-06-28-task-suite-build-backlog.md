@@ -69,22 +69,27 @@ separate — we conflated them.
 | # | Template | Fam | T | D | M | Data | Why this priority |
 |---|----------|-----|---|---|---|------|-------------------|
 | ~~1~~ | ~~Cosponsored bill Y AND voted against it~~ **SHIPPED** | 2 | 3 | H* | M | ✅ | The first Tier-3 cosponsor×vote join. **SHIPPED** (PR, 2026-06-28). *Live discrimination (haiku/sonnet, n=10): sonnet 14/14, haiku 13/14 — D is **cardinality-gated** (near-ceiling on the common |gold|=1 case; separates only on large defector sets — haiku missed 2/8 on the 8-defector bill, a precision-at-scale omission, the predicted join error mode). To use as a STRONG discriminator, oversample high-|gold| bills.* |
-| 2 | Members who never cosponsor across the aisle (window) | 2 | 3 | H | M | ✅ edges + party | Negative set membership + windowing — high fabrication risk; rides the same join infra as #1. |
-| 3 | Most frequent cosponsorship pairs / blocs | 2 | 3 | M-H | M | ✅ edges | Edge-frequency ranking over the whole graph — web can't compute it from snippets (moat surface); good RLVR. |
-| 4 | Lead-sponsor passage rate for X | 2 | 2-3 | M | M | ✅ edges + votes | Success-rate join; moderate. Bundle with the Family 2 slice if cheap. |
-| **5** | **Quote-in-bill-text verification (#3)** | 10 | **6** | H | **H** | ⛔ `bill_texts`=68 | **The flagship adversarial-provenance task + the strongest remaining moat candidate** (exact verification of a NEGATIVE over a long document — what web's snippet retrieval can't do). **BLOCKED on a bill-text corpus** (0.05% ingested) + the selection-bias discipline. The natural home for the *resurrected* moat ablation. Scope as a deliberate corpus+template investment, not a quick slice. |
-| 6 | Bipartisan cosponsorship count on Y | 2 | 2 | M | L | ✅ edges | Conditional count; lower discrimination, public-ish. Fill-in. |
-| 7 | Bills sponsored / cosponsored by X | 2 | 1 | L | L | ✅ edges | Single-hop lookup — low on all axes (like `vote_lookup`). Coverage only; deprioritize. |
+| ~~2~~ | ~~Never cosponsor across the aisle~~ **REJECTED** | 2 | 3 | — | — | ✅ | **Scope-review rejected (2026-06-28):** crossing the aisle is the NORM, not the exception (median **56** cross-aisle cosponsorships per member-congress; 89% of cells >15). No ∅ "principled-partisan" population (the 28 never-crossed are low-volume members); set_match needs a thin selection-biased ≤5-cross-aisle gate (2.3% of cells); a count is an exact-large-number lottery. The premise is false in the data — no clean answer shape. |
+| ~~3~~ | ~~Most frequent cosponsorship pairs / blocs~~ **TOOL, not task** | 2 | 3 | — | — | ✅ | **Reclassified (2026-06-28):** high USER value + tractable in SQL, but a weak agent EVAL — once the tool does the pairwise co-occurrence, the agent just sorts the output (no reasoning, the cite "answer-in-the-tool" trap). **Build as a product `RESEARCH_TOOL` when there's demand**, not an eval template. See [[project_research_tools_beyond_eval]]. Could feed a richer multi-hop task later (bloc partners -> their votes). |
+| — | Lead-sponsor passage rate / Bipartisan count | 2 | 2-3 | M | L | ✅ | Weak (tier-2 aggregations, not sharp joins). **Family 2 declared DONE** — the cosponsor×vote join (#1) was the one strong Tier-3 join; the rest are rejected/weak/tool-not-task. |
+| **NEXT** | **Quote-in-bill-text verification (#3)** | 10 | **6** | H | **H** | ⛔ `bill_texts`=68 | **The flagship adversarial-provenance task + the strongest remaining moat candidate** (exact verification of a NEGATIVE over a long document — what web's snippet retrieval can't do). **BLOCKED on a bill-text corpus** (0.05% ingested) + the selection-bias discipline. The natural home for the *resurrected* moat ablation. Scope as a deliberate corpus+template investment, not a quick slice. **NEXT SLICE.** |
+| — | Bills sponsored / cosponsored by X | 2 | 1 | L | L | ✅ edges | Single-hop lookup — low on all axes (like `vote_lookup`). Coverage only; deprioritize. |
 | 8 | Temporal: point-in-time bill status as of T | 9 | 5 | ? | ? | ⚠ no bitemporal store | High tier, but needs a transaction-time/bitemporal store we don't have. Infra-gated; revisit if we build bitemporal. (Note: point-in-time *party* already tested → no moat; don't assume temporal = moat.) |
 | — | Existence check (#1) / refusal calibration (#4) | 10 | 6 | L | L | ✅ | **Skip** — redundant: `cite_record_id`'s no-link arm already proves "X never voted on Y → REFUSE," and every template carries refusal twins. Low marginal value. |
 | — | Crosswalk reconciliation (#5) | 10 | — | L | L | ⚠ | **Skip for now** — thin for a federal-only lab (Open States is state legislatures); revisit with a real multi-source identity problem. |
 | — | Bill status / actions (Family 3) | 3 | 1-2 | L-M | L | ✅ 981k actions | Data-rich but mostly public single-hop/aggregation. Deprioritize vs the Tier-3 joins. |
 
 ## Decisions recorded
-- **NEXT = Family 2 `cosponsored Y AND voted against it`** — highest D, lowest cost (data ready), first
-  Tier-3 join. Chosen for the *reason* (fabrication frontier), not because "Family 2 is next."
-- **Quote-in-text (#3) is the deferred flagship**, paired with the bill-text corpus investment and the
-  next moat ablation. Do NOT build the cheap F10 lookups (#1/#4/#5) — they're redundant/thin.
+- **Family 2 `cosponsored Y AND voted against it` SHIPPED** (PR #43) — the one strong Tier-3 join.
+  Chosen for the *reason* (fabrication frontier), not because "Family 2 is next." D is cardinality-gated.
+- **Family 2 declared DONE (2026-06-28).** never-cross-aisle REJECTED (crossing is the norm — no clean
+  answer shape); blocs is a TOOL not an eval task (build as a product `RESEARCH_TOOL` per
+  [[project_research_tools_beyond_eval]]); passage-rate/bipartisan are weak tier-2 aggregations. The
+  cosponsor×vote join was the only strong remaining Family 2 Tier-3 join.
+- **NEXT = quote-in-text (#3)** — the flagship, paired with the bill-text corpus investment + the next
+  moat ablation. Do NOT build the cheap F10 lookups (#1/#4/#5) — redundant/thin.
+- **Build product research_tools beyond eval** — capabilities users want (blocs) even when they're poor
+  eval tasks; track as a standing workstream ([[project_research_tools_beyond_eval]]).
 - **`family9.member_party_at_vote` is NOT promoted** to a trusted benchmark slice until its gold is
   reconciled vs the Clerk record (`2026-06-28-person-party-spans-gold-integrity.md`).
 - Re-score after each live run — discrimination is empirical, not a prior.
