@@ -3,10 +3,10 @@
 Hermetic: the `_same_party_pair_keys` pair builder (party/floor filter, canonical
 same-chamber-same-party dedup, no self-pair, input-order-independent determinism).
 `requires_pg`: the gold predicate (each gold eid = both cast yea/nay AND differ), the
-`(vote_event_id, person_id)` uniqueness linchpin, the two refusal twins (cross-body / nonexistent ->
-REFUSE, proven via 0-records-any-option), the deterministic invariants, and the gold == two-tool
-differ-set drift guard. plain `def` for the sync (psycopg2) checks; one async test for the tool
-equality (best-effort skip like the sibling async pg tests).
+`(vote_event_id, person_id)` uniqueness linchpin, the twins (cross-body -> answerable EMPTY set;
+nonexistent name -> REFUSE), the deterministic invariants, and the gold == two-tool differ-set drift
+guard. plain `def` for the sync (psycopg2) checks; one async test for the tool equality (best-effort
+skip like the sibling async pg tests).
 """
 
 import json
@@ -101,7 +101,8 @@ def _gen(n=12):
 def test_gold_predicate_same_party_and_leak_safe():
     insts, conn = _gen()
     try:
-        answerable = [i for i in insts if not i.is_refusal]
+        # the natural same-party pairs (the crossbody-empty kind is checked separately below).
+        answerable = [i for i in insts if i.params.get("kind") == "answerable"]
         assert answerable, "no answerable covoting instances generated"
         cur = conn.cursor()
         for i in answerable:
@@ -147,17 +148,17 @@ def test_vote_records_pair_uniqueness():
 
 
 @pytest.mark.requires_pg
-def test_refusal_twins_airtight():
+def test_twins_crossbody_empty_and_nonexistent_refusal():
     insts, conn = _gen()
     try:
         cur = conn.cursor()
-        crossbody = [i for i in insts if i.refusal_reason == "member_not_in_chamber"]
+        crossbody = [i for i in insts if i.params.get("kind") == "crossbody_empty"]
         noname = [i for i in insts if i.refusal_reason == "member_not_in_data"]
-        assert crossbody and noname, "both refusal twins must be generated"
-        for i in crossbody + noname:
-            assert i.gold == REFUSAL and i.grader == "refusal_correct" and i.is_refusal
-        # Twin A: the senator (person_b) has 0 (119, house) records of ANY option
+        assert crossbody and noname, "crossbody-empty and nonexistent-name twins must be generated"
+        # Twin A is ANSWERABLE-EMPTY (gold=set()), not a refusal: House member + real Senator asked
+        # about HOUSE votes share zero roll calls. Proof: the senator has 0 (119,house) records.
         for i in crossbody:
+            assert i.gold == set() and i.grader == "set_match" and not i.is_refusal
             cur.execute(
                 "SELECT 1 FROM vote_records vr JOIN vote_events ve ON ve.id = vr.vote_event_id "
                 "JOIN bills b ON b.id = ve.bill_id JOIN sessions s ON s.id = b.session_id "
@@ -165,9 +166,11 @@ def test_refusal_twins_airtight():
                 (i.params["person_b"],),
             )
             assert cur.fetchone() is None, (
-                f"cross-body senator {i.params['person_b']} has a house record"
+                f"crossbody senator {i.params['person_b']} has a house record"
             )
-        for i in noname:  # Twin B: the synthetic name (person_b) matches no person
+        # Twin B is a genuine REFUSAL: the synthetic name (person_b) matches no person at all.
+        for i in noname:
+            assert i.gold == REFUSAL and i.grader == "refusal_correct" and i.is_refusal
             token = i.params["person_b"]
             cur.execute(
                 "SELECT 1 FROM people WHERE LOWER(name) LIKE %s LIMIT 1", (f"%{token.lower()}%",)
@@ -197,7 +200,9 @@ async def test_gold_equals_two_tool_diff():
     best-effort skip on DB-down, but FAIL if the tool errors for an active member (real drift)."""
     insts, conn = _gen()
     conn.close()
-    answerable = [i for i in insts if not i.is_refusal]
+    # only the natural same-party pairs: the crossbody-empty member is not in the prompted chamber,
+    # so the tool would (correctly) error for it -- gold=set() is proven by the twin test instead.
+    answerable = [i for i in insts if i.params.get("kind") == "answerable"]
     from sqlalchemy import text
 
     from src.api.chat import _tool_get_member_voting_record
