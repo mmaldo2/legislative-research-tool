@@ -1144,8 +1144,9 @@ def generate_covoting_disagreement(conn, n: int, seed: int, precomputed) -> list
     chamber, activeness floor). gold depends ONLY on X's and Y's own records -- read identically by
     the gold SQL and get_member_voting_record -- so unlike crossed_party (cross-checks a set vs a
     roster COUNT) NO complete-events gate is needed; `precomputed` is accepted but unused. Refusal
-    twins (identical prompt shape): a cross-body pair (a senator on a House query has 0 house
-    records of ANY option -> find_people returns empty -> REFUSE) and a nonexistent member name."""
+    twins (same prompt shape): a cross-body pair (House member + real Senator asked about HOUSE
+    votes -> 0 shared roll calls -> answerable EMPTY set, not a refusal) and a nonexistent member
+    name (unresolvable -> REFUSE)."""
     cur = conn.cursor()
     instances: list[Instance] = []
     congress = "119"
@@ -1211,13 +1212,16 @@ def generate_covoting_disagreement(conn, n: int, seed: int, precomputed) -> list
     house_ids = sorted({pid for (pid, _p, ch, _nv) in roster_rows if ch == "house"})
     senate_ids = sorted({pid for (pid, _p, ch, _nv) in roster_rows if ch == "senate"})
 
-    # --- refusal twin A: cross-body -- a real senator on a House query. find_people requires >=1
-    # record of ANY option in the window; the senator has 0 house records -> find_people empty.
+    # --- twin A: cross-body ANSWERABLE-EMPTY -- a House member + a real Senator, asked about HOUSE
+    # votes. The senator has 0 house records, so they share NO house roll call -> the disagreement
+    # set is EMPTY. gold = set() (answerable, NOT a refusal -- "an empty list if none"): a correct
+    # agent resolves the senator in her chamber and returns []; an over-refuser/fabricator fails.
     for i in range(n_refusal):
         if not house_ids or not senate_ids:
             break
         partner, senator = house_ids[i % len(house_ids)], senate_ids[i % len(senate_ids)]
-        # per-emit proof: the senator has 0 (119, house) records of ANY option (the tool's gate).
+        # per-emit proof of gold=EMPTY: the senator has 0 (119, house) records of ANY option, so the
+        # house-chamber disagreement set is necessarily empty.
         cur.execute(
             "SELECT 1 FROM vote_records vr "
             "JOIN vote_events ve ON ve.id = vr.vote_event_id "
@@ -1228,18 +1232,24 @@ def generate_covoting_disagreement(conn, n: int, seed: int, precomputed) -> list
         )
         if cur.fetchone() is not None:
             raise AssertionError(
-                f"cross-body twin: senator {senator} has a house-{congress} record"
+                f"crossbody-empty: senator {senator} has a house-{congress} record"
             )
         instances.append(
-            _covoting_refusal(
-                seed,
-                "crossbody",
-                "house",
-                partner,
-                senator,
-                names[partner],
-                names[senator],
-                "member_not_in_chamber",
+            Instance(
+                instance_id=f"{TEMPLATE_COVOTING}:{seed}:crossbody:house:{partner}:{senator}",
+                template_id=TEMPLATE_COVOTING,
+                tier="C",
+                params={
+                    "person_a": partner,
+                    "person_b": senator,
+                    "congress": congress,
+                    "chamber": "house",
+                    "kind": "crossbody_empty",
+                },
+                prompt=_covoting_prompt("house", names[partner], names[senator]),
+                gold=set(),
+                grader="set_match",
+                is_refusal=False,
             )
         )
 
