@@ -598,6 +598,85 @@ def _make_fetch_url_tool(observations: list):
     return _fetch_url
 
 
+# --- web-surface run_python (ablation): a GUARDED code-execution conduit ------------------------
+# "web + code" is the honest baseline (a generic-tool model computes over what it scrapes). The
+# built-in Bash is uncontrollable (it could curl our DB / read gold off disk), so the web arm uses
+# THIS instead: `python -I -S` (isolated + NO site-packages, so psycopg2/asyncpg are NOT importable
+# -> the code CANNOT connect to our Postgres) in a subprocess with a scrubbed env (no DATABASE_URL /
+# keys / tokens) + a throwaway cwd, time- and output-capped. EXPERIMENT-GRADE: not network-namespace
+# isolated -- the trust-bar trace-read must confirm no baseline rollout reached our data, and a
+# PUBLISHED run wants OS-level isolation + a security-sentinel pass. surface="web" only.
+_RUN_PYTHON_DESC = (
+    "Execute a short Python 3 script and return its stdout/stderr. Use it to COMPUTE over data "
+    "you gathered from WebSearch/fetch_url (count, aggregate, compare) -- print your result. It "
+    "runs in an isolated subprocess with only the standard library and NO access to any private "
+    "database or credentials."
+)
+_RUN_PYTHON_SCHEMA = {
+    "type": "object",
+    "properties": {"code": {"type": "string", "description": "Python 3 source; print the result."}},
+    "required": ["code"],
+}
+# Whitelist (not blacklist) the env passed to the sandbox: enough to start the interpreter, nothing
+# that could reach our data (DATABASE_URL) or bill our keys (ANTHROPIC*/*KEY*/*TOKEN* are dropped).
+_RUN_PYTHON_ENV_KEEP = ("PATH", "SYSTEMROOT", "SYSTEMDRIVE", "TEMP", "TMP", "LANG", "LC_ALL", "TZ")
+
+
+async def _exec_sandboxed_python(code: str, *, timeout_s: float = 15.0, cap: int = 10000) -> str:
+    """Run `code` in an isolated stdlib-only subprocess and return captured output. Guards:
+    `-I -S` (no env PYTHON*, cwd off sys.path, NO site-packages -> no DB driver importable); a
+    scrubbed env (only _RUN_PYTHON_ENV_KEEP survives -> DATABASE_URL / keys / tokens gone); a
+    throwaway cwd; a wall-clock timeout; an output cap. Pure + awaitable -> unit-testable without
+    the SDK. Never raises (a failure is returned as text)."""
+    import os
+    import sys
+    import tempfile
+
+    safe_env = {k: os.environ[k] for k in _RUN_PYTHON_ENV_KEEP if k in os.environ}
+    try:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as cwd:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable,
+                "-I",
+                "-S",
+                "-c",
+                code,
+                stdin=asyncio.subprocess.DEVNULL,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=safe_env,
+                cwd=cwd,
+            )
+            try:
+                out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+            except TimeoutError:
+                proc.kill()
+                await proc.wait()  # reap before temp-dir cleanup (Windows holds the cwd handle)
+                return f"Refused: script exceeded the {timeout_s:g}s time limit."
+    except Exception:  # noqa: BLE001 -- a sandbox failure must never crash the rollout
+        return "Failed to execute the script."
+    text = out.decode(errors="replace")[:cap]
+    stderr = err.decode(errors="replace")
+    if stderr.strip():
+        text = f"{text}\n[stderr]\n{stderr[: cap // 2]}"
+    return text.strip() or "(no output)"
+
+
+def _make_run_python_tool(observations: list):
+    """The web-arm guarded code @tool: routes to _exec_sandboxed_python and records the code +
+    output into the trajectory (the trust bar sees exactly what the baseline computed)."""
+    from claude_agent_sdk import tool
+
+    @tool("run_python", _RUN_PYTHON_DESC, _RUN_PYTHON_SCHEMA)
+    async def _run_python(args):
+        code = args.get("code") or ""
+        text = await _exec_sandboxed_python(code)
+        observations.append({"tool": "run_python", "arguments": {"code": code}, "result": text})
+        return {"content": [{"type": "text", "text": text}]}
+
+    return _run_python
+
+
 class AgentSolver:
     """The live LLM solver over {get_vote_event, submit_answer}, constrained to the per-template
     shape-aware submit_answer. `backend` selects messages-api (Option X, run_agentic_chat) or
@@ -740,14 +819,21 @@ class AgentSolver:
         ours: the template's product @tools + submit; mcp__lab__* allowed; built-ins disallowed.
         web:  WebSearch (built-in) + a GUARDED fetch_url (lab @tool, SSRF-blocked) + submit — NO lab
               data tools. The built-in WebFetch STAYS blocked (uncontrollable target); fetch_url is
-              our own guarded conduit so web can read public pages but not reach our DB. NEVER
-              mutates the global disallow list (web builds a FRESH list, only WebSearch removed).
+              our own guarded conduit so web can read public pages but not reach our DB; run_python
+              (a stdlib-only sandboxed subprocess) lets it COMPUTE over what it reads. NEVER mutates
+              the global disallow list (web builds a FRESH list, only WebSearch removed).
         """
         if self.surface == "web":
             fetch_url = _make_fetch_url_tool(observations)
-            allowed = ["WebSearch", "mcp__lab__fetch_url", "mcp__lab__submit_answer"]
+            run_python = _make_run_python_tool(observations)
+            allowed = [
+                "WebSearch",
+                "mcp__lab__fetch_url",
+                "mcp__lab__run_python",
+                "mcp__lab__submit_answer",
+            ]
             disallowed = [t for t in _DISALLOWED_BUILTINS if t != "WebSearch"]  # WebFetch stays
-            return [fetch_url, submit_tool], allowed, disallowed
+            return [fetch_url, run_python, submit_tool], allowed, disallowed
         tool_names = TEMPLATE_TOOLS[inst.template_id]
         product_tools = [
             _make_sdk_product_tool(research_tool_for(n), observations) for n in tool_names
@@ -759,7 +845,7 @@ class AgentSolver:
         """Option W: drive the in-process Agent SDK (subscription-native, no rate wall). Builds a
         fresh in-process MCP server per instance (fresh capture closures); the @tools route through
         the SAME lab_execute_tool seam as Option X (data parity) + record bare-name observations.
-        Surface-configured (ours = lab tools; web = WebSearch + submit only)."""
+        Surface-configured (ours = lab tools; web = WebSearch + fetch_url + run_python + submit)."""
         import os
 
         from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, query, tool
