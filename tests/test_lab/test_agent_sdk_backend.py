@@ -191,7 +191,8 @@ def _vote_lookup_inst() -> Instance:
 
 
 def test_sdk_web_surface_websearch_only_locks_out_lab_and_folds_vocab(monkeypatch):
-    """Tool-surface ablation, WEB arm: WebSearch + submit ONLY (no lab @tool, no WebFetch); the
+    """Tool-surface ablation, WEB arm: WebSearch + fetch_url + run_python + submit (no lab DATA
+    @tool, no WebFetch/Bash builtin); the
     built-in WebSearch call + its result are captured from the stream; web's faithful vocabulary
     ('Aye') folds to the canonical option."""
     from claude_agent_sdk.types import (
@@ -230,11 +231,16 @@ def test_sdk_web_surface_websearch_only_locks_out_lab_and_folds_vocab(monkeypatc
 
     # vocab fold: web's "Aye" -> canonical "yea"
     assert ans == "yea"
-    # web @tools = the guarded fetch_url + submit ONLY (NO get_vote_event / lab DATA tool)
-    assert set(sdk_tools) == {"fetch_url", "submit_answer"}
+    # web @tools = the guarded fetch_url + run_python + submit (NO get_vote_event / lab DATA tool)
+    assert set(sdk_tools) == {"fetch_url", "run_python", "submit_answer"}
     opts = captured["options"]
-    # web allowed_tools = WebSearch + the guarded fetch_url + submit (NO built-in WebFetch)
-    assert opts.allowed_tools == ["WebSearch", "mcp__lab__fetch_url", "mcp__lab__submit_answer"]
+    # web allowed = WebSearch + guarded fetch_url + run_python + submit (NO built-in WebFetch)
+    assert opts.allowed_tools == [
+        "WebSearch",
+        "mcp__lab__fetch_url",
+        "mcp__lab__run_python",
+        "mcp__lab__submit_answer",
+    ]
     assert "WebFetch" not in opts.allowed_tools
     # disallowed: WebSearch removed (so web works); WebFetch + the rest STAY blocked
     assert "WebSearch" not in opts.disallowed_tools
