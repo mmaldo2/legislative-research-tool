@@ -125,18 +125,26 @@ the web arm's only web access is the audited `fetch_url`, which app-blocks priva
       OOM-is-infra, output cap, RO inputs mount). 14/14 green; 251 lab suite green; hashes unmoved.
 
 #### Phase 2: Web fetch-to-mount + data injection + egress assertions (STOP for review)
-- [ ] Web-surface `fetch_url` variant: stream the full body to `/sandbox/inputs/fetch_<n>.<ext>`
-      (raised bulk cap), return a short pointer to context; `_is_safe_public_url` unchanged.
-- [ ] Inject `observations` (+ fetched files) as RO `/sandbox/inputs/`; update `_RUN_PYTHON_DESC` to
-      point the agent at `/sandbox/inputs/` and state there is NO host/network access. `_sdk_tool_config`
-      wires web (fetch_url + run_python) vs ours (run_python only); both `--network none`.
-- [ ] `requires_docker` BLOCKING egress assertions (fail, not skip, on the box producing numbers):
-      both arms — any `socket.create_connection` from `run_python` fails (zero egress, short connect
-      timeout); `fetch_url` still REFUSES a private/loopback URL but fetches a public one
-      (`requires_network`). Assert the injected file is built ONLY from `observations` (never
-      `inst.gold`/`inst.params`) — the no-gold-leak guard. **security-sentinel agent review** (egress
-      boundary, container privilege, secret handling, forbidden flags: no docker.sock/--privileged/
-      --pid=host/--network=host/`-e` host env — argv check). STOP.
+- [x] Web-surface `fetch_url` variant: STREAMS the full body (capped `_FETCH_MAX_BYTES`=8MB) into
+      the shared `sandbox_files` as `fetch_<n>.<ext>` (`_ext_for`: content-type then URL suffix),
+      returns a SHORT pointer to context (not the bulk text); every redirect hop re-guarded by the
+      UNCHANGED `_is_safe_public_url`. Hermetic success + cap tests (fake httpx stream).
+- [x] Inject `observations` (+ fetched files) as RO `/sandbox/inputs/` via `_build_sandbox_inputs`
+      (`observations.json` = data-bearing tool RESULTS; excludes run_python self + submit acks);
+      `_RUN_PYTHON_DESC` points the agent at `/sandbox/inputs/` and states NO network/DB/cred access.
+      `_sdk_tool_config` shares one `sandbox_files` store; web = fetch_url + run_python, ours =
+      run_python only; both `--network none` (one exec path).
+- [x] `requires_docker` BLOCKING egress assertions (run, not skipped, on this box — Docker live):
+      `test_zero_network_egress` (run_python `socket.create_connection` blocked, both arms share the
+      exec path); `test_inputs_mount_is_not_writable` (RO); `test_run_python_tool_reads_injected_
+      observations` (end-to-end injection); `fetch_url` REFUSES private/loopback (hermetic, no fetch).
+      No-gold-leak guard asserted (`test_build_sandbox_inputs_no_gold_leak` — the function has no
+      gold/params parameter). Forbidden-flags argv check (`test_sandbox_argv_locks_down_and_forbids_
+      dangerous_flags`: `--network none`, RO sole mount, NO `--privileged`/`--pid=host`/`--cap-add`/
+      `-e`/docker.sock). **security-sentinel agent review** dispatched. STOP after findings addressed.
+      NOTE: the live PUBLIC `fetch_url` round-trip (VoteView) is validated in Phase 3's re-pilot (real
+      egress) rather than a flaky networked unit test; the streaming/cap/stash logic is proven
+      hermetically here.
 
 #### Phase 3: Re-pilot BOTH arms + regression-check (validate the gate is neutral)
 - [ ] Re-run member_summary n=6 BOTH arms under isolation: ours must stay ~6/6 (run_python reading
@@ -303,6 +311,32 @@ is **allow-by-default with multiple fail-OPEN paths**, and several blockers are 
 - Phase merge (lens 4): egress rules + their proving assertions must land together (never ship an
   unproven integrity control as a checkpoint) -> Phase 1 (container backend + guard parity +
   fail-closed, STOP) / Phase 2 (egress + injection + assertions + security-sentinel, STOP) / re-pilot.
+
+## Security-sentinel review (Phase 2 gate, 2026-06-29) — findings + dispositions
+Reviewed the egress/gold-leak boundary statically against the threat model. Affirmed correct: the
+no-gold-leak guard (`_build_sandbox_inputs` structurally cannot receive `gold`/`params`), `run_python`
+`--network none` isolation, the `_sandbox_argv` lockdown (forbidden-flags test genuinely proves it),
+container reaping, redirect re-guarding, and the ours/web disallow-list parity. Findings:
+- **M2 — IPv4-mapped IPv6 / unspecified gap (FIXED).** `::ffff:127.0.0.1` / `0.0.0.0` could pass the
+  guard on Python 3.12.0–3.12.3 (mapped-address property delegation landed in 3.12.4). `_is_safe_public_url`
+  now unwraps `ipv4_mapped` + rejects `is_unspecified`; four regression URLs added to the BLOCKED set.
+- **M3 — `ANTHROPIC_API_KEY` env-pop concurrency (DOCUMENTED).** Process-global pop/restore is safe
+  because the solver runs instances SEQUENTIALLY on one `asyncio.Runner`; annotated with the invariant
+  + the fix (per-query `env=`) required IF the matrix is ever made in-process-concurrent.
+- **L2 — orphaned `docker run` client on timeout (FIXED).** Added `_kill_proc(proc)` on the
+  CancelledError/TimeoutError paths (the container was already reaped by name; this kills the client).
+- **L3 — injected-filename traversal defense-in-depth (FIXED).** `_exec_sandboxed_python` now skips any
+  key where `Path(fname).name != fname` before the host write (today's keys are already safe).
+- **L4 — secret-redaction breadth (FIXED).** `_safe_err` now also scrubs `Bearer <token>`.
+- **M1 — SSRF guard TOCTOU / time-based DNS rebind (ACCEPTED RESIDUAL, documented in-code + here).**
+  The validated resolution isn't pinned to httpx's connect, so a host that is public at check-time and
+  loopback at connect-time isn't stopped. Practical exploitability is near-zero in THIS gate: the URL
+  consumer is an honest model answering vote questions (not an adversary registering a rebinding
+  domain), our private surface is loopback-only, and `:5432` doesn't speak HTTP (only `:8000` is a
+  meaningful HTTP target). The robust fix (pin the connect to a vetted IP) breaks HTTPS SNI/cert
+  validation against the real public hosts the web arm must reach, so it's deferred; the guard
+  docstring warns against unmodified reuse where URLs are attacker-controlled. Phase-3's deferred
+  cred-rotation is the further belt-and-suspenders. Does NOT block the gate under this threat model.
 
 ### Affirmed (don't re-litigate)
 Frozen `grading_contract_hash`/`content_hash` untouched (`solvers.py`/`lift_instances.py` outside both
