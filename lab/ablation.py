@@ -19,6 +19,7 @@ from collections import Counter
 from datetime import datetime
 
 from lab import templates
+from lab.experiments.lift_instances import LIFT_TEMPLATES
 from lab.harness import RUNS_DIR, prepare_run, solve_grade_write
 from lab.solvers import AgentSolver
 from src.ingestion.vote_parsers import OPTION_BUCKETS
@@ -26,18 +27,36 @@ from src.ingestion.vote_parsers import OPTION_BUCKETS
 _MODEL_IDS = {
     "haiku": "claude-haiku-4-5",
     "sonnet": "claude-sonnet-4-6",
-    "opus": "claude-opus-4-1",
+    "opus": "claude-opus-4-8",  # pre-registered frontier (harness-lift study rev 4.2)
 }
-# Per-rollout caps. ours submits in ~3 turns. The WEB arm needs more (WebSearch -> fetch_url ->
-# re-search past a landing/Cloudflare page -> submit); pass 2's TEMPORAL task is turn-hungrier still
-# (it must establish the vote's date AND the member's party then), so web gets a higher cap (PR-5) —
-# a truncated reasoning chain classifies as `errored`, which would SILENTLY MASK the moat. The $1
-# budget (total_cost_usd IS populated under subscription, ~$0.1/rollout) + the 180s timeout bound
-# cost/latency regardless. (A fairness fix for web, NOT a moat tweak.)
-_MAX_TURNS = 10  # ours
-_MAX_TURNS_WEB = 20  # web (temporal reasoning is multi-search)
-_MAX_BUDGET_USD = 1.0
-_TIMEOUT_S = 180.0
+
+
+def _resolve_template(name):
+    """Frozen Family-1 templates first, then the NON-FROZEN lift-study generators (REV 4.2): the
+    lift study runs through this same matrix driver but its instances live outside content_hash."""
+    if name in templates.TEMPLATE_REGISTRY:
+        return templates.TEMPLATE_REGISTRY[name]
+    if name in LIFT_TEMPLATES:
+        return LIFT_TEMPLATES[name]
+    raise KeyError(
+        f"unknown template {name!r}; "
+        f"frozen={sorted(templates.TEMPLATE_REGISTRY)} lift={sorted(LIFT_TEMPLATES)}"
+    )
+
+
+# Per-rollout caps. Single-event tasks (vote_lookup) submit in ~3 ours turns, but the lift study's
+# WINDOW tasks (member_summary / pairwise) retrieve a large record set then run_python to tally it,
+# so ours needs real headroom too (the n=1 cost probe truncated ours at 10 turns mid-tally). Both
+# arms now compute (REV 4.3), so ours and web get the same turn cap. A truncated chain classifies
+# as `errored` (truncation is NOT a wrong answer); the $ budget + timeout bound cost/latency too.
+# PROVISIONAL pilot values — frozen into the pre-registration after the post-run_python re-probe.
+# The n=6 pilot showed opus x web TIMED OUT 67% on the HONEST WebSearch+fetch_url path at 180s, so
+# web accuracy is CONFOUNDED with the wall clock -> raise the web timeout/turns so the baseline gets
+# a fair shot, and lift the budget so a longer honest run is not budget-truncated (a new confound).
+_MAX_TURNS = 20  # ours (window retrieve + run_python tally)
+_MAX_TURNS_WEB = 30  # web (multi-search WebSearch -> fetch_url -> run_python honest path)
+_MAX_BUDGET_USD = 3.5  # headroom over the $1.33 opus x web observed at 180s
+_TIMEOUT_S = 300.0  # was 180s; opus's honest path needs the room (pilot: 67% timeout)
 
 _BUCKETS = ("correct", "hallucination", "over_refusal", "format_fail", "errored")
 _TAG = {
@@ -147,7 +166,7 @@ def run_ablation(template_name, models, surfaces, n, seed, repeats) -> list[dict
     ours-vs-web delta is read on the SWITCHER subset, never averaged with the control."""
     # Generate the answerable set ONCE and reuse across ALL cells + repeats (P10): so ours-vs-web
     # compares the SAME questions, and the repeats measure model variance, not sample variance.
-    template = templates.TEMPLATE_REGISTRY[template_name]
+    template = _resolve_template(template_name)
     all_instances, ctx = prepare_run(template, n, seed, set(OPTION_BUCKETS))
     answerable = [i for i in all_instances if not i.is_refusal]  # answerable arm only (B1)
     by_kind = _partition_by_kind(answerable)
@@ -283,7 +302,9 @@ def main(argv=None) -> int:
     except (AttributeError, ValueError):
         pass
     p = argparse.ArgumentParser(description="Tool-surface moat ablation (pass 1/2)")
-    p.add_argument("--template", default="vote_lookup")  # pass 2: member_party_at_vote
+    # frozen (vote_lookup, member_party_at_vote, ...) or lift-study (lift_member_summary,
+    # lift_pairwise — the harness-lift ablation, REV 4.2).
+    p.add_argument("--template", default="vote_lookup")
     p.add_argument("--models", default="haiku,sonnet")
     p.add_argument("--surfaces", default="ours,web")
     p.add_argument("--n", type=int, default=10)
