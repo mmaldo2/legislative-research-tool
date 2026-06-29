@@ -125,6 +125,10 @@ class TraceRecord(BaseModel):
     input_tokens: int | None = None
     output_tokens: int | None = None
     cost: float | None = None  # cost is NOT a subscore — a top-level field only
+    # SDK stop reason ("success" | budget/turn truncation | error). Lets the lift analysis EXCLUDE
+    # non-success rollouts post-hoc from the jsonl (a truncation is a protocol miss, not a wrong
+    # answer). Agent-sdk only; None for messages-api / deterministic solvers.
+    result_subtype: str | None = None
 
 
 def _jsonable(value: Any) -> Any:
@@ -183,6 +187,7 @@ def build_record(
         input_tokens=extras.get("input_tokens"),
         output_tokens=extras.get("output_tokens"),
         cost=extras.get("cost"),
+        result_subtype=extras.get("result_subtype"),
     )
 
 
