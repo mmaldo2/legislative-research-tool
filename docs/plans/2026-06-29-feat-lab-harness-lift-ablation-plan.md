@@ -189,6 +189,25 @@ frozen-edit bias. Reconciliation: gap=31, ALL procedural (no `bill_not_ingested`
 set == the public bill/resolution set (a deterministic public-`legis_num` rule). REQUIRED in the
 build: a per-member roster spot-check vs the Clerk (count-level reconciliation misses option-swaps).
 
+**REV 4.3 (2026-06-29): compute held constant across surfaces (cost-probe finding + user decision).**
+The n=1 cost probe (`lift_member_summary`, agent-sdk) found the **ours** arm had NO code tool, so the
+agent had to hand-tally a member's ~1210 records and **truncated at the 10-turn cap** (`err=100%`),
+while the **web** arm has `run_python`. That asymmetry would invert the lift (ours unreliable on the
+RELIABILITY axis the study headlines). FIX (commit `356b9bb`): add the SAME guarded `run_python` to
+the **ours** surface, so the ablation isolates **DATA ACCESS** (our domain tools vs web scrape), not
+"ours can't compute." Compute is now identical on both arms; the only surface difference is the data
+conduit. Re-probe confirms: `haiku x ours` acc=**100%** ($0.31, 31s) vs the prior truncation;
+`haiku x web` still over-refuses ($0.85, 99s). **Provisional caps** (frozen here pending the full
+pilot): `_MAX_TURNS=20` (ours, window retrieve + compute), `_MAX_TURNS_WEB=20`, `_MAX_BUDGET_USD=2.5`
+(~3x the $0.80 observed), `_TIMEOUT_S=180`. Two integrity findings for the GATE (do NOT block the
+unpublished pilot): (a) the `-I -S` sandbox is **not filesystem-isolated** — the ours `run_python`
+read its retrieved records from the SDK's `tool-results/*.txt` cache (benign for ours: its own raw
+tool output, not gold; but the OS-isolation gate must add FS confinement so the WEB arm cannot read
+the cache or gold before publishing); (b) the mechanical grep token `legis` **false-positives on the
+repo path** `legislative-research-tool` — narrow it to the cred form (`legis:` / `legis_dev` /
+`@localhost`); the real DB-reach tokens (`psycopg2`/`asyncpg`/`5432`/`connect(`/`PGPASSWORD`) had
+ZERO hits.
+
 **Tasks (gold-reconciled).** `member_summary` and `pairwise_agreement`, **118th House** only (a
 COMPLETED congress; see REV 4.1). Reported PER TASK (never pooled — Simpson). HARD pre-filter: each
 sampled window's `vote_events` count is reconciled against the House Clerk's published roll-call
@@ -225,8 +244,10 @@ where **all** of {S+H, S+T, F+T} succeeded on ≥1 of k. Report parity/cost as t
 
 **Integrity (pilot = unpublished; the GATE binds before PUBLISHING).** Mechanical trace-grep of every
 `run_python` `code` for: `sys.path`, `site-packages`, `psycopg2`, `asyncpg`, `ctypes`, `socket`,
-`connect(`, `5432`, `8000`, `urllib`, `legis`, `PGPASSWORD` — any hit invalidates that rollout +
-investigate. Before any PUBLISHED number: OS egress isolation + rotate the local DB creds.
+`connect(`, `5432`, `8000`, `urllib`, `legis:`/`legis_dev`/`@localhost` (the cred form — NOT bare
+`legis`, which false-positives on the repo path; REV 4.3), `PGPASSWORD` — any hit invalidates that
+rollout + investigate. Before any PUBLISHED number: OS egress isolation + **filesystem confinement**
+(the `-I -S` sandbox reads disk — REV 4.3) + rotate the local DB creds.
 
 **Strong-baseline check.** Before trusting "parity at lower cost," run a **WebFetch / higher-cap /
 browser sensitivity arm** on a ≥10-instance sample of one task; if S+H's cost/reliability edge
