@@ -49,9 +49,15 @@ fetch_url + run_python). Small **S ∈ {haiku, sonnet}**, frontier **F = opus**.
 ## Implementation phases
 
 ### Phase 1: Plumbing + pilot (STOP for review)
-- [ ] Add **`--surface {ours,web}`** to `lab/run.py` (thread to `AgentSolver(surface=...)`; default
-      `ours` — backward compatible). `run.py` is in neither hash. Add a tiny test that `--surface web`
-      builds the web tool config.
+- [x] ~~Add **`--surface {ours,web}`** to `lab/run.py`~~ — **SUPERSEDED by decouple (REV 4.2).**
+      The driver is `lab/ablation.py` (already a surface×model matrix), not `run.py`. Built instead
+      (commit `578560d`): non-frozen `lab/experiments/lift_instances.py` (118-House member_summary /
+      pairwise generators, public-resolvability prompt, `fields` gold mirror — no `content_hash`
+      move); `ablation._resolve_template` falls back to `LIFT_TEMPLATES`; opus pinned to
+      `claude-opus-4-8`. Tests: pure pairing + hermetic DuckDB gold mirror + requires_pg live shape.
+- [x] **Roster spot-check (REQUIRED, REV 4.2)** — `lab/experiments/lift_roster_spotcheck.py`,
+      READ-ONLY cast-level vs the Clerk (count reconciliation misses option-swaps). **Live: 40/40
+      casts matched, 0 mismatch, 0 unresolved** -> 118-House gold trustworthy at the cast level.
 - [ ] **Budget/turn probe:** one `--n 1` run on the pilot template for each surface; read the
       persisted `cost`/`result_subtype` from the jsonl; set `--max-budget-usd ≈ 3× observed` and
       confirm `--max-turns` headroom (member_summary/pairwise need ~name-resolve + a window read +
