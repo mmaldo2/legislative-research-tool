@@ -1,7 +1,7 @@
 ---
 title: "feat(lab): run_python egress isolation — Docker-sandboxed code tool (harness-lift integrity gate)"
 type: feat
-status: active
+status: completed
 date: 2026-06-29
 origin: docs/scopes/2026-06-29-run-python-egress-isolation-scope.md
 ---
@@ -125,27 +125,48 @@ the web arm's only web access is the audited `fetch_url`, which app-blocks priva
       OOM-is-infra, output cap, RO inputs mount). 14/14 green; 251 lab suite green; hashes unmoved.
 
 #### Phase 2: Web fetch-to-mount + data injection + egress assertions (STOP for review)
-- [ ] Web-surface `fetch_url` variant: stream the full body to `/sandbox/inputs/fetch_<n>.<ext>`
-      (raised bulk cap), return a short pointer to context; `_is_safe_public_url` unchanged.
-- [ ] Inject `observations` (+ fetched files) as RO `/sandbox/inputs/`; update `_RUN_PYTHON_DESC` to
-      point the agent at `/sandbox/inputs/` and state there is NO host/network access. `_sdk_tool_config`
-      wires web (fetch_url + run_python) vs ours (run_python only); both `--network none`.
-- [ ] `requires_docker` BLOCKING egress assertions (fail, not skip, on the box producing numbers):
-      both arms — any `socket.create_connection` from `run_python` fails (zero egress, short connect
-      timeout); `fetch_url` still REFUSES a private/loopback URL but fetches a public one
-      (`requires_network`). Assert the injected file is built ONLY from `observations` (never
-      `inst.gold`/`inst.params`) — the no-gold-leak guard. **security-sentinel agent review** (egress
-      boundary, container privilege, secret handling, forbidden flags: no docker.sock/--privileged/
-      --pid=host/--network=host/`-e` host env — argv check). STOP.
+- [x] Web-surface `fetch_url` variant: STREAMS the full body (capped `_FETCH_MAX_BYTES`=8MB) into
+      the shared `sandbox_files` as `fetch_<n>.<ext>` (`_ext_for`: content-type then URL suffix),
+      returns a SHORT pointer to context (not the bulk text); every redirect hop re-guarded by the
+      UNCHANGED `_is_safe_public_url`. Hermetic success + cap tests (fake httpx stream).
+- [x] Inject `observations` (+ fetched files) as RO `/sandbox/inputs/` via `_build_sandbox_inputs`
+      (`observations.json` = data-bearing tool RESULTS; excludes run_python self + submit acks);
+      `_RUN_PYTHON_DESC` points the agent at `/sandbox/inputs/` and states NO network/DB/cred access.
+      `_sdk_tool_config` shares one `sandbox_files` store; web = fetch_url + run_python, ours =
+      run_python only; both `--network none` (one exec path).
+- [x] `requires_docker` BLOCKING egress assertions (run, not skipped, on this box — Docker live):
+      `test_zero_network_egress` (run_python `socket.create_connection` blocked, both arms share the
+      exec path); `test_inputs_mount_is_not_writable` (RO); `test_run_python_tool_reads_injected_
+      observations` (end-to-end injection); `fetch_url` REFUSES private/loopback (hermetic, no fetch).
+      No-gold-leak guard asserted (`test_build_sandbox_inputs_no_gold_leak` — the function has no
+      gold/params parameter). Forbidden-flags argv check (`test_sandbox_argv_locks_down_and_forbids_
+      dangerous_flags`: `--network none`, RO sole mount, NO `--privileged`/`--pid=host`/`--cap-add`/
+      `-e`/docker.sock). **security-sentinel agent review** dispatched. STOP after findings addressed.
+      NOTE: the live PUBLIC `fetch_url` round-trip (VoteView) is validated in Phase 3's re-pilot (real
+      egress) rather than a flaky networked unit test; the streaming/cap/stash logic is proven
+      hermetically here.
 
-#### Phase 3: Re-pilot BOTH arms + regression-check (validate the gate is neutral)
-- [ ] Re-run member_summary n=6 BOTH arms under isolation: ours must stay ~6/6 (run_python reading
-      the injected file); web (opus) must still reach VoteView via fetch-to-mount + compute, and a
-      probe rollout CANNOT reach our DB. **Regression check:** web completion-rate / cost / latency
-      statistically indistinguishable from the PR #51 pilot — a material web drop = the gate
-      distorting the measurement -> block + fix `--memory`/timeout sizing. Update the pre-reg (REV 4.4)
-      with the fetch-to-mount baseline + gated numbers. Unblocks the full matrix (haiku+sonnet x
-      {ours,web} + opus x web, k=3).
+#### Phase 3: Re-pilot BOTH arms + regression-check (validate the gate is neutral) — DONE
+- [x] Re-ran member_summary (`lift.member_summary_118house`) n=6 seed=42 BOTH arms under isolation
+      (agent-sdk). **ours (haiku): 100% (6/6), 40s, $0.16** — parity vs PR #51 (100%/28s/$0.09); the
+      injection path is exercised live (find_people -> get_member_voting_record -> run_python x4-7
+      reading /sandbox/inputs/ -> submit) in 6/6, so the smoke's over-refusal is fixed. **web (opus):
+      100% (6/6), 65s, $0.60** — NO drop vs PR #51's 33% (it IMPROVED: the structured fetch-to-mount
+      conduit is a better honest path than urllib-flailing-in-sandbox). A probe CANNOT reach our DB:
+      the mechanical trace-grep (`legis:`/`legis_dev`/`@localhost`/`:5432`/`localhost:8000`/`psycopg2`
+      /`asyncpg`/`connect(`) is EMPTY across all web traces; web reaches VoteView ONLY via the audited
+      fetch_url (3 fetches: members/rollcalls/votes CSVs).
+      **REV 4.4 sizing fix (Phase-3 caught it):** the first probe (opus x web n=2) failed 0/2 / 100%
+      timeout because fetch_url TRUNCATED H118_votes.csv at the 8MB cap (real file 14,621,369 B ~=
+      14.6MB). PR #51's web arm used unbounded urllib-in-code, so the cap was a NEW gate artifact ->
+      raised `_FETCH_MAX_BYTES` 8MB->32MB + `_SANDBOX_MEM` 1g->2g; re-probe 2/2, then full n=6 6/6.
+      The votes matrix now arrives complete (14.6MB < 32MB cap) in all 6.
+      **Headline preview (pre-reg REV 4.4):** at accuracy PARITY (100%/100%), ours(haiku) is ~3.75x
+      cheaper ($0.16 vs $0.60) and faster (40s vs 65s) than web(opus) — the cost/reliability story,
+      with a STRONG (not strawmanned) honest web baseline, which defends the bias critique. Unblocks
+      the full matrix (haiku+sonnet x {ours,web} + opus x web, k=3). NOTE the ours n=6 was run pre-
+      REV-4.4 but is apparatus-invariant to it (ours never fetches; its single-member parse is far
+      under even the old 1g).
 - [ ] (Deferred, defense-in-depth) DB-cred rotation via `ALTER ROLE` + `.env`; assert the literal
       `legis_dev` default fails to auth; confirm NO frozen/precompute/`autoresearch` hardcoded-default
       path breaks. Not required for the gate under B (egress is deny-by-default).
@@ -172,24 +193,24 @@ the web arm's only web access is the audited `fetch_url`, which app-blocks priva
   injected file carries no gold; oversized observations bounded.
 
 ## Acceptance Criteria
-- [ ] `run_python` executes `--network none --user sandbox` in a digest-pinned Docker container (both
+- [x] `run_python` executes `--network none --user sandbox` in a digest-pinned Docker container (both
       arms); existing guard tests pass through it (`requires_docker`) + a thin hermetic variant
       survives Docker-less CI; fail-closed via the infra sentinel when Docker is absent.
-- [ ] BOTH sandboxes have ZERO egress (asserted: `socket.create_connection` fails); the web arm
+- [x] BOTH sandboxes have ZERO egress (asserted: `socket.create_connection` fails); the web arm
       reaches public data ONLY via `fetch_url`, which still REFUSES private/loopback URLs and streams
       bulk public bodies to the RO mount.
-- [ ] Infra failures (Docker/image/OOM/daemon/timeout) surface as `result_subtype="sandbox_infra"` and
+- [x] Infra failures (Docker/image/OOM/daemon/timeout) surface as `result_subtype="sandbox_infra"` and
       are EXCLUDED by the matrix — never scored as `over_refusal`/`hallucination`.
-- [ ] Timed-out/cancelled containers are force-removed (`docker ps -a` flat across a run); image built
-      in pre-flight, pinned by digest, image ID stamped into run metadata.
-- [ ] Retrieved data injected at `/sandbox/inputs/`; asserted built ONLY from `observations` (no
+- [x] Timed-out/cancelled containers are force-removed (`docker ps -a` flat across a run; client also
+      killed); image ensured in pre-flight, pinned by digest, digest stamped into the run header.
+- [x] Retrieved data injected at `/sandbox/inputs/`; asserted built ONLY from `observations` (no
       `gold`/`params` leak). Forbidden docker flags absent (argv check); no host `-e` env.
-- [ ] `grading_contract_hash` / `content_hash` unmoved; `ruff` clean; full lab suite green
+- [x] `grading_contract_hash` / `content_hash` unmoved; `ruff` clean; full lab suite green
       (Docker-dependent tests skip cleanly where Docker is absent, but BLOCK on the box producing
       published numbers).
-- [ ] Phase-3 re-pilot: BOTH arms validated under isolation (ours ~6/6; web reaches VoteView via
-      fetch-to-mount + computes; a probe cannot reach our DB); web completion/cost/latency not
-      regressed vs PR #51.
+- [x] Phase-3 re-pilot: BOTH arms validated under isolation (ours 6/6; web 6/6 reaches VoteView via
+      fetch-to-mount + computes; mechanical trace-grep EMPTY -> no probe reached our DB); web
+      completion/cost/latency NOT regressed vs PR #51 (33%/237s/$1.26 -> 100%/65s/$0.60 — improved).
 
 ## Alternatives Considered
 - **Architecture A — iptables egress-filter on a networked web container** (the original plan):
@@ -303,6 +324,32 @@ is **allow-by-default with multiple fail-OPEN paths**, and several blockers are 
 - Phase merge (lens 4): egress rules + their proving assertions must land together (never ship an
   unproven integrity control as a checkpoint) -> Phase 1 (container backend + guard parity +
   fail-closed, STOP) / Phase 2 (egress + injection + assertions + security-sentinel, STOP) / re-pilot.
+
+## Security-sentinel review (Phase 2 gate, 2026-06-29) — findings + dispositions
+Reviewed the egress/gold-leak boundary statically against the threat model. Affirmed correct: the
+no-gold-leak guard (`_build_sandbox_inputs` structurally cannot receive `gold`/`params`), `run_python`
+`--network none` isolation, the `_sandbox_argv` lockdown (forbidden-flags test genuinely proves it),
+container reaping, redirect re-guarding, and the ours/web disallow-list parity. Findings:
+- **M2 — IPv4-mapped IPv6 / unspecified gap (FIXED).** `::ffff:127.0.0.1` / `0.0.0.0` could pass the
+  guard on Python 3.12.0–3.12.3 (mapped-address property delegation landed in 3.12.4). `_is_safe_public_url`
+  now unwraps `ipv4_mapped` + rejects `is_unspecified`; four regression URLs added to the BLOCKED set.
+- **M3 — `ANTHROPIC_API_KEY` env-pop concurrency (DOCUMENTED).** Process-global pop/restore is safe
+  because the solver runs instances SEQUENTIALLY on one `asyncio.Runner`; annotated with the invariant
+  + the fix (per-query `env=`) required IF the matrix is ever made in-process-concurrent.
+- **L2 — orphaned `docker run` client on timeout (FIXED).** Added `_kill_proc(proc)` on the
+  CancelledError/TimeoutError paths (the container was already reaped by name; this kills the client).
+- **L3 — injected-filename traversal defense-in-depth (FIXED).** `_exec_sandboxed_python` now skips any
+  key where `Path(fname).name != fname` before the host write (today's keys are already safe).
+- **L4 — secret-redaction breadth (FIXED).** `_safe_err` now also scrubs `Bearer <token>`.
+- **M1 — SSRF guard TOCTOU / time-based DNS rebind (ACCEPTED RESIDUAL, documented in-code + here).**
+  The validated resolution isn't pinned to httpx's connect, so a host that is public at check-time and
+  loopback at connect-time isn't stopped. Practical exploitability is near-zero in THIS gate: the URL
+  consumer is an honest model answering vote questions (not an adversary registering a rebinding
+  domain), our private surface is loopback-only, and `:5432` doesn't speak HTTP (only `:8000` is a
+  meaningful HTTP target). The robust fix (pin the connect to a vetted IP) breaks HTTPS SNI/cert
+  validation against the real public hosts the web arm must reach, so it's deferred; the guard
+  docstring warns against unmodified reuse where URLs are attacker-controlled. Phase-3's deferred
+  cred-rotation is the further belt-and-suspenders. Does NOT block the gate under this threat model.
 
 ### Affirmed (don't re-litigate)
 Frozen `grading_contract_hash`/`content_hash` untouched (`solvers.py`/`lift_instances.py` outside both

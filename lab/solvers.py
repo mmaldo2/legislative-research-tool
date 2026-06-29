@@ -328,13 +328,13 @@ async def lab_execute_tool(tool_name: str, arguments: dict, db, harness) -> str:
 # arms (never earn free refusal credit on a refusal instance). It is its own filterable value.
 NO_ANSWER = "__no_answer__"
 
-_SECRET_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]+")
+_SECRET_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]+|[Bb]earer\s+\S+")
 
 
 def _safe_err(exc: Exception, limit: int = 300) -> str:
-    """Defense-in-depth: a live API error is persisted into the trace `raw`. Redact any OAuth token
-    that could appear in a third-party error string and bound the length, so no secret / unbounded
-    blob reaches the at-rest JSONL."""
+    """Defense-in-depth: a live API error is persisted into the trace `raw`. Redact any OAuth/API
+    token or `Bearer <token>` header that could appear in a third-party error string and bound the
+    length, so no secret / unbounded blob reaches the at-rest JSONL."""
     msg = _SECRET_RE.sub("<redacted>", str(exc))
     if len(msg) > limit:
         msg = msg[:limit] + "…(truncated)"
@@ -544,22 +544,54 @@ def _make_sdk_product_tool(tool_def: dict, observations: list):
 # OUR data (loopback / private / link-local IPs, non-http schemes incl. file://). Lives in lab code
 # (not a product RESEARCH_TOOL) — it's an experiment conduit, only provisioned for surface="web".
 _FETCH_URL_DESC = (
-    "Fetch the text of a PUBLIC web page by https/http URL (e.g. a Congress.gov, GovTrack, or "
-    "House Clerk page found via WebSearch) and return its content. Use this to read the page after "
-    "WebSearch gives you a link. Private/internal URLs are refused."
+    "Fetch a PUBLIC web page or data file by https/http URL (e.g. a Congress.gov, GovTrack, House "
+    "Clerk, or VoteView page found via WebSearch). The full body is SAVED to a file under "
+    "/sandbox/inputs/ -- the call returns the filename and byte size, NOT the text -- so read and "
+    "parse it from run_python with open('/sandbox/inputs/<file>'). Private/internal URLs are "
+    "refused."
 )
 _FETCH_URL_SCHEMA = {
     "type": "object",
     "properties": {"url": {"type": "string", "description": "The public https/http URL to fetch."}},
     "required": ["url"],
 }
+# The web arm reads bulk public data (e.g. a VoteView CSV) into the no-network sandbox via this
+# conduit. Cap the streamed body for host memory; `--memory` sizes the in-sandbox parse downstream.
+# SIZING (REV 4.4, Phase-3 probe): the binding workload is the full H118 votes matrix
+# (voteview H118_votes.csv ~= 15MB; an 8MB cap TRUNCATED it at rollcall 712/1235 and the web arm
+# could not tally) -> 32MB holds it with headroom. PR #51's web arm used unbounded urllib-in-code,
+# so a too-small cap here is a NEW artifact that distorts the baseline (the gate must be neutral).
+_FETCH_MAX_BYTES = 32 * 1024 * 1024
+
+
+def _ext_for(url: str, content_type: str | None) -> str:
+    """A short, safe file extension for a fetched body (content-type first, then the URL path
+    suffix, else `txt`). Constrained to a tiny alnum token so the injected filename is predictable
+    and can't smuggle path separators."""
+    from urllib.parse import urlparse
+
+    ct = (content_type or "").lower()
+    for token, ext in (("csv", "csv"), ("json", "json"), ("html", "html"), ("xml", "xml")):
+        if token in ct:
+            return ext
+    suffix = Path(urlparse(url).path).suffix.lstrip(".").lower()
+    return suffix if suffix.isalnum() and 0 < len(suffix) <= 5 else "txt"
 
 
 def _is_safe_public_url(url: str) -> bool:
     """SSRF guard: True only for an http(s) URL whose host resolves ENTIRELY to public IPs. Blocks
-    file://-and-other schemes, loopback/private/link-local/reserved ranges (our DB, localhost), and
-    unresolvable hosts. Block-on-ANY-bad-IP defeats DNS-rebinding (one private A record => block).
-    Pure + synchronous → unit-testable without network."""
+    file://-and-other schemes, loopback/private/link-local/reserved/unspecified ranges (our DB,
+    localhost), IPv4-mapped IPv6 (::ffff:127.0.0.1 -> the embedded v4), and unresolvable hosts.
+    Block-on-ANY-bad-IP defeats SIMULTANEOUS DNS-rebinding (one private A record in a multi-record
+    answer => block). Pure + synchronous → unit-testable without network.
+
+    KNOWN RESIDUAL (best-effort, accepted for this gate): the validated resolution is not pinned to
+    the eventual httpx connect, so a TIME-BASED rebind (public at this check, private at connect) is
+    not prevented. In this benchmark the URL consumer is an HONEST model answering vote questions
+    (not an adversary standing up a rebinding domain), our private surface is loopback-only, and
+    Postgres (:5432) does not speak HTTP -- so practical exploitability is near-zero. Do NOT reuse
+    this guard, unmodified, where the URL is attacker-controlled; pin the connection to a vetted IP
+    there. See the security-sentinel note in the egress-isolation plan (M1)."""
     import ipaddress
     import socket
     from urllib.parse import urlparse
@@ -578,18 +610,32 @@ def _is_safe_public_url(url: str) -> bool:
         return False
     for info in infos:
         ip = ipaddress.ip_address(info[4][0])
-        if ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+        if getattr(ip, "ipv4_mapped", None) is not None:
+            ip = ip.ipv4_mapped  # ::ffff:127.0.0.1 -> 127.0.0.1 (mapped checks vary pre-3.12.4)
+        if (
+            ip.is_loopback
+            or ip.is_private
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified  # 0.0.0.0 -> "this host"; version-independent block
+        ):
             return False
     return True
 
 
-def _make_fetch_url_tool(observations: list):
-    """The web-arm guarded fetch @tool: SSRF-checked, bounded redirects (each hop re-guarded),
-    size-capped. Records the URL + a result snippet into the trajectory (the trust bar sees what web
-    actually read)."""
+def _make_fetch_url_tool(observations: list, sandbox_files: dict[str, str] | None = None):
+    """The web-arm guarded fetch @tool: SSRF-checked (`_is_safe_public_url`, EVERY redirect hop
+    re-guarded), STREAMS up to `_FETCH_MAX_BYTES` of the body into a `fetch_<n>.<ext>` entry in the
+    shared `sandbox_files` (which run_python mounts read-only at /sandbox/inputs/), and records a
+    SHORT pointer -- not the bulk text -- into the trajectory. Bulk public data thus reaches the
+    no-network sandbox through the SOLE audited egress conduit, while the trust bar still sees what
+    the web arm read. `sandbox_files` defaults to an ephemeral dict (e.g. the guard unit tests)."""
     from urllib.parse import urljoin
 
     from claude_agent_sdk import tool
+
+    files = {} if sandbox_files is None else sandbox_files
 
     @tool("fetch_url", _FETCH_URL_DESC, _FETCH_URL_SCHEMA)
     async def _fetch_url(args):
@@ -601,16 +647,31 @@ def _make_fetch_url_tool(observations: list):
             observations.append({"tool": "fetch_url", "arguments": {"url": url}, "result": text})
             return {"content": [{"type": "text", "text": text}]}
 
+        cur = url
         try:
-            async with httpx.AsyncClient(follow_redirects=False, timeout=20.0) as client:
+            async with httpx.AsyncClient(follow_redirects=False, timeout=30.0) as client:
                 for _ in range(4):  # bounded redirect chain; re-guard EVERY hop
-                    if not _is_safe_public_url(url):
-                        return await _result(f"Refused: '{url}' is not a fetchable public URL.")
-                    resp = await client.get(url, headers={"User-Agent": "condorcet-lab/ablation"})
-                    if resp.is_redirect and resp.headers.get("location"):
-                        url = urljoin(url, resp.headers["location"])
-                        continue
-                    return await _result(resp.text[:20000])
+                    if not _is_safe_public_url(cur):
+                        return await _result(f"Refused: '{cur}' is not a fetchable public URL.")
+                    async with client.stream(
+                        "GET", cur, headers={"User-Agent": "condorcet-lab/ablation"}
+                    ) as resp:
+                        if resp.is_redirect and resp.headers.get("location"):
+                            cur = urljoin(cur, resp.headers["location"])
+                            continue
+                        body = bytearray()
+                        async for chunk in resp.aiter_bytes():
+                            body += chunk
+                            if len(body) >= _FETCH_MAX_BYTES:
+                                break
+                        text = bytes(body[:_FETCH_MAX_BYTES]).decode("utf-8", errors="replace")
+                        n = sum(1 for k in files if k.startswith("fetch_")) + 1
+                        fname = f"fetch_{n}.{_ext_for(cur, resp.headers.get('content-type'))}"
+                        files[fname] = text
+                        return await _result(
+                            f"Saved {len(text)} chars from {cur} to inputs/{fname}. "
+                            f"Read it in run_python with open('/sandbox/inputs/{fname}')."
+                        )
                 return await _result("Refused: too many redirects.")
         except Exception:  # noqa: BLE001 — a fetch failure must never crash the rollout
             return await _result(f"Failed to fetch '{url}'.")
@@ -630,10 +691,12 @@ def _make_fetch_url_tool(observations: list):
 # `--pids-limit`, NO host env forwarded, an in-container `timeout`, an output cap, and a host
 # `docker rm -f` reap backstop. See docs/plans/2026-06-29-feat-run-python-egress-isolation-plan.md.
 _RUN_PYTHON_DESC = (
-    "Execute a short Python 3 script and return its stdout/stderr. Use it to COMPUTE over data you "
-    "gathered from the available tools -- a member's voting record, web pages -- (count, "
-    "aggregate, compare); print your result. It runs in an isolated, network-disabled container "
-    "with only the standard library and NO access to any private database or credentials."
+    "Execute a short Python 3 script and return its stdout/stderr. Use it to COMPUTE over the data "
+    "you have already gathered (count, aggregate, compare); print your result. Your retrieved data "
+    "is saved for you as files under /sandbox/inputs/: read inputs/observations.json for the full "
+    "results of your prior tool calls, and any page you fetched is saved as inputs/fetch_<n>.<ext>."
+    " The script runs in an isolated container with only the Python standard library and NO access "
+    "to the network, any private database, or credentials."
 )
 _RUN_PYTHON_SCHEMA = {
     "type": "object",
@@ -644,7 +707,11 @@ _RUN_PYTHON_SCHEMA = {
 # across k=3 reps). Stock stdlib-only python:3.12-slim -> no DB driver; run `--network none --user`.
 _SANDBOX_IMAGE = "python@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf"
 _SANDBOX_MEM = (
-    "1g"  # sized for the web arm's bulk public-data (VoteView CSV) parse; OOM -> excluded
+    # 2g (REV 4.4): room to parse the full ~15MB H118 votes matrix into Python dicts in-sandbox
+    # (a list-of-dicts blows up several-fold over the file size); OOM (137) -> infra-excluded. PR
+    # #51 ran the equivalent urllib parse in the uncapped host subprocess, so undersizing here is a
+    # gate artifact, not a real web limitation.
+    "2g"
 )
 _SANDBOX_PIDS = "256"
 _SANDBOX_TMPFS = "/tmp:size=64m"
@@ -659,6 +726,46 @@ class SandboxResult:
 
     text: str
     infra_error: str | None = None
+
+
+def _sandbox_argv(name: str, stage_posix: str, *, timeout_s: float) -> list[str]:
+    """The EXACT `docker run` argv for a sandbox call. PURE -> a forbidden-flags argv check asserts
+    the lockdown without starting Docker. The integrity-bearing flags: `--network none` (zero egress
+    -> our PG/API unreachable), `-v <stage>:/sandbox:ro` is the SOLE mount, NO `-e` (no host env
+    forwarded), `--cap-drop ALL` + `--security-opt no-new-privileges` + non-root `--user`. The image
+    is digest-pinned; the in-container `timeout` is the primary wall-clock."""
+    return [
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        name,
+        "--network",
+        "none",
+        "--user",
+        "1000:1000",
+        "--cap-drop",
+        "ALL",
+        "--security-opt",
+        "no-new-privileges",
+        "--read-only",
+        "--tmpfs",
+        _SANDBOX_TMPFS,
+        "--memory",
+        _SANDBOX_MEM,
+        "--pids-limit",
+        _SANDBOX_PIDS,
+        "-v",
+        f"{stage_posix}:/sandbox:ro",
+        _SANDBOX_IMAGE,
+        "timeout",
+        str(int(timeout_s)),
+        "python",
+        "-I",
+        "-S",
+        "-B",
+        "/sandbox/code.py",
+    ]
 
 
 def _classify_sandbox_exit(rc: int, stdout: str, stderr: str, *, timeout_s: float, cap: int):
@@ -686,6 +793,15 @@ def _classify_sandbox_exit(rc: int, stdout: str, stderr: str, *, timeout_s: floa
     if rc == 125 or (rc == 2 and "can't open file" in stderr):  # docker/daemon/image/mount failure
         return SandboxResult("Failed: the sandbox could not start.", infra_error="sandbox_start")
     return SandboxResult(_capped(rc))  # ordinary nonzero from the user's script (a code error)
+
+
+def _kill_proc(proc) -> None:
+    """Best-effort kill of the `docker run` CLIENT subprocess (the container itself is reaped by
+    name -- `docker rm -f`; this just stops the orphaned client). Never raises."""
+    try:
+        proc.kill()
+    except Exception:  # noqa: BLE001 -- already exited / cleanup is best-effort
+        pass
 
 
 async def _reap_container(name: str) -> None:
@@ -753,39 +869,12 @@ async def _exec_sandboxed_python(
             inputs_dir = stage / "inputs"
             inputs_dir.mkdir()
             for fname, content in (inputs or {}).items():
+                # defense-in-depth: keys are safe today (fetch_<int>.<alnum<=5>, observations.json),
+                # but reject any traversal so a future naming change can't write outside the mount.
+                if Path(fname).name != fname:
+                    continue
                 (inputs_dir / fname).write_text(content, encoding="utf-8")
-            argv = [
-                "docker",
-                "run",
-                "--rm",
-                "--name",
-                name,
-                "--network",
-                "none",
-                "--user",
-                "1000:1000",
-                "--cap-drop",
-                "ALL",
-                "--security-opt",
-                "no-new-privileges",
-                "--read-only",
-                "--tmpfs",
-                _SANDBOX_TMPFS,
-                "--memory",
-                _SANDBOX_MEM,
-                "--pids-limit",
-                _SANDBOX_PIDS,
-                "-v",
-                f"{stage.as_posix()}:/sandbox:ro",
-                _SANDBOX_IMAGE,
-                "timeout",
-                str(int(timeout_s)),
-                "python",
-                "-I",
-                "-S",
-                "-B",
-                "/sandbox/code.py",
-            ]
+            argv = _sandbox_argv(name, stage.as_posix(), timeout_s=timeout_s)
             try:
                 proc = await asyncio.create_subprocess_exec(
                     *argv,
@@ -802,9 +891,11 @@ async def _exec_sandboxed_python(
                     proc.communicate(), timeout=timeout_s + _SANDBOX_HOST_TIMEOUT_BUFFER_S
                 )
             except asyncio.CancelledError:
+                _kill_proc(proc)
                 await _reap_container(name)
                 raise
             except TimeoutError:
+                _kill_proc(proc)  # the `docker run` CLIENT outlives the wait_for; kill it too
                 await _reap_container(name)
                 reaped = True
                 return SandboxResult(
@@ -823,16 +914,43 @@ async def _exec_sandboxed_python(
     return _classify_sandbox_exit(rc, stdout, stderr, timeout_s=timeout_s, cap=cap)
 
 
-def _make_run_python_tool(observations: list):
-    """The guarded code @tool (both arms): routes to _exec_sandboxed_python and records the code +
-    output. On an APPARATUS failure it tags the observation `error_kind='sandbox_infra'` so the
-    solver excludes the rollout -- the failure must never be scored as a refusal/wrong answer."""
+def _build_sandbox_inputs(observations: list, sandbox_files: dict[str, str]) -> dict[str, str]:
+    """Assemble the read-only `/sandbox/inputs/` payload for a run_python call: the web arm's
+    fetched bodies (full, bulk) PLUS `observations.json` -- a dump of the DATA-bearing observations
+    (the product-tool RESULTS the agent retrieved + any fetch_url pointers / WebSearch results).
+
+    NO-GOLD-LEAK GUARD (asserted in tests): built ONLY from `observations` (tool RESULTS) and
+    `sandbox_files`; it NEVER receives `inst.gold` / `inst.params`, so the injected files cannot
+    carry the answer. Excludes run_python's own outputs (no recursive injection) and submit acks.
+    observations.json is emitted as VALID json (never byte-truncated -> never an unparseable file);
+    bulk volume is bounded upstream by fetch_url's `_FETCH_MAX_BYTES` + our tools' result sizes."""
+    inputs = dict(sandbox_files)
+    data = [
+        {"tool": o.get("tool"), "arguments": o.get("arguments"), "result": o.get("result")}
+        for o in observations
+        if o.get("tool") not in ("run_python", "submit_answer")
+    ]
+    if data:
+        inputs["observations.json"] = json.dumps(data, indent=2, default=str)
+    return inputs
+
+
+def _make_run_python_tool(observations: list, sandbox_files: dict[str, str] | None = None):
+    """The guarded code @tool (both arms): mounts the agent's retrieved data (observations +
+    fetched bodies) read-only under /sandbox/inputs/, routes to _exec_sandboxed_python, and records
+    the code + output. On an APPARATUS failure it tags the observation `error_kind='sandbox_infra'`
+    so the solver excludes the rollout -- the failure must never be scored as a refusal/wrong
+    answer. `sandbox_files` defaults to an ephemeral dict (e.g. the hermetic unit tests)."""
     from claude_agent_sdk import tool
+
+    files = {} if sandbox_files is None else sandbox_files
 
     @tool("run_python", _RUN_PYTHON_DESC, _RUN_PYTHON_SCHEMA)
     async def _run_python(args):
         code = args.get("code") or ""
-        result = await _exec_sandboxed_python(code)
+        # built BEFORE this call is appended -> no self-injection; reads only prior observations.
+        inputs = _build_sandbox_inputs(observations, files)
+        result = await _exec_sandboxed_python(code, inputs=inputs)
         obs = {"tool": "run_python", "arguments": {"code": code}, "result": result.text}
         if result.infra_error:
             obs["error_kind"] = "sandbox_infra"
@@ -982,18 +1100,23 @@ class AgentSolver:
         """Build (mcp_tools, allowed_tools, disallowed_tools) for the instance's SURFACE.
 
         ours: the template's product @tools + a GUARDED run_python + submit; mcp__lab__* allowed;
-              built-ins disallowed. run_python lets ours COMPUTE over the records it retrieved (the
-              compute surface is held constant vs web, REV 4.3).
+              built-ins disallowed. run_python (a `--network none` container) lets ours COMPUTE over
+              the records it retrieved -- injected at /sandbox/inputs/ (the compute surface is held
+              constant vs web, REV 4.3).
         web:  WebSearch (built-in) + a GUARDED fetch_url (lab @tool, SSRF-blocked) + run_python +
               submit — NO lab data tools. The built-in WebFetch STAYS blocked (uncontrollable
-              target); fetch_url is our own guarded conduit so web can read public pages but not
-              reach our DB; run_python (a stdlib-only sandboxed subprocess) lets it COMPUTE over
-              what it reads. NEVER mutates the global disallow list (web builds a FRESH list, only
-              WebSearch removed).
+              target); fetch_url is our own guarded conduit -- it STREAMS the bulk body into the
+              no-network sandbox's /sandbox/inputs/ mount -- so web can read public data but never
+              reach our DB; run_python lets it COMPUTE over what it fetched. NEVER mutates the
+              global disallow list (web builds a FRESH list, only WebSearch removed).
         """
+        # Shared per-rollout file store: fetch_url (web) stashes bulk bodies here; run_python mounts
+        # them -- plus observations.json -- read-only at /sandbox/inputs/. Empty for ours (no
+        # fetch_url) -> ours still gets observations.json so it can compute over its retrieved data.
+        sandbox_files: dict[str, str] = {}
         if self.surface == "web":
-            fetch_url = _make_fetch_url_tool(observations)
-            run_python = _make_run_python_tool(observations)
+            fetch_url = _make_fetch_url_tool(observations, sandbox_files)
+            run_python = _make_run_python_tool(observations, sandbox_files)
             allowed = [
                 "WebSearch",
                 "mcp__lab__fetch_url",
@@ -1006,7 +1129,8 @@ class AgentSolver:
         product_tools = [
             _make_sdk_product_tool(research_tool_for(n), observations) for n in tool_names
         ]
-        run_python = _make_run_python_tool(observations)  # compute held constant vs web (REV 4.3)
+        # compute held constant vs web (REV 4.3); observations.json injected (ours: no fetch_url).
+        run_python = _make_run_python_tool(observations, sandbox_files)
         allowed = [f"mcp__lab__{n}" for n in tool_names] + [
             "mcp__lab__run_python",
             "mcp__lab__submit_answer",
@@ -1048,7 +1172,10 @@ class AgentSolver:
         )
         server = create_sdk_mcp_server(name="lab", tools=mcp_tools)
         # subscription creds ONLY: pop ANTHROPIC_API_KEY so query() can't silently bill the Messages
-        # API (and hit the rate wall Option W exists to dodge); restored in finally.
+        # API (and hit the rate wall Option W exists to dodge); restored in finally. SAFE because
+        # the solver runs instances SEQUENTIALLY on one asyncio.Runner -- if the matrix is ever made
+        # to run rollouts concurrently IN-PROCESS, this env mutation races (A's finally restores
+        # the key mid-B) and must move to a per-query env= override instead.
         saved_key = os.environ.pop("ANTHROPIC_API_KEY", None)
         options = ClaudeAgentOptions(
             model=self.model,
