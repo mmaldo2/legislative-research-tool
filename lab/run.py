@@ -188,8 +188,8 @@ def _run_agent(
     max_budget_usd: float | None = None,
 ) -> int:
     # NON-DETERMINISTIC: a live agent's pass rate IS the measurement; no invariant is asserted.
-    # max_turns matters for long tool-loops (e.g. lead_sponsor_outcomes loops get_bill_votes over
-    # ~30-50 bills): the agent-sdk default is 14, far below a sequential loop's needs -> raise it.
+    # max_turns matters for long tool-loops (an agent issuing many sequential tool calls): the
+    # agent-sdk default is 14, far below a long loop's needs -> raise it for those templates.
     kw = {"backend": backend, "max_turns": max_turns, "max_budget_usd": max_budget_usd}
     solver = AgentSolver(model=model, **kw) if model else AgentSolver(**kw)
     try:
@@ -317,7 +317,7 @@ def main(argv: list[str] | None = None) -> int:
         "--max-turns",
         type=int,
         default=None,
-        help="agent-sdk turn budget (default 14; raise for long tool-loops like lead_sponsor)",
+        help="agent-sdk turn budget (default 14; raise for long sequential tool-loops)",
     )
     parser.add_argument(
         "--max-budget-usd",

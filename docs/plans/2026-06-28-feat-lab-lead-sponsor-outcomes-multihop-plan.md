@@ -265,19 +265,29 @@ struggles. If sonnet aces, the long-loop shape is NOT frontier-hard and we do no
       new requires_pg test passes in isolation). Commit. **STOP -- surface summary.**
 - Hash impact: **both hashes UNMOVED** (no `templates.py` change this phase). Confirmed.
 
-### Phase 2: Minimal generator + solver seam + THE SCREEN (HARD GATE)
-- [ ] Add `TEMPLATE_LEAD_SPONSOR_OUTCOMES`, `_lead_sponsor_prompt`, `generate_lead_sponsor_outcomes`
-      (natural-answerable instances only; twins deferred to Phase 3), registry entry, to
-      `lab/templates.py`.
-- [ ] Solver seam in `lab/solvers.py` (SUBMIT_SCHEMAS, SET_MATCH_FIELD, TEMPLATE_TOOLS).
-- [ ] `uv run python -m ruff check/format` (line-length 100; **ASCII-only** -- no em-dash/×/≥/∅;
-      manually reflow long comment/docstring lines, ruff format won't).
-- [ ] Run the screen (haiku + sonnet, `--backend agent-sdk`, n=8 seed=42, 30-50 band). Read traces.
-- [ ] **GATE: evaluate vs the bar. STOP and report. Proceed to Phase 3 ONLY if sonnet <= 5/8.**
-- Hash impact: `content_hash` MOVES (templates.py); `grading_contract_hash` UNMOVED (no grader);
+### Phase 2: Minimal generator + solver seam + THE SCREEN (HARD GATE) -- DONE, GATE = STOP
+- [x] Added `TEMPLATE_LEAD_SPONSOR_OUTCOMES`, `_lead_sponsor_prompt`, `generate_lead_sponsor_outcomes`
+      (screen config: band 30-50, |gold|>=1, answerable-only), registry entry, to `lab/templates.py`.
+- [x] Solver seam in `lab/solvers.py` (SUBMIT_SCHEMAS, SET_MATCH_FIELD, TEMPLATE_TOOLS) + PR-1
+      `--max-turns`/`--max-budget-usd` passthrough in `lab/run.py`.
+- [x] ruff clean; full suite green (888 passed); deterministic invariants pass (oracle 8/8, wrong
+      0/8, over-refuse 0/8).
+- [x] Ran the screen (haiku, `--backend agent-sdk`, n=12 seed=42, `--max-turns 60`, 30-50 band).
+- [x] **GATE = STOP (NEGATIVE, trace-verified 2026-06-29).** haiku **12/12 exact** (smoke 3/3),
+      genuine 30-45-bill loops (get_bill_votes calls == nbills), all SDK `success` (no truncation),
+      symmetric-diff = 0 on every pass (not off-by-one), 0 no-retrieval passes. The WEAKER model aces
+      with zero artifacts -> sonnet (>= haiku) cannot struggle -> **sonnet NOT run** (cheap-first; a
+      foregone conclusion). The long independent-tool-loop is NOT frontier-hard. See
+      [[project_condorcet_longloop_negative]] (the refined principle: the lever is in-context
+      computation over a large set, NOT call count).
+- Hash impact: `content_hash` MOVED (templates.py); `grading_contract_hash` UNMOVED (no grader);
   `solvers.py` in neither hash.
 
-### Phase 3: CONDITIONAL (gate-positive only) -- frozen suite + PR
+### Phase 3: NOT BUILT (gate was negative)
+Per the gate, the frozen suite (twins, frozen tests, drift guard, opus confirm) was NOT built --
+the slice's premise (long-loop frontier-hardness) is disproven. Disposition is open (keep the tool +
+run.py harness improvement; revert vs keep the screened-negative template). Original Phase-3 spec
+retained below for the record.
 - [ ] Add the twins to the generator: answerable-EMPTY (pinned in-band |gold|==0) + refusal
       (synthetic absent person_id), with the emit-assert binding `is_refusal == (gold == REFUSAL)`.
       Widen the frozen suite to the full 15-50 band.

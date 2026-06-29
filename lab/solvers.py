@@ -218,15 +218,6 @@ SUBMIT_SCHEMAS = {
         },
         **_REFUSED_FIELD,
     },
-    "family2.lead_sponsor_outcomes": {
-        "bill_ids": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": "The bill_ids of the member's primary-sponsored bills that received at "
-            "least one roll-call vote, as a list of strings (an empty list if none).",
-        },
-        **_REFUSED_FIELD,
-    },
 }
 
 # set_match is keyed per-template (the submit field NAME differs: crossed lists members, closest
@@ -238,7 +229,6 @@ SET_MATCH_FIELD = {
     "family2.cosponsored_and_voted_against": "member_ids",
     "family9.member_party_at_vote": "party",
     "family6.covoting_disagreement": "vote_event_ids",
-    "family2.lead_sponsor_outcomes": "bill_ids",
 }
 
 _SUBMIT_DESCRIPTION = (
@@ -286,9 +276,6 @@ TEMPLATE_TOOLS = {
     "family9.member_party_at_vote": _EVENT_TOOLS,
     # Family 6: two members' full records -> the agent computes the disagreement set (the join).
     "family6.covoting_disagreement": _MEMBER_TOOLS,
-    # Family 2: a member's primary-sponsored bills -> the agent loops get_bill_votes per bill (the
-    # long trajectory). NOT pre-joined to votes -- the loop IS the difficulty.
-    "family2.lead_sponsor_outcomes": ["get_member_sponsorships", "get_bill_votes"],
 }
 
 

@@ -30,19 +30,11 @@ TEMPLATE_COSPONSOR_VOTE = "family2.cosponsored_and_voted_against"  # Family 2: c
 TEMPLATE_PARTY = "family9.member_party_at_vote"  # Family 9 (temporal): vote-time party
 # Family 6: two-member co-voting disagreement set
 TEMPLATE_COVOTING = "family6.covoting_disagreement"
-# Family 2: lead-sponsor vote-outcomes (long-trajectory multi-hop)
-TEMPLATE_LEAD_SPONSOR_OUTCOMES = "family2.lead_sponsor_outcomes"
 CLOSEST_K = 5  # how many "closest" roll calls a closest_by_margin instance asks for
 # Min recorded yea/nay votes for a member to be pairable (an activeness floor). Answer-INDEPENDENT:
 # conditions on total participation, never on |disagreements|, so it cannot bias the |gold| band.
 # Same-party active pairs land |gold| in the gradeable ~12-23 band (verified at scope).
 _COVOTING_ACTIVE_FLOOR = 100
-# lead-sponsor outcomes: settled historical congress (119 has 0 primary sponsors). Members are
-# selected by primary-sponsored bill COUNT in this band -- answer-INDEPENDENT loop length. Phase 2
-# SCREEN uses the upper band (longest loops = best shot at a frontier gradient); Phase 3 widens it
-# to (15, 50) for the frozen suite.
-_LEAD_SPONSOR_CONGRESS = "110"
-_LEAD_SPONSOR_BAND = (30, 50)
 # "cosponsored" = signed-on supporter, NOT the primary author. Kept identical to the
 # get_bill_cosponsors tool's filter (src/api/chat.py) — the gold ⊆ tool superset test guards drift.
 _COSPONSOR_ROLES = ("cosponsor", "original-cosponsor")
@@ -1449,103 +1441,6 @@ def generate_member_party_at_vote(conn, n: int, seed: int, precomputed) -> list[
     return instances
 
 
-def _lead_sponsor_prompt(name: str, person_id: str, congress: str) -> str:
-    """One prompt shape, shared by the answerable instances + (Phase 3) the empty/refusal twins, so
-    the agent cannot tell them apart by phrasing -- only by verifying the data. The empty-vs-refuse
-    rule is stated EXPLICITLY because the shared system prompt maps any empty tool result to
-    refusal, which would mis-fire here: an empty roll-call result for a bill is the normal "no vote"
-    finding, not "not in the data". Refusal is reserved for an unresolvable member."""
-    return (
-        f"Member {name} (internal person_id {person_id}) primarily sponsored bills in Congress "
-        f"{congress}. Of those bills, which ones received at least one roll-call vote? Use "
-        f"get_member_sponsorships to list the bills this member primarily sponsored, then call "
-        f"get_bill_votes on EACH bill_id. A bill whose roll-call result is empty simply got no "
-        f"roll-call vote -- exclude it and keep going; that is a normal finding, NOT a reason to "
-        f"refuse. List the bill_ids that got at least one roll-call vote (an empty list if none). "
-        f"Refuse only if this member cannot be found at all."
-    )
-
-
-def generate_lead_sponsor_outcomes(conn, n: int, seed: int, precomputed) -> list[Instance]:
-    """Family 2 (lead-sponsor vote-outcomes): "Of the bills member X primarily sponsored in
-    Congress 110, which received at least one roll-call vote? List the bill_ids." gold = the SET of
-    X's primary-sponsored bills with >=1 vote_event; grader set_match. A long-trajectory multi-hop
-    probe: the agent loops get_bill_votes over X's ~30-50 sponsored bills (NOT pre-joined to votes
-    -- the per-bill loop IS the difficulty) and must return the exact subset.
-
-    SCREEN config (Phase 2): members are selected by primary-sponsored COUNT in _LEAD_SPONSOR_BAND
-    (answer-INDEPENDENT loop length; the upper band = longest loops) AND filtered to |gold| >= 1 so
-    every screen instance forces a real loop (a non-looping agent that returns [] must not pass for
-    free). `precomputed` is accepted but UNUSED (gold reads only X's own sponsorships + the bills'
-    vote_events, identically to the two tools -- no roster gate, mirroring covoting). Phase 3 widens
-    the band to (15, 50) and adds the natural answerable-EMPTY + nonexistent-member twins + the
-    frozen suite."""
-    cur = conn.cursor()
-    instances: list[Instance] = []
-    congress = _LEAD_SPONSOR_CONGRESS
-    lo, hi = _LEAD_SPONSOR_BAND
-
-    # candidate members: primary-sponsored bill COUNT in [lo, hi] for the congress (answer-INDEP).
-    cur.execute(
-        "SELECT sp.person_id, p.name, COUNT(DISTINCT sp.bill_id) AS nbills "
-        "FROM sponsorships sp "
-        "JOIN bills b ON b.id = sp.bill_id "
-        "JOIN sessions s ON s.id = b.session_id "
-        "JOIN people p ON p.id = sp.person_id "
-        "WHERE sp.classification = 'primary' AND s.identifier = %s "
-        "GROUP BY sp.person_id, p.name "
-        "HAVING COUNT(DISTINCT sp.bill_id) BETWEEN %s AND %s",
-        (congress, lo, hi),
-    )
-    names: dict[str, str] = {}
-    nbills: dict[str, int] = {}
-    for person_id, name, count in cur.fetchall():
-        names[person_id] = name
-        nbills[person_id] = count
-
-    # Oversample the candidate pool in seeded hash order; compute gold, KEEP |gold| >= 1, take n.
-    for person_id in hash_order(sorted(names), seed):
-        if len(instances) >= n:
-            break
-        cur.execute(
-            "SELECT DISTINCT b.id "
-            "FROM sponsorships sp "
-            "JOIN bills b ON b.id = sp.bill_id "
-            "JOIN sessions s ON s.id = b.session_id "
-            "WHERE sp.person_id = %s AND sp.classification = 'primary' AND s.identifier = %s "
-            "AND EXISTS (SELECT 1 FROM vote_events ve WHERE ve.bill_id = b.id)",
-            (person_id, congress),
-        )
-        gold = {r[0] for r in cur.fetchall()}
-        if not gold:  # SCREEN: skip natural-empty members (every instance must force a real loop)
-            continue
-        instances.append(
-            Instance(
-                instance_id=f"{TEMPLATE_LEAD_SPONSOR_OUTCOMES}:{seed}:{person_id}",
-                template_id=TEMPLATE_LEAD_SPONSOR_OUTCOMES,
-                tier="C",
-                params={
-                    "person_id": person_id,
-                    "congress": congress,
-                    "nbills": nbills[person_id],
-                    "kind": "answerable",
-                },
-                prompt=_lead_sponsor_prompt(names[person_id], person_id, congress),
-                gold=gold,
-                grader="set_match",
-                is_refusal=False,
-            )
-        )
-
-    # emit-assert: is_refusal and gold-is-REFUSAL are bound (the Phase 3 twins rely on it; the
-    # natural answerable instances here make it trivially true, but keep the guard in place).
-    for inst in instances:
-        assert inst.is_refusal == (inst.gold == REFUSAL), (
-            f"{inst.instance_id}: refusal/gold mismatch"
-        )
-    return instances
-
-
 # Template registry — each entry exposes `.generate(conn, n, seed, precomputed)` for the harness +
 # `.template_id` (the family-qualified id). The flat bare-name key no longer encodes the family: a
 # template's family lives in `template_id`, so cross-family wiring (TEMPLATE_TOOLS, P9) keys
@@ -1596,10 +1491,5 @@ TEMPLATE_REGISTRY = {
         name="covoting_disagreement",
         template_id=TEMPLATE_COVOTING,
         generate=generate_covoting_disagreement,
-    ),
-    "lead_sponsor_outcomes": SimpleNamespace(
-        name="lead_sponsor_outcomes",
-        template_id=TEMPLATE_LEAD_SPONSOR_OUTCOMES,
-        generate=generate_lead_sponsor_outcomes,
     ),
 }
