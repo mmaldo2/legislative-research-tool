@@ -56,10 +56,28 @@ discipline for a template that will train a model; lighter for an exploratory me
 **benchmark** (frozen content) and the **experiments** (the ablation; non-frozen) conceptually
 separate — we conflated them.
 
+## Meta-update (2026-06-28): moat is ~dead on public federal data; optimize D + training
+
+**THREE no-moat findings now** (ablation pass 1 = point-in-time bill status; pass 2 = point-in-time
+party; quote_in_bill_text = bill text is public). Ground truth for a federal-public-data lab lives on
+Congress.gov / the Clerk / GovInfo, which a capable web agent reads. **Stop scoring on M; optimize D
+(discrimination) + RLVR training signal.** (Keep the moat *experiment* alive as a skeptical ablation;
+never justify a build on moat.)
+
+**The discrimination principle (sharpened by the quote no-go):** a task where the tool HANDS the agent
+the data and it just verifies / looks it up is trivial — models ace it (`vote_lookup` ~100%;
+`quote_in_bill_text` haiku **21/21** even on long docs with deep alterations). It discriminates only
+when the agent must **COMPUTE** something over a large set the tool does NOT pre-join, and be exactly
+precise — why `party_breakdown`, the window templates, and the cosponsor×vote join discriminated. Build
+that shape; the answer must not be a substring/sort of one tool's output.
+
 ## Built so far
 - **Family 1 (roll-call): all 8 templates** — incl. the discriminating ones (`party_breakdown`,
   window templates). Tier 1–3 of Family 1 is DONE.
-- **Family 10 #2 `cite_record_id`** (provenance citation, tier 6).
+- **Family 10 #2 `cite_record_id`** (provenance citation, tier 6). *(Family 10 now effectively
+  exhausted — see Decisions: quote dead, existence/refusal redundant, crosswalk folds into Family 6.)*
+- **Slice A: bill-text corpus** — `bill_texts` 68 → **11,833** (119th HR+S introduced, 99.4%) via
+  GovInfo BILLS bulkdata. Product value + it enabled the `quote_in_text` no-go finding.
 - **Harness + experiments:** the frozen-core (graders/scoring/trace/hashes/precompute), the live
   AgentSolver (messages-api + agent-sdk backends), the tool-surface ablation (surface knob,
   `fetch_url`, trust-weighted metric, `--template`/kind-axis orchestrator). Reusable.
@@ -72,7 +90,8 @@ separate — we conflated them.
 | ~~2~~ | ~~Never cosponsor across the aisle~~ **REJECTED** | 2 | 3 | — | — | ✅ | **Scope-review rejected (2026-06-28):** crossing the aisle is the NORM, not the exception (median **56** cross-aisle cosponsorships per member-congress; 89% of cells >15). No ∅ "principled-partisan" population (the 28 never-crossed are low-volume members); set_match needs a thin selection-biased ≤5-cross-aisle gate (2.3% of cells); a count is an exact-large-number lottery. The premise is false in the data — no clean answer shape. |
 | ~~3~~ | ~~Most frequent cosponsorship pairs / blocs~~ **TOOL, not task** | 2 | 3 | — | — | ✅ | **Reclassified (2026-06-28):** high USER value + tractable in SQL, but a weak agent EVAL — once the tool does the pairwise co-occurrence, the agent just sorts the output (no reasoning, the cite "answer-in-the-tool" trap). **Build as a product `RESEARCH_TOOL` when there's demand**, not an eval template. See [[project_research_tools_beyond_eval]]. Could feed a richer multi-hop task later (bloc partners -> their votes). |
 | — | Lead-sponsor passage rate / Bipartisan count | 2 | 2-3 | M | L | ✅ | Weak (tier-2 aggregations, not sharp joins). **Family 2 declared DONE** — the cosponsor×vote join (#1) was the one strong Tier-3 join; the rest are rejected/weak/tool-not-task. |
-| **NEXT** | **Quote-in-bill-text verification (#3)** | 10 | **6** | H | **H** | ⛔ `bill_texts`=68 | **The flagship adversarial-provenance task + the strongest remaining moat candidate** (exact verification of a NEGATIVE over a long document — what web's snippet retrieval can't do). **BLOCKED on a bill-text corpus** (0.05% ingested) + the selection-bias discipline. The natural home for the *resurrected* moat ablation. Scope as a deliberate corpus+template investment, not a quick slice. **NEXT SLICE.** |
+| **NEXT** | **Member×member co-voting disagreement set** | 6 | 3-4 | **H (pred.)** | L | ✅ 5.4M vote records + bioguide | "Which 119th roll-calls did member X and member Y vote DIFFERENTLY on?" gold = the SET of disagreement `roll_call_ids`, `set_match` (no new grader). The agent must fetch BOTH members' full records and compute the symmetric difference — a two-member join the tool does NOT pre-join (no "agreement" tool exists → dodges the answer-in-tool trap). The PROVEN-discriminating pattern (cosponsor×vote join + `party_breakdown`), and **inherently high-cardinality** (members co-vote on 100s of roll-calls) → discriminates on every instance, not just rare ones (fixes the cosponsor join's cardinality-gating). The buildable core of Family 6 WITHOUT NOMINATE/crosswalk. Moat LOW (public-computable) — built for **D + RLVR**. Scope must check the disagreement-set cardinality distribution. |
+| ~~3~~ | ~~Quote-in-bill-text verification (#3)~~ **DEPRIORITIZED** | 10 | 6 | — | — | ✅ corpus=11,833 | **Gate FAILED (2026-06-28).** Built the corpus (Slice A: 68→11,833) THEN cheap-probed before the template: haiku **21/21** on a HARD probe (long bills, deep alterations). Verbatim verification with the text in hand = substring search → no D; text is public → no M. The probe SAVED the template+tool build. Corpus keeps product value. See the scope's Gate status + [[project_condorcet_eval_philosophy]]. |
 | — | Bills sponsored / cosponsored by X | 2 | 1 | L | L | ✅ edges | Single-hop lookup — low on all axes (like `vote_lookup`). Coverage only; deprioritize. |
 | 8 | Temporal: point-in-time bill status as of T | 9 | 5 | ? | ? | ⚠ no bitemporal store | High tier, but needs a transaction-time/bitemporal store we don't have. Infra-gated; revisit if we build bitemporal. (Note: point-in-time *party* already tested → no moat; don't assume temporal = moat.) |
 | — | Existence check (#1) / refusal calibration (#4) | 10 | 6 | L | L | ✅ | **Skip** — redundant: `cite_record_id`'s no-link arm already proves "X never voted on Y → REFUSE," and every template carries refusal twins. Low marginal value. |
@@ -86,8 +105,15 @@ separate — we conflated them.
   answer shape); blocs is a TOOL not an eval task (build as a product `RESEARCH_TOOL` per
   [[project_research_tools_beyond_eval]]); passage-rate/bipartisan are weak tier-2 aggregations. The
   cosponsor×vote join was the only strong remaining Family 2 Tier-3 join.
-- **NEXT = quote-in-text (#3)** — the flagship, paired with the bill-text corpus investment + the next
-  moat ablation. Do NOT build the cheap F10 lookups (#1/#4/#5) — redundant/thin.
+- **quote-in-text (F10 #3) DEPRIORITIZED (2026-06-28)** after a cheap discrimination probe (haiku
+  **21/21** on a hard probe). Verification-with-data-in-hand = substring search (no D); public text
+  (no M). The probe SAVED the full template+tool build; Slice A corpus (built first) keeps product
+  value. Family 10 now effectively exhausted (cite_record_id keeper; existence/refusal redundant;
+  crosswalk #5 folds into Family 6).
+- **Moat is ~dead on public federal data (3 findings) → optimize D + RLVR, not M.** See Meta-update.
+- **NEXT = member×member co-voting disagreement set** (the buildable core of Family 6; the
+  proven-discriminating join pattern, inherently high-cardinality so not cardinality-gated). Scope must
+  verify the disagreement-set cardinality distribution lands in a gradeable range.
 - **Build product research_tools beyond eval** — capabilities users want (blocs) even when they're poor
   eval tasks; track as a standing workstream ([[project_research_tools_beyond_eval]]).
 - **`family9.member_party_at_vote` is NOT promoted** to a trusted benchmark slice until its gold is

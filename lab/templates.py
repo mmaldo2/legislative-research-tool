@@ -9,6 +9,7 @@ We do NOT claim an eligible/ineligible distinction (the schema can't support it)
 
 import re
 from collections import defaultdict
+from itertools import combinations
 from types import SimpleNamespace
 from typing import Literal
 
@@ -27,7 +28,13 @@ TEMPLATE_CROSSED_PARTY = "family1.crossed_party"
 TEMPLATE_CITE = "family10.cite_record_id"  # Family 10 (provenance): cite the roll-call vote id
 TEMPLATE_COSPONSOR_VOTE = "family2.cosponsored_and_voted_against"  # Family 2: cosponsor x vote join
 TEMPLATE_PARTY = "family9.member_party_at_vote"  # Family 9 (temporal): vote-time party
+# Family 6: two-member co-voting disagreement set
+TEMPLATE_COVOTING = "family6.covoting_disagreement"
 CLOSEST_K = 5  # how many "closest" roll calls a closest_by_margin instance asks for
+# Min recorded yea/nay votes for a member to be pairable (an activeness floor). Answer-INDEPENDENT:
+# conditions on total participation, never on |disagreements|, so it cannot bias the |gold| band.
+# Same-party active pairs land |gold| in the gradeable ~12-23 band (verified at scope).
+_COVOTING_ACTIVE_FLOOR = 100
 # "cosponsored" = signed-on supporter, NOT the primary author. Kept identical to the
 # get_bill_cosponsors tool's filter (src/api/chat.py) — the gold ⊆ tool superset test guards drift.
 _COSPONSOR_ROLES = ("cosponsor", "original-cosponsor")
@@ -1099,6 +1106,193 @@ def _cosponsor_refusal(bid: str, seed: int, tag: str, reason: str) -> Instance:
     )
 
 
+def _same_party_pair_keys(roster_rows: list[tuple[str, str, str, int]]) -> list[str]:
+    """Pure: from (person_id, party, chamber, nvotes) rows, build the sorted, deduplicated list of
+    canonical same-party-same-chamber pair-keys "chamber|a|b" (a < b). Filters to D/R members
+    at/above the activeness floor; pairs only WITHIN a (chamber, party) group, so cross-party and
+    cross-chamber pairs never form, and there is no self-pair. Deterministic input for sample()."""
+    by_group: dict[tuple[str, str], list[str]] = defaultdict(list)
+    for person_id, party, chamber, nvotes in roster_rows:
+        if party in ("D", "R") and nvotes >= _COVOTING_ACTIVE_FLOOR:
+            by_group[(chamber, party)].append(person_id)
+    keys: set[str] = set()
+    for (chamber, _party), ids in by_group.items():
+        for person_a, person_b in combinations(sorted(ids), 2):  # sorted -> a < b, canonical
+            keys.add(f"{chamber}|{person_a}|{person_b}")
+    return sorted(keys)
+
+
+def _covoting_prompt(chamber: str, name_a: str, name_b: str) -> str:
+    """The single prompt shape, shared by answerable + refusal twins (so the agent cannot tell them
+    apart by phrasing -- only by verifying the data)."""
+    return (
+        f"Across the {chamber} roll-call votes of Congress 119, on which roll calls did {name_a} "
+        f"and {name_b} cast OPPOSING recorded votes (one voted yea, the other nay)? List the "
+        f"vote_event_ids (an empty list if none)."
+    )
+
+
+def generate_covoting_disagreement(conn, n: int, seed: int, precomputed) -> list[Instance]:
+    """Family 6 (co-voting disagreement set): "Across the 119th {chamber} roll calls, on which did
+    member X and member Y cast OPPOSING recorded votes (one yea, one nay)?" gold = the SET of
+    vote_event_ids where both cast a yea/nay AND their options differ; grader set_match. The
+    set_match (exact-evidence) twin of pairwise_agreement (Template #7): the same two-member
+    self-join + {congress, chamber} window, but produce the exact disagreement ids, not a count.
+
+    Same-party-same-chamber pairs only (cross-party disagreement sets are 200-350 -> a set_match
+    lottery; same-party is the gradeable ~15 band). Selection is answer-INDEPENDENT (party,
+    chamber, activeness floor). gold depends ONLY on X's and Y's own records -- read identically by
+    the gold SQL and get_member_voting_record -- so unlike crossed_party (cross-checks a set vs a
+    roster COUNT) NO complete-events gate is needed; `precomputed` is accepted but unused. Refusal
+    twins (identical prompt shape): a cross-body pair (a senator on a House query has 0 house
+    records of ANY option -> find_people returns empty -> REFUSE) and a nonexistent member name."""
+    cur = conn.cursor()
+    instances: list[Instance] = []
+    congress = "119"
+
+    # active (>= floor recorded yea/nay) D/R roster per chamber, with a display name.
+    cur.execute(
+        "SELECT vr.person_id, p.party, ve.chamber, p.name, COUNT(*) AS nvotes "
+        "FROM vote_records vr "
+        "JOIN vote_events ve ON ve.id = vr.vote_event_id "
+        "JOIN bills b ON b.id = ve.bill_id "
+        "JOIN sessions s ON s.id = b.session_id "
+        "JOIN people p ON p.id = vr.person_id "
+        "WHERE s.identifier = %s AND vr.\"option\" IN ('yea', 'nay') AND p.party IN ('D', 'R') "
+        "GROUP BY vr.person_id, p.party, ve.chamber, p.name "
+        f"HAVING COUNT(*) >= {_COVOTING_ACTIVE_FLOOR}",
+        (congress,),
+    )
+    roster_rows: list[tuple[str, str, str, int]] = []
+    names: dict[str, str] = {}
+    for person_id, party, chamber, name, nvotes in cur.fetchall():
+        roster_rows.append((person_id, party, chamber, nvotes))
+        names[person_id] = name
+
+    for key in sample(_same_party_pair_keys(roster_rows), n, seed):
+        chamber, person_a, person_b = key.split("|")
+        assert person_a != person_b, f"self-pair in {key}"
+        # gold = events where BOTH cast a yea/nay AND differ (the pairwise self-join, set-valued).
+        # (vote_event_id, person_id) is UNIQUE -> one (ra, rb) row per shared event, no dup count.
+        cur.execute(
+            "SELECT DISTINCT ra.vote_event_id "
+            "FROM vote_records ra "
+            "JOIN vote_records rb ON ra.vote_event_id = rb.vote_event_id "
+            "JOIN vote_events ve ON ve.id = ra.vote_event_id "
+            "JOIN bills b ON b.id = ve.bill_id "
+            "JOIN sessions s ON s.id = b.session_id "
+            "WHERE ra.person_id = %s AND rb.person_id = %s "
+            "AND s.identifier = %s AND ve.chamber = %s "
+            "AND ra.\"option\" IN ('yea', 'nay') AND rb.\"option\" IN ('yea', 'nay') "
+            'AND ra."option" <> rb."option"',
+            (person_a, person_b, congress, chamber),
+        )
+        gold = {r[0] for r in cur.fetchall()}
+        instances.append(
+            Instance(
+                instance_id=f"{TEMPLATE_COVOTING}:{seed}:{chamber}:{person_a}:{person_b}",
+                template_id=TEMPLATE_COVOTING,
+                tier="C",
+                params={
+                    "person_a": person_a,
+                    "person_b": person_b,
+                    "congress": congress,
+                    "chamber": chamber,
+                    "kind": "answerable",
+                },
+                prompt=_covoting_prompt(chamber, names[person_a], names[person_b]),
+                gold=gold,
+                grader="set_match",
+                is_refusal=False,
+            )
+        )
+
+    n_refusal = _n_refusals(len(instances))
+    house_ids = sorted({pid for (pid, _p, ch, _nv) in roster_rows if ch == "house"})
+    senate_ids = sorted({pid for (pid, _p, ch, _nv) in roster_rows if ch == "senate"})
+
+    # --- refusal twin A: cross-body -- a real senator on a House query. find_people requires >=1
+    # record of ANY option in the window; the senator has 0 house records -> find_people empty.
+    for i in range(n_refusal):
+        if not house_ids or not senate_ids:
+            break
+        partner, senator = house_ids[i % len(house_ids)], senate_ids[i % len(senate_ids)]
+        # per-emit proof: the senator has 0 (119, house) records of ANY option (the tool's gate).
+        cur.execute(
+            "SELECT 1 FROM vote_records vr "
+            "JOIN vote_events ve ON ve.id = vr.vote_event_id "
+            "JOIN bills b ON b.id = ve.bill_id "
+            "JOIN sessions s ON s.id = b.session_id "
+            "WHERE vr.person_id = %s AND s.identifier = %s AND ve.chamber = 'house' LIMIT 1",
+            (senator, congress),
+        )
+        if cur.fetchone() is not None:
+            raise AssertionError(
+                f"cross-body twin: senator {senator} has a house-{congress} record"
+            )
+        instances.append(
+            _covoting_refusal(
+                seed,
+                "crossbody",
+                "house",
+                partner,
+                senator,
+                names[partner],
+                names[senator],
+                "member_not_in_chamber",
+            )
+        )
+
+    # --- refusal twin B: a nonexistent member name (matches nobody) -> find_people empty -> REFUSE.
+    for i in range(n_refusal):
+        if not house_ids:
+            break
+        token = f"Nonexistentmember{seed}{i:02d}"
+        cur.execute(
+            "SELECT 1 FROM people WHERE LOWER(name) LIKE %s LIMIT 1", (f"%{token.lower()}%",)
+        )
+        if cur.fetchone() is not None:
+            raise AssertionError(f"synthetic twin name {token} unexpectedly matches a person")
+        partner = house_ids[i % len(house_ids)]
+        instances.append(
+            _covoting_refusal(
+                seed, "noname", "house", partner, token, names[partner], token, "member_not_in_data"
+            )
+        )
+
+    # emit-assert: is_refusal and gold-is-REFUSAL are bound (a mismatch is un-emittable).
+    for inst in instances:
+        assert inst.is_refusal == (inst.gold == REFUSAL), (
+            f"{inst.instance_id}: refusal/gold mismatch"
+        )
+    return instances
+
+
+def _covoting_refusal(
+    seed: int, tag: str, chamber: str, id_a: str, id_b: str, name_a: str, name_b: str, reason: str
+) -> Instance:
+    """A covoting_disagreement refusal twin (identical prompt shape; the agent distinguishes it only
+    by verifying the data -- a cross-body member, or a nonexistent name -> find_people returns
+    empty)."""
+    return Instance(
+        instance_id=f"{TEMPLATE_COVOTING}:{seed}:{tag}:{chamber}:{id_a}:{id_b}",
+        template_id=TEMPLATE_COVOTING,
+        tier="C",
+        params={
+            "person_a": id_a,
+            "person_b": id_b,
+            "congress": "119",
+            "chamber": chamber,
+            "kind": "refusal",
+        },
+        prompt=_covoting_prompt(chamber, name_a, name_b),
+        gold=REFUSAL,
+        grader="refusal_correct",
+        is_refusal=True,
+        refusal_reason=reason,
+    )
+
+
 def _stratify(by_person: dict[str, list[str]], n: int, seed: int) -> list[tuple[str, str]]:
     """Round-robin ~ceil(n/k)-per-person selection of (person_id, event_id) pairs, deterministic.
     The 7,664 switcher pairs are only ~k(=10) INDEPENDENT clusters (10 people), so effective n is
@@ -1282,5 +1476,10 @@ TEMPLATE_REGISTRY = {
         name="member_party_at_vote",
         template_id=TEMPLATE_PARTY,
         generate=generate_member_party_at_vote,
+    ),
+    "covoting_disagreement": SimpleNamespace(
+        name="covoting_disagreement",
+        template_id=TEMPLATE_COVOTING,
+        generate=generate_covoting_disagreement,
     ),
 }
