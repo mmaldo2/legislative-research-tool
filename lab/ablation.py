@@ -19,6 +19,7 @@ from collections import Counter
 from datetime import datetime
 
 from lab import templates
+from lab.experiments.lift_instances import LIFT_TEMPLATES
 from lab.harness import RUNS_DIR, prepare_run, solve_grade_write
 from lab.solvers import AgentSolver
 from src.ingestion.vote_parsers import OPTION_BUCKETS
@@ -26,8 +27,23 @@ from src.ingestion.vote_parsers import OPTION_BUCKETS
 _MODEL_IDS = {
     "haiku": "claude-haiku-4-5",
     "sonnet": "claude-sonnet-4-6",
-    "opus": "claude-opus-4-1",
+    "opus": "claude-opus-4-8",  # pre-registered frontier (harness-lift study rev 4.2)
 }
+
+
+def _resolve_template(name):
+    """Frozen Family-1 templates first, then the NON-FROZEN lift-study generators (REV 4.2): the
+    lift study runs through this same matrix driver but its instances live outside content_hash."""
+    if name in templates.TEMPLATE_REGISTRY:
+        return templates.TEMPLATE_REGISTRY[name]
+    if name in LIFT_TEMPLATES:
+        return LIFT_TEMPLATES[name]
+    raise KeyError(
+        f"unknown template {name!r}; "
+        f"frozen={sorted(templates.TEMPLATE_REGISTRY)} lift={sorted(LIFT_TEMPLATES)}"
+    )
+
+
 # Per-rollout caps. ours submits in ~3 turns. The WEB arm needs more (WebSearch -> fetch_url ->
 # re-search past a landing/Cloudflare page -> submit); pass 2's TEMPORAL task is turn-hungrier still
 # (it must establish the vote's date AND the member's party then), so web gets a higher cap (PR-5) —
@@ -147,7 +163,7 @@ def run_ablation(template_name, models, surfaces, n, seed, repeats) -> list[dict
     ours-vs-web delta is read on the SWITCHER subset, never averaged with the control."""
     # Generate the answerable set ONCE and reuse across ALL cells + repeats (P10): so ours-vs-web
     # compares the SAME questions, and the repeats measure model variance, not sample variance.
-    template = templates.TEMPLATE_REGISTRY[template_name]
+    template = _resolve_template(template_name)
     all_instances, ctx = prepare_run(template, n, seed, set(OPTION_BUCKETS))
     answerable = [i for i in all_instances if not i.is_refusal]  # answerable arm only (B1)
     by_kind = _partition_by_kind(answerable)
@@ -283,7 +299,9 @@ def main(argv=None) -> int:
     except (AttributeError, ValueError):
         pass
     p = argparse.ArgumentParser(description="Tool-surface moat ablation (pass 1/2)")
-    p.add_argument("--template", default="vote_lookup")  # pass 2: member_party_at_vote
+    # frozen (vote_lookup, member_party_at_vote, ...) or lift-study (lift_member_summary,
+    # lift_pairwise — the harness-lift ablation, REV 4.2).
+    p.add_argument("--template", default="vote_lookup")
     p.add_argument("--models", default="haiku,sonnet")
     p.add_argument("--surfaces", default="ours,web")
     p.add_argument("--n", type=int, default=10)
