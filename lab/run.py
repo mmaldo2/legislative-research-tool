@@ -178,10 +178,20 @@ def _run_deterministic(template, name: str, n: int, seed: int) -> int:
 
 
 def _run_agent(
-    template, name: str, n: int, seed: int, model: str | None = None, backend: str = "messages-api"
+    template,
+    name: str,
+    n: int,
+    seed: int,
+    model: str | None = None,
+    backend: str = "messages-api",
+    max_turns: int | None = None,
+    max_budget_usd: float | None = None,
 ) -> int:
     # NON-DETERMINISTIC: a live agent's pass rate IS the measurement; no invariant is asserted.
-    solver = AgentSolver(model=model, backend=backend) if model else AgentSolver(backend=backend)
+    # max_turns matters for long tool-loops (e.g. lead_sponsor_outcomes loops get_bill_votes over
+    # ~30-50 bills): the agent-sdk default is 14, far below a sequential loop's needs -> raise it.
+    kw = {"backend": backend, "max_turns": max_turns, "max_budget_usd": max_budget_usd}
+    solver = AgentSolver(model=model, **kw) if model else AgentSolver(**kw)
     try:
         results = run(template, [solver], n, seed, set(OPTION_BUCKETS))
     finally:
@@ -303,12 +313,33 @@ def main(argv: list[str] | None = None) -> int:
         choices=("messages-api", "agent-sdk"),
         help="agent backend: messages-api (OAuth, Option X) or agent-sdk (subscription, Option W)",
     )
+    parser.add_argument(
+        "--max-turns",
+        type=int,
+        default=None,
+        help="agent-sdk turn budget (default 14; raise for long tool-loops like lead_sponsor)",
+    )
+    parser.add_argument(
+        "--max-budget-usd",
+        type=float,
+        default=None,
+        help="agent-sdk per-rollout USD budget (default 6.0)",
+    )
     args = parser.parse_args(argv)
 
     n = args.n if args.n is not None else (10 if args.agent else 20)
     template = templates.TEMPLATE_REGISTRY[args.template]
     if args.agent:
-        return _run_agent(template, args.template, n, args.seed, args.model, args.backend)
+        return _run_agent(
+            template,
+            args.template,
+            n,
+            args.seed,
+            args.model,
+            args.backend,
+            args.max_turns,
+            args.max_budget_usd,
+        )
     return _run_deterministic(template, args.template, n, args.seed)
 
 
