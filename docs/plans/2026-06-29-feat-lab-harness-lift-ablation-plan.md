@@ -168,9 +168,15 @@ longer accuracy-lift (S+H - S+T). It is: **small+harness reaches frontier+browse
 These values are fixed in advance to remove post-hoc degrees of freedom. Changing any after a cell
 has run invalidates the result and requires a new pre-registration commit.
 
-**Tasks (gold-reconciled).** `member_summary` and `pairwise_agreement`, **119th House** only.
-Reported PER TASK (never pooled — Simpson). HARD pre-filter: each sampled window's `vote_events`
-count is reconciled against the House Clerk's published roll-call total for the 119th; **any window
+**REV 4.1 (2026-06-29): congress corrected 119 -> 118.** member_summary/pairwise gate their windows
+to COMPLETED congresses (`templates.py` `_fully_complete_windows`), so the ongoing 119th is excluded
+-- the study targets the **118th House** (calendar 2023+2024), whose Clerk data is also final/stable
+(better for reproducibility). No cell had run, so this supersedes the `3fa0784` anchor cleanly.
+
+**Tasks (gold-reconciled).** `member_summary` and `pairwise_agreement`, **118th House** only (a
+COMPLETED congress; see REV 4.1). Reported PER TASK (never pooled — Simpson). HARD pre-filter: each
+sampled window's `vote_events` count is reconciled against the House Clerk's published roll-call
+total for the 118th; **any window
 where ours != Clerk is dropped** (not re-gold'd, first run) and the drop count is reported.
 
 **Instances.** n = **40 answerable** per task + the template's natural refusal twins; selection by
