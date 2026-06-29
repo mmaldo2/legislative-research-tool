@@ -117,21 +117,23 @@ independent, so light member-reuse across pairs is fine (no anti-clustering need
   0 house-119 records of any option; Twin-B name absent; oracle/wrong/over-refuse over set + REFUSAL gold.
 
 ## Acceptance Criteria
-- [ ] `generate_covoting_disagreement` emits same-party-same-chamber answerable instances (gold = the
+- [x] `generate_covoting_disagreement` emits same-party-same-chamber answerable instances (gold = the
   differing `vote_event_id` set) + Twin-A (cross-body) + Twin-B (nonexistent); `is_refusal == (gold ==
   REFUSAL)` and `X != Y` asserted per emit.
 - [x] `_same_party_pair_keys` is a pure helper: filters party+floor, sorts, canonical dedup'd pair-keys,
   no self-pair (hermetic test — 4 cases).
 - [x] Registered in `TEMPLATE_REGISTRY`; `SUBMIT_SCHEMAS`/`SET_MATCH_FIELD`/`TEMPLATE_TOOLS=_MEMBER_TOOLS`;
   grader `set_match`; submit description says "an empty list if none".
-- [ ] `requires_pg`: each gold eid is a roll-call where both cast yea/nay and differ; no gold eid in the
+- [x] `requires_pg`: each gold eid is a roll-call where both cast yea/nay and differ; no gold eid in the
   prompt; the uniqueness assert returns zero rows; **Twin-A senator proven 0 `(119,house)` records of ANY
   option**; Twin-B name absent.
-- [ ] `requires_pg` drift guard: gold == the differ-set computed from two real `get_member_voting_record`
-  outputs (yea/nay-both, differ); skip on DB-down, FAIL on tool-error for an active member.
-- [ ] Deterministic invariants: oracle passes all; wrong fails all; over-refuse fails every answerable.
-- [ ] `test_hashes` passes (grading_contract_hash UNMOVED, content_hash moved); full suite + `ruff` clean;
-  one `EXPLAIN (ANALYZE)` spot-check confirms index scans on the self-join (no new index needed).
+- [x] `requires_pg` drift guard: gold == the differ-set computed from two real `get_member_voting_record`
+  outputs (yea/nay-both, differ); skip on DB-down, FAIL on tool-error for an active member. (Ran live in
+  isolation = PASS; skips gracefully in-suite per the async cross-loop convention.)
+- [x] Deterministic invariants: oracle passes all; wrong fails all; over-refuse fails every answerable.
+- [x] `test_hashes` passes (grading_contract_hash UNMOVED, content_hash moved); full suite **884 passed,
+  31 skipped** + `ruff` clean; `EXPLAIN (ANALYZE)` confirmed both sides Index-Scan the
+  `(vote_event_id, person_id)` unique index (no Seq Scan on the 5.4M table; 16.7 ms/pair; no new index).
 
 ## Success Metrics
 - Sampled |gold| lands in the gradeable band (median ~12-23); generator LOGS the distribution by chamber.
@@ -164,10 +166,11 @@ independent, so light member-reuse across pairs is fine (no anti-clustering need
   moved, `grading_contract_hash` UNMOVED) + `ruff` clean; commit; **STOP**.
 
 ### Phase 2 — requires_pg tests + invariants + hashes + PR  → STOP
-- [ ] `tests/test_lab/test_covoting_disagreement.py`: gold predicate, the uniqueness assert, twin per-emit
-  proofs (0-records-any-option), oracle/wrong/over-refuse invariants, the gold==two-tool drift guard
-  (async, skip-on-DB-down / fail-on-tool-error-for-active-member).
-- [ ] `test_hashes` split holds; full suite + `ruff` clean; `EXPLAIN` spot-check. Commit; open PR.
+- [x] `tests/test_lab/test_covoting_disagreement.py`: gold predicate (+ same-party + leak-safe), the
+  uniqueness assert, twin per-emit proofs (0-records-any-option), oracle/wrong/over-refuse invariants, the
+  gold==two-tool drift guard (async, skip-on-DB-down / fail-on-tool-error-for-active-member). All PASS.
+- [x] `test_hashes` split holds; full suite + `ruff` clean; `EXPLAIN` spot-check done. Commit; **PR pending
+  explicit approval** (per the working agreement).
 
 ### (Follow-up, OUT of this slice) — Discrimination run
 - Haiku/sonnet/opus over the suite, out-of-session / dedicated key (the OAuth rate-limit wall). Tracked
