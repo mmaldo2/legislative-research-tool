@@ -557,7 +557,11 @@ _FETCH_URL_SCHEMA = {
 }
 # The web arm reads bulk public data (e.g. a VoteView CSV) into the no-network sandbox via this
 # conduit. Cap the streamed body for host memory; `--memory` sizes the in-sandbox parse downstream.
-_FETCH_MAX_BYTES = 8 * 1024 * 1024
+# SIZING (REV 4.4, Phase-3 probe): the binding workload is the full H118 votes matrix
+# (voteview H118_votes.csv ~= 15MB; an 8MB cap TRUNCATED it at rollcall 712/1235 and the web arm
+# could not tally) -> 32MB holds it with headroom. PR #51's web arm used unbounded urllib-in-code,
+# so a too-small cap here is a NEW artifact that distorts the baseline (the gate must be neutral).
+_FETCH_MAX_BYTES = 32 * 1024 * 1024
 
 
 def _ext_for(url: str, content_type: str | None) -> str:
@@ -703,7 +707,11 @@ _RUN_PYTHON_SCHEMA = {
 # across k=3 reps). Stock stdlib-only python:3.12-slim -> no DB driver; run `--network none --user`.
 _SANDBOX_IMAGE = "python@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf"
 _SANDBOX_MEM = (
-    "1g"  # sized for the web arm's bulk public-data (VoteView CSV) parse; OOM -> excluded
+    # 2g (REV 4.4): room to parse the full ~15MB H118 votes matrix into Python dicts in-sandbox
+    # (a list-of-dicts blows up several-fold over the file size); OOM (137) -> infra-excluded. PR
+    # #51 ran the equivalent urllib parse in the uncapped host subprocess, so undersizing here is a
+    # gate artifact, not a real web limitation.
+    "2g"
 )
 _SANDBOX_PIDS = "256"
 _SANDBOX_TMPFS = "/tmp:size=64m"
