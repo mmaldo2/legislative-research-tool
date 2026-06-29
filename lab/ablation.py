@@ -15,13 +15,14 @@ pop/restore in _asolve_sdk is a process-global race; never parallelize cells in-
 """
 
 import argparse
+import asyncio
 from collections import Counter
 from datetime import datetime
 
 from lab import templates
 from lab.experiments.lift_instances import LIFT_TEMPLATES
 from lab.harness import RUNS_DIR, prepare_run, solve_grade_write
-from lab.solvers import AgentSolver
+from lab.solvers import _SANDBOX_IMAGE, AgentSolver, ensure_sandbox_image
 from src.ingestion.vote_parsers import OPTION_BUCKETS
 
 _MODEL_IDS = {
@@ -127,7 +128,14 @@ def _run_cell(model: str, surface: str, kind: str, instances, ctx, seed: int) ->
             for _s, inst, verdict in solve_grade_write(instances, [solver], ctx, seed, fh):
                 h = solver.history[-1]  # this instance's diagnostic row (just appended by solve)
                 x = solver.trace_extras or {}
-                bucket = classify(verdict.subscores, h["errored"])
+                # A sandbox APPARATUS failure is EXCLUDED, not a trust outcome: route it to the
+                # already-non-trust `errored` bucket instead of letting classify() score the agent's
+                # downstream refusal/guess as a real miss (panel blocker; the subtype stays visible
+                # in result_subtypes below).
+                if x.get("result_subtype") == "sandbox_infra":
+                    bucket = "errored"
+                else:
+                    bucket = classify(verdict.subscores, h["errored"])
                 counts[bucket] += 1
                 sw = inst.params.get("switcher_name")
                 if sw is not None:
@@ -166,6 +174,15 @@ def run_ablation(template_name, models, surfaces, n, seed, repeats) -> list[dict
     ours-vs-web delta is read on the SWITCHER subset, never averaged with the control."""
     # Generate the answerable set ONCE and reuse across ALL cells + repeats (P10): so ours-vs-web
     # compares the SAME questions, and the repeats measure model variance, not sample variance.
+    # SANDBOX PRE-FLIGHT: ensure the pinned run_python image is present (pull if missing) BEFORE any
+    # rollout -- a lazy in-rollout pull would time out + pollute cell 1. A failure here means
+    # run_python calls will be excluded (sandbox_infra); the digest stamp ties the run to an image.
+    infra = asyncio.run(ensure_sandbox_image())
+    if infra:
+        print(f"  SANDBOX PRE-FLIGHT WARNING: {infra} -> run_python excluded (sandbox_infra)")
+    else:
+        print(f"  sandbox image ready: {_SANDBOX_IMAGE}")
+
     template = _resolve_template(template_name)
     all_instances, ctx = prepare_run(template, n, seed, set(OPTION_BUCKETS))
     answerable = [i for i in all_instances if not i.is_refusal]  # answerable arm only (B1)
