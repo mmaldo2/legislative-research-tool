@@ -51,7 +51,34 @@ the bill-linked set. The restriction is NATURAL (votes on legislation, not quoru
 (1210/1241 retained) -- not a contortion. It is a FROZEN-template prompt change (content_hash moves)
 -> **run the 5-lens panel + the green gate before Phase 2.**
 
-## Phase 2: The fix (CONDITIONAL on Phase-1 numbers) + the reconciliation artifact
+## ALL-31 categorization + 5-lens panel + DECISION (A) decouple (2026-06-29)
+**All 31** missing 118-House rolls categorized (not just 15): **`non_bill: 31`** (QUORUM / ADJOURN /
+no legis_num), **zero `bill_not_ingested`** -> `skipped_unresolved_bill == 0`. So the divergence is
+PURELY the public bill-vs-procedural cut (a deterministic function of the public `legis_num` field),
+not idiosyncratic ingestion -> path-(a) re-scope is DEFENSIBLE (lens 4's condition met).
+
+**5-lens panel verdict (folded):**
+- Wording (lens 1/2/5): NOT "(bills)" -- our gold = bills AND resolutions (`is_bill_ref`:
+  HR/S/HRES/SRES/HJRES/SJRES/HCONRES/SCONRES) and MECHANICAL (includes motions/amendments ON a
+  bill). Prompt must say "roll-call votes on bills and resolutions ... any question type." Prompt
+  ONLY (NOT SUBMIT_SCHEMAS -- it's in neither hash).
+- Per-member option-level spot-check REQUIRED (lens 3): the count-level reconciliation misses an
+  option-swap (two members' options exchanged within an event -> bucket totals unchanged, both
+  tallies corrupted). Spot-check rosters vs the Clerk, not just counts.
+- STRUCTURAL (lens 3, the decision driver): member_summary/pairwise gate to `_fully_complete_windows`
+  = (congress, chamber) across ALL completed congresses + BOTH chambers (run logs: us-house-110..118
+  AND us-senate-*). "118 House only" -> n~=1; House-only reconciliation can't cover the Senate /
+  110-117 windows. The pinned design and the frozen templates' sampling don't fit.
+
+**DECISION (A) -- DECOUPLE (user, 2026-06-29).** The lift study (an EXPERIMENT, non-frozen) generates
+its OWN single-window instances: **40 named 118-House members, bill-linked yea/nay/other gold, the
+"bills and resolutions / any question type" prompt** -- NOT the frozen multi-window templates. This
+makes the 118-House reconciliation (already done, gap=31 all procedural) SUFFICIENT, gives a real
+n=40, and **touches NO frozen template** (no content_hash move; sidesteps the frozen-edit-bias
+concern). Phase 2 below (frozen-template re-word + keep/drop artifact) is SUPERSEDED -- retained for
+the record. The keep/drop artifact is dropped (lens 5: a no-op once gold==public by construction).
+
+## Phase 2 [SUPERSEDED by decision A]: The fix (frozen-template re-word + reconciliation artifact)
 Decide from Phase 1:
 - **(a) Cheap re-definition (if the gap is clean = purely non-bill rolls):** re-scope the task to
   **"roll-call votes on legislation (bills)"** — reword the member_summary / pairwise PROMPTS so BOTH

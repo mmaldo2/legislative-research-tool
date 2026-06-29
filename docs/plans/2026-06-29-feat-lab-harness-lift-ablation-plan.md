@@ -173,6 +173,16 @@ to COMPLETED congresses (`templates.py` `_fully_complete_windows`), so the ongoi
 -- the study targets the **118th House** (calendar 2023+2024), whose Clerk data is also final/stable
 (better for reproducibility). No cell had run, so this supersedes the `3fa0784` anchor cleanly.
 
+**REV 4.2 (2026-06-29): decoupled instance source (5-lens panel + user decision A).** The frozen
+member_summary/pairwise gate to `_fully_complete_windows` (ALL completed congresses x BOTH chambers,
+~18 windows) -- incompatible with a single pinned 118-House window (would give n~=1) and a House-only
+reconciliation (can't cover Senate / 110-117). So the lift study generates its OWN NON-FROZEN
+instances: **40 named 118-House members; bill-linked yea/nay/other gold; prompt "roll-call votes on
+bills and resolutions ... any question type."** NOT the frozen templates -> no content_hash move, no
+frozen-edit bias. Reconciliation: gap=31, ALL procedural (no `bill_not_ingested`) -> our bill-linked
+set == the public bill/resolution set (a deterministic public-`legis_num` rule). REQUIRED in the
+build: a per-member roster spot-check vs the Clerk (count-level reconciliation misses option-swaps).
+
 **Tasks (gold-reconciled).** `member_summary` and `pairwise_agreement`, **118th House** only (a
 COMPLETED congress; see REV 4.1). Reported PER TASK (never pooled — Simpson). HARD pre-filter: each
 sampled window's `vote_events` count is reconciled against the House Clerk's published roll-call

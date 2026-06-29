@@ -28,7 +28,7 @@ from src.ingestion.vote_parsers import (
 CONGRESS = 118
 SESSION_ID = f"us-{CONGRESS}"
 _EVS_BASE = getattr(settings, "house_clerk_evs_base_url", "https://clerk.house.gov/evs")
-COMPOSITION_SAMPLE = 15  # missing rolls to fetch + categorize
+COMPOSITION_SAMPLE = 40  # missing rolls to fetch + categorize (>= the ~31 gap -> categorize ALL)
 
 
 async def _get(client, url, sem):
