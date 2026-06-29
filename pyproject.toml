@@ -49,6 +49,7 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "requires_pg: test needs a live Postgres (skipped when unreachable)",
+    "requires_docker: test needs a working Docker daemon (skipped when unavailable)",
 ]
 
 [tool.ruff]

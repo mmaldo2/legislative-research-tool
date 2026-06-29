@@ -16,6 +16,9 @@ import json
 import math
 import re
 import time
+import uuid
+from dataclasses import dataclass
+from pathlib import Path
 
 from lab.experiments.lift_instances import (
     TEMPLATE_LIFT_MEMBER_SUMMARY,
@@ -615,83 +618,226 @@ def _make_fetch_url_tool(observations: list):
     return _fetch_url
 
 
-# --- run_python (ablation): a GUARDED code-execution conduit, on BOTH surfaces ------------------
+# --- run_python (ablation): a GUARDED, NETWORK-ISOLATED code conduit, on BOTH surfaces -----------
 # Code execution is held CONSTANT across surfaces (REV 4.3) so the ours-vs-web lift isolates DATA
-# ACCESS (our domain tools vs web scrape) + retrieval reliability, NOT "ours can't compute." The
-# built-in Bash is uncontrollable (it could curl our DB / read gold off disk), so BOTH arms use
-# THIS instead: `python -I -S` (isolated + NO site-packages, so psycopg2/asyncpg are NOT importable
-# -> the code CANNOT connect to our Postgres -- the agent must COMPUTE over records it already
-# retrieved via tools, never re-fetch gold) in a subprocess with a scrubbed env (no DATABASE_URL /
-# keys / tokens) + a throwaway cwd, time- and output-capped. EXPERIMENT-GRADE: not network-namespace
-# isolated -- the trust-bar trace-read must confirm no rollout reached our data, and a PUBLISHED run
-# wants OS-level isolation + a security-sentinel pass.
+# ACCESS (our domain tools vs web scrape), NOT "ours can't compute." run_python executes in a
+# per-call Docker container with `--network none` (Architecture B, the integrity gate): the agent
+# computes over records it ALREADY retrieved (via our tools, or -- web arm -- via the guarded
+# fetch_url streamed into the RO mount), and has NO path to our Postgres/API because there is no
+# network namespace at all (deny-by-default; nothing to leak through). Defense-in-depth inside the
+# container: `python -I -S -B` (no site-packages -> no DB driver importable), non-root `--user`,
+# `--cap-drop ALL --security-opt no-new-privileges`, `--read-only` rootfs + tmpfs, `--memory`/
+# `--pids-limit`, NO host env forwarded, an in-container `timeout`, an output cap, and a host
+# `docker rm -f` reap backstop. See docs/plans/2026-06-29-feat-run-python-egress-isolation-plan.md.
 _RUN_PYTHON_DESC = (
     "Execute a short Python 3 script and return its stdout/stderr. Use it to COMPUTE over data you "
     "gathered from the available tools -- a member's voting record, web pages -- (count, "
-    "aggregate, compare); print your result. It runs in an isolated subprocess with only the "
-    "standard library and NO access to any private database or credentials."
+    "aggregate, compare); print your result. It runs in an isolated, network-disabled container "
+    "with only the standard library and NO access to any private database or credentials."
 )
 _RUN_PYTHON_SCHEMA = {
     "type": "object",
     "properties": {"code": {"type": "string", "description": "Python 3 source; print the result."}},
     "required": ["code"],
 }
-# Whitelist (not blacklist) the env passed to the sandbox: enough to start the interpreter, nothing
-# that could reach our data (DATABASE_URL) or bill our keys (ANTHROPIC*/*KEY*/*TOKEN* are dropped).
-_RUN_PYTHON_ENV_KEEP = ("PATH", "SYSTEMROOT", "SYSTEMDRIVE", "TEMP", "TMP", "LANG", "LC_ALL", "TZ")
+# The sandbox image is PINNED BY DIGEST (reproducibility: an unpinned tag would silently drift
+# across k=3 reps). Stock stdlib-only python:3.12-slim -> no DB driver; run `--network none --user`.
+_SANDBOX_IMAGE = "python@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf"
+_SANDBOX_MEM = (
+    "1g"  # sized for the web arm's bulk public-data (VoteView CSV) parse; OOM -> excluded
+)
+_SANDBOX_PIDS = "256"
+_SANDBOX_TMPFS = "/tmp:size=64m"
+_SANDBOX_HOST_TIMEOUT_BUFFER_S = 30.0  # host backstop = in-container timeout + container start/stop
 
 
-async def _exec_sandboxed_python(code: str, *, timeout_s: float = 15.0, cap: int = 10000) -> str:
-    """Run `code` in an isolated stdlib-only subprocess and return captured output. Guards:
-    `-I -S` (no env PYTHON*, cwd off sys.path, NO site-packages -> no DB driver importable); a
-    scrubbed env (only _RUN_PYTHON_ENV_KEEP survives -> DATABASE_URL / keys / tokens gone); a
-    throwaway cwd; a wall-clock timeout; an output cap. Pure + awaitable -> unit-testable without
-    the SDK. Never raises (a failure is returned as text)."""
-    import os
-    import sys
+@dataclass
+class SandboxResult:
+    """`text` is shown to the agent; `infra_error` (when set) marks an APPARATUS failure
+    (docker-unavailable / image-missing / OOM / mount-failure / host-timeout) so the solver EXCLUDES
+    the rollout (result_subtype='sandbox_infra') instead of mis-scoring it a refusal/miss."""
+
+    text: str
+    infra_error: str | None = None
+
+
+def _classify_sandbox_exit(rc: int, stdout: str, stderr: str, *, timeout_s: float, cap: int):
+    """Map a finished `docker run`'s (exit code, stdout, stderr) to a SandboxResult. PURE (no
+    Docker) -> hermetically testable. APPARATUS failures (OOM / docker-start / mount) carry
+    `infra_error` (excluded); a script `timeout` (124) or ordinary nonzero is agent-visible."""
+
+    def _capped(extra_code: int | None = None) -> str:
+        body = stdout[:cap]
+        if stderr.strip():
+            body = f"{body}\n[stderr]\n{stderr[: cap // 2]}"
+        body = body.strip()
+        if body:
+            return body
+        return "(no output)" if extra_code is None else f"(script exited with code {extra_code})"
+
+    if rc == 0:
+        return SandboxResult(_capped())
+    if rc == 124:  # in-container `timeout` fired -> a SCRIPT limit (agent-visible, NOT excluded)
+        return SandboxResult(f"Refused: script exceeded the {timeout_s:g}s time limit.")
+    if rc == 137:  # SIGKILL = cgroup OOM -> apparatus sizing; EXCLUDE (never penalize the baseline)
+        return SandboxResult(
+            "Failed: the script exceeded the sandbox memory limit.", infra_error="oom"
+        )
+    if rc == 125 or (rc == 2 and "can't open file" in stderr):  # docker/daemon/image/mount failure
+        return SandboxResult("Failed: the sandbox could not start.", infra_error="sandbox_start")
+    return SandboxResult(_capped(rc))  # ordinary nonzero from the user's script (a code error)
+
+
+async def _reap_container(name: str) -> None:
+    """Best-effort force-remove of a sandbox container. Killing the `docker run` CLIENT does NOT
+    stop the container (`--rm` only fires on a clean exit), so a timed-out/cancelled call must reap
+    by name. Never raises."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "docker",
+            "rm",
+            "-f",
+            name,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        await asyncio.wait_for(proc.wait(), timeout=10.0)
+    except Exception:  # noqa: BLE001 -- cleanup is best-effort
+        pass
+
+
+async def ensure_sandbox_image() -> str | None:
+    """PRE-FLIGHT: ensure the pinned sandbox image is present (pull if missing). Returns None when
+    ready, else an infra-error message. Call ONCE before a matrix run -- never lazily inside a
+    rollout (a multi-second pull would time out + pollute the first cell)."""
+    try:
+        inspect = await asyncio.create_subprocess_exec(
+            "docker",
+            "image",
+            "inspect",
+            _SANDBOX_IMAGE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        if await inspect.wait() == 0:
+            return None
+        pull = await asyncio.create_subprocess_exec(
+            "docker",
+            "pull",
+            _SANDBOX_IMAGE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await pull.wait()
+        return None if pull.returncode == 0 else "sandbox image pull failed"
+    except (FileNotFoundError, OSError):
+        return "docker is not available"
+
+
+async def _exec_sandboxed_python(
+    code: str, *, timeout_s: float = 15.0, cap: int = 10000, inputs: dict[str, str] | None = None
+) -> SandboxResult:
+    """Run `code` in a per-call `--network none` Docker container (Architecture B) and return its
+    captured output. `inputs` maps filename -> text, written under the RO-mounted `/sandbox/inputs/`
+    so the agent's run_python can read its retrieved data + fetched files. Never raises except to
+    propagate CancelledError (rollout cancellation); every other failure is a SandboxResult --
+    APPARATUS failures carry `infra_error` so the rollout is EXCLUDED, not scored."""
     import tempfile
 
-    safe_env = {k: os.environ[k] for k in _RUN_PYTHON_ENV_KEEP if k in os.environ}
+    name = f"sbx-{uuid.uuid4().hex}"
+    reaped = False
     try:
-        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as cwd:
-            proc = await asyncio.create_subprocess_exec(
-                sys.executable,
+        with tempfile.TemporaryDirectory(prefix="lab-sbx-", ignore_cleanup_errors=True) as staging:
+            stage = Path(staging)
+            (stage / "code.py").write_text(code, encoding="utf-8")
+            inputs_dir = stage / "inputs"
+            inputs_dir.mkdir()
+            for fname, content in (inputs or {}).items():
+                (inputs_dir / fname).write_text(content, encoding="utf-8")
+            argv = [
+                "docker",
+                "run",
+                "--rm",
+                "--name",
+                name,
+                "--network",
+                "none",
+                "--user",
+                "1000:1000",
+                "--cap-drop",
+                "ALL",
+                "--security-opt",
+                "no-new-privileges",
+                "--read-only",
+                "--tmpfs",
+                _SANDBOX_TMPFS,
+                "--memory",
+                _SANDBOX_MEM,
+                "--pids-limit",
+                _SANDBOX_PIDS,
+                "-v",
+                f"{stage.as_posix()}:/sandbox:ro",
+                _SANDBOX_IMAGE,
+                "timeout",
+                str(int(timeout_s)),
+                "python",
                 "-I",
                 "-S",
-                "-c",
-                code,
-                stdin=asyncio.subprocess.DEVNULL,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env=safe_env,
-                cwd=cwd,
-            )
+                "-B",
+                "/sandbox/code.py",
+            ]
             try:
-                out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
+                    stdin=asyncio.subprocess.DEVNULL,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except (FileNotFoundError, OSError):
+                return SandboxResult(
+                    "Failed: the sandbox runtime is unavailable.", infra_error="docker_unavailable"
+                )
+            try:
+                out, err = await asyncio.wait_for(
+                    proc.communicate(), timeout=timeout_s + _SANDBOX_HOST_TIMEOUT_BUFFER_S
+                )
+            except asyncio.CancelledError:
+                await _reap_container(name)
+                raise
             except TimeoutError:
-                proc.kill()
-                await proc.wait()  # reap before temp-dir cleanup (Windows holds the cwd handle)
-                return f"Refused: script exceeded the {timeout_s:g}s time limit."
-    except Exception:  # noqa: BLE001 -- a sandbox failure must never crash the rollout
-        return "Failed to execute the script."
-    text = out.decode(errors="replace")[:cap]
-    stderr = err.decode(errors="replace")
-    if stderr.strip():
-        text = f"{text}\n[stderr]\n{stderr[: cap // 2]}"
-    return text.strip() or "(no output)"
+                await _reap_container(name)
+                reaped = True
+                return SandboxResult(
+                    "Failed: the sandbox did not return in time.", infra_error="host_timeout"
+                )
+            rc = proc.returncode
+            stdout = out.decode(errors="replace")
+            stderr = err.decode(errors="replace")
+    except asyncio.CancelledError:
+        raise
+    except Exception:  # noqa: BLE001 -- any unexpected host-side failure is an apparatus failure
+        if not reaped:
+            await _reap_container(name)
+        return SandboxResult("Failed to execute the script.", infra_error="sandbox_error")
+
+    return _classify_sandbox_exit(rc, stdout, stderr, timeout_s=timeout_s, cap=cap)
 
 
 def _make_run_python_tool(observations: list):
-    """The web-arm guarded code @tool: routes to _exec_sandboxed_python and records the code +
-    output into the trajectory (the trust bar sees exactly what the baseline computed)."""
+    """The guarded code @tool (both arms): routes to _exec_sandboxed_python and records the code +
+    output. On an APPARATUS failure it tags the observation `error_kind='sandbox_infra'` so the
+    solver excludes the rollout -- the failure must never be scored as a refusal/wrong answer."""
     from claude_agent_sdk import tool
 
     @tool("run_python", _RUN_PYTHON_DESC, _RUN_PYTHON_SCHEMA)
     async def _run_python(args):
         code = args.get("code") or ""
-        text = await _exec_sandboxed_python(code)
-        observations.append({"tool": "run_python", "arguments": {"code": code}, "result": text})
-        return {"content": [{"type": "text", "text": text}]}
+        result = await _exec_sandboxed_python(code)
+        obs = {"tool": "run_python", "arguments": {"code": code}, "result": result.text}
+        if result.infra_error:
+            obs["error_kind"] = "sandbox_infra"
+        observations.append(obs)
+        return {"content": [{"type": "text", "text": result.text}]}
 
     return _run_python
 
@@ -968,6 +1114,11 @@ class AgentSolver:
             [{"tool_name": "submit_answer", "arguments": submit_box[-1]}] if submit_box else []
         )
         answer = _map_answer(tool_calls, grader=inst.grader, template_id=inst.template_id)
+        # A run_python APPARATUS failure (Docker/image/OOM/mount/host-timeout) is NOT a trust
+        # outcome -> override the subtype so the matrix + the lift analysis EXCLUDE this rollout
+        # instead of scoring the agent's downstream refusal/guess as a real miss (panel blocker).
+        if any(o.get("error_kind") == "sandbox_infra" for o in observations):
+            result_subtype = "sandbox_infra"
         extras = {
             "trajectory": observations,
             "raw": "\n".join(text_parts),
