@@ -1,7 +1,7 @@
 ---
 title: "feat(lab): run_python egress isolation — Docker-sandboxed code tool (harness-lift integrity gate)"
 type: feat
-status: active
+status: completed
 date: 2026-06-29
 origin: docs/scopes/2026-06-29-run-python-egress-isolation-scope.md
 ---
@@ -146,14 +146,27 @@ the web arm's only web access is the audited `fetch_url`, which app-blocks priva
       egress) rather than a flaky networked unit test; the streaming/cap/stash logic is proven
       hermetically here.
 
-#### Phase 3: Re-pilot BOTH arms + regression-check (validate the gate is neutral)
-- [ ] Re-run member_summary n=6 BOTH arms under isolation: ours must stay ~6/6 (run_python reading
-      the injected file); web (opus) must still reach VoteView via fetch-to-mount + compute, and a
-      probe rollout CANNOT reach our DB. **Regression check:** web completion-rate / cost / latency
-      statistically indistinguishable from the PR #51 pilot — a material web drop = the gate
-      distorting the measurement -> block + fix `--memory`/timeout sizing. Update the pre-reg (REV 4.4)
-      with the fetch-to-mount baseline + gated numbers. Unblocks the full matrix (haiku+sonnet x
-      {ours,web} + opus x web, k=3).
+#### Phase 3: Re-pilot BOTH arms + regression-check (validate the gate is neutral) — DONE
+- [x] Re-ran member_summary (`lift.member_summary_118house`) n=6 seed=42 BOTH arms under isolation
+      (agent-sdk). **ours (haiku): 100% (6/6), 40s, $0.16** — parity vs PR #51 (100%/28s/$0.09); the
+      injection path is exercised live (find_people -> get_member_voting_record -> run_python x4-7
+      reading /sandbox/inputs/ -> submit) in 6/6, so the smoke's over-refusal is fixed. **web (opus):
+      100% (6/6), 65s, $0.60** — NO drop vs PR #51's 33% (it IMPROVED: the structured fetch-to-mount
+      conduit is a better honest path than urllib-flailing-in-sandbox). A probe CANNOT reach our DB:
+      the mechanical trace-grep (`legis:`/`legis_dev`/`@localhost`/`:5432`/`localhost:8000`/`psycopg2`
+      /`asyncpg`/`connect(`) is EMPTY across all web traces; web reaches VoteView ONLY via the audited
+      fetch_url (3 fetches: members/rollcalls/votes CSVs).
+      **REV 4.4 sizing fix (Phase-3 caught it):** the first probe (opus x web n=2) failed 0/2 / 100%
+      timeout because fetch_url TRUNCATED H118_votes.csv at the 8MB cap (real file 14,621,369 B ~=
+      14.6MB). PR #51's web arm used unbounded urllib-in-code, so the cap was a NEW gate artifact ->
+      raised `_FETCH_MAX_BYTES` 8MB->32MB + `_SANDBOX_MEM` 1g->2g; re-probe 2/2, then full n=6 6/6.
+      The votes matrix now arrives complete (14.6MB < 32MB cap) in all 6.
+      **Headline preview (pre-reg REV 4.4):** at accuracy PARITY (100%/100%), ours(haiku) is ~3.75x
+      cheaper ($0.16 vs $0.60) and faster (40s vs 65s) than web(opus) — the cost/reliability story,
+      with a STRONG (not strawmanned) honest web baseline, which defends the bias critique. Unblocks
+      the full matrix (haiku+sonnet x {ours,web} + opus x web, k=3). NOTE the ours n=6 was run pre-
+      REV-4.4 but is apparatus-invariant to it (ours never fetches; its single-member parse is far
+      under even the old 1g).
 - [ ] (Deferred, defense-in-depth) DB-cred rotation via `ALTER ROLE` + `.env`; assert the literal
       `legis_dev` default fails to auth; confirm NO frozen/precompute/`autoresearch` hardcoded-default
       path breaks. Not required for the gate under B (egress is deny-by-default).
@@ -180,24 +193,24 @@ the web arm's only web access is the audited `fetch_url`, which app-blocks priva
   injected file carries no gold; oversized observations bounded.
 
 ## Acceptance Criteria
-- [ ] `run_python` executes `--network none --user sandbox` in a digest-pinned Docker container (both
+- [x] `run_python` executes `--network none --user sandbox` in a digest-pinned Docker container (both
       arms); existing guard tests pass through it (`requires_docker`) + a thin hermetic variant
       survives Docker-less CI; fail-closed via the infra sentinel when Docker is absent.
-- [ ] BOTH sandboxes have ZERO egress (asserted: `socket.create_connection` fails); the web arm
+- [x] BOTH sandboxes have ZERO egress (asserted: `socket.create_connection` fails); the web arm
       reaches public data ONLY via `fetch_url`, which still REFUSES private/loopback URLs and streams
       bulk public bodies to the RO mount.
-- [ ] Infra failures (Docker/image/OOM/daemon/timeout) surface as `result_subtype="sandbox_infra"` and
+- [x] Infra failures (Docker/image/OOM/daemon/timeout) surface as `result_subtype="sandbox_infra"` and
       are EXCLUDED by the matrix — never scored as `over_refusal`/`hallucination`.
-- [ ] Timed-out/cancelled containers are force-removed (`docker ps -a` flat across a run); image built
-      in pre-flight, pinned by digest, image ID stamped into run metadata.
-- [ ] Retrieved data injected at `/sandbox/inputs/`; asserted built ONLY from `observations` (no
+- [x] Timed-out/cancelled containers are force-removed (`docker ps -a` flat across a run; client also
+      killed); image ensured in pre-flight, pinned by digest, digest stamped into the run header.
+- [x] Retrieved data injected at `/sandbox/inputs/`; asserted built ONLY from `observations` (no
       `gold`/`params` leak). Forbidden docker flags absent (argv check); no host `-e` env.
-- [ ] `grading_contract_hash` / `content_hash` unmoved; `ruff` clean; full lab suite green
+- [x] `grading_contract_hash` / `content_hash` unmoved; `ruff` clean; full lab suite green
       (Docker-dependent tests skip cleanly where Docker is absent, but BLOCK on the box producing
       published numbers).
-- [ ] Phase-3 re-pilot: BOTH arms validated under isolation (ours ~6/6; web reaches VoteView via
-      fetch-to-mount + computes; a probe cannot reach our DB); web completion/cost/latency not
-      regressed vs PR #51.
+- [x] Phase-3 re-pilot: BOTH arms validated under isolation (ours 6/6; web 6/6 reaches VoteView via
+      fetch-to-mount + computes; mechanical trace-grep EMPTY -> no probe reached our DB); web
+      completion/cost/latency NOT regressed vs PR #51 (33%/237s/$1.26 -> 100%/65s/$0.60 — improved).
 
 ## Alternatives Considered
 - **Architecture A — iptables egress-filter on a networked web container** (the original plan):
