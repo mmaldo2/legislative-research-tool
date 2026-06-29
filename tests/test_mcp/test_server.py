@@ -28,11 +28,11 @@ class TestSchemaConversion:
     def test_convert_all_research_tools(self):
         """Every tool in RESEARCH_TOOLS should convert without error."""
         tools = [_convert_schema(t) for t in RESEARCH_TOOLS]
-        assert len(tools) == 16
+        assert len(tools) == 17
 
         # Verify all tool names are unique
         names = [t.name for t in tools]
-        assert len(set(names)) == 16
+        assert len(set(names)) == 17
 
     def test_tool_names_match(self):
         """MCP tool names should exactly match the Anthropic tool names."""
@@ -64,6 +64,7 @@ class TestExpectedTools:
         "get_vote_event",
         "get_bill_votes",
         "get_bill_cosponsors",
+        "get_member_sponsorships",
         "list_vote_events",
         "find_people",
         "get_member_voting_record",

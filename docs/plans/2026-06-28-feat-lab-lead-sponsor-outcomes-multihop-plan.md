@@ -248,21 +248,22 @@ struggles. If sonnet aces, the long-loop shape is NOT frontier-hard and we do no
 
 ## Implementation Phases
 
-### Phase 1: The tool (STOP for review)
-- [ ] `_tool_get_member_sponsorships` in `src/api/chat.py` (mirror `_tool_get_bill_cosponsors`).
-- [ ] Register in `_TOOL_HANDLERS` (not `_HARNESS_REQUIRED_TOOLS`).
-- [ ] `get_member_sponsorships` def in `src/llm/tools.py` `RESEARCH_TOOLS`.
-- [ ] Gate edit (the ONLY one needed): `tests/test_mcp/test_server.py` -- add
-      `"get_member_sponsorships"` to `EXPECTED_TOOLS` (line 61-78) and change both `== 16` to
-      `== 17` (lines 31, 35). (conftest `REQUIRED_COLUMNS` and `test_schema_columns` `_MODELS`
-      already cover `sponsorships`/`Sponsorship` from PR #43 -- NO new table -> no change.)
-- [ ] Tool tests in `tests/test_api/test_vote_tool.py` (mirror the cosponsor tests, `requires_pg`):
-      returns primary bills (bill_id + identifier); EXCLUDES cosponsor/original-cosponsor (insert
-      all three classifications, assert only primary returned); nonexistent person -> error;
-      real member with no primary bills in 110 -> empty list; hermetic DB-error guard (db.execute
-      raises -> generic "Failed to retrieve the member sponsorships.", no traceback leak).
-- [ ] Full suite + ruff green. Commit. **STOP -- surface summary, do not start Phase 2.**
-- Hash impact: **both hashes UNMOVED** (no `templates.py` change this phase).
+### Phase 1: The tool (STOP for review) -- DONE
+- [x] `_tool_get_member_sponsorships` in `src/api/chat.py` (mirror `_tool_get_bill_cosponsors`;
+      returns ONLY `bill_id` per PR-3).
+- [x] Register in `_TOOL_HANDLERS` (not `_HARNESS_REQUIRED_TOOLS`).
+- [x] `get_member_sponsorships` def in `src/llm/tools.py` `RESEARCH_TOOLS`.
+- [x] Gate edit (the ONLY one needed): `tests/test_mcp/test_server.py` -- added
+      `"get_member_sponsorships"` to `EXPECTED_TOOLS` and both `== 16` -> `== 17`. (conftest
+      `REQUIRED_COLUMNS` and `test_schema_columns` `_MODELS` already cover `sponsorships`/
+      `Sponsorship` from PR #43 -- NO new table -> no change. Confirmed.)
+- [x] Tool tests in `tests/test_api/test_provenance_tools.py` (PR-10: mirror the cosponsor tests):
+      returns primary bills (bill_id only); EXCLUDES cosponsor (real-DB test); congress-scoped
+      (different congress -> empty); nonexistent person -> error; hermetic DB-error guard
+      (2-mock not-found via `side_effect=[empty, none]`; no traceback leak).
+- [x] Full suite + ruff green (888 passed, 32 skipped = the cross-loop requires_pg pattern; the
+      new requires_pg test passes in isolation). Commit. **STOP -- surface summary.**
+- Hash impact: **both hashes UNMOVED** (no `templates.py` change this phase). Confirmed.
 
 ### Phase 2: Minimal generator + solver seam + THE SCREEN (HARD GATE)
 - [ ] Add `TEMPLATE_LEAD_SPONSOR_OUTCOMES`, `_lead_sponsor_prompt`, `generate_lead_sponsor_outcomes`

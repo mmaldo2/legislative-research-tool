@@ -11,7 +11,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from sqlalchemy import text
 
-from src.api.chat import _tool_get_bill_cosponsors, _tool_get_bill_votes
+from src.api.chat import (
+    _tool_get_bill_cosponsors,
+    _tool_get_bill_votes,
+    _tool_get_member_sponsorships,
+)
 
 
 def _rows(values):
@@ -177,3 +181,130 @@ async def test_get_bill_cosponsors_filters_to_cosponsor_roles():
     assert out["count"] == 2, "the double-role person must be deduped (DISTINCT)"
     names = {c["person_id"]: c["name"] for c in out["cosponsors"]}
     assert names["ZZ-CO"] == "Rep. Co"
+
+
+# --- get_member_sponsorships (Family 2, reverse direction) --------------------------------------
+
+
+async def test_get_member_sponsorships_returns_bill_ids():
+    db = AsyncMock()
+    db.execute.return_value = _rows([("b1",), ("b2",)])
+    out = json.loads(
+        await _tool_get_member_sponsorships({"person_id": "p1", "congress": "110"}, db, None)
+    )
+    assert out == {
+        "person_id": "p1",
+        "congress": "110",
+        "bills": [{"bill_id": "b1"}, {"bill_id": "b2"}],
+        "count": 2,
+    }
+
+
+async def test_get_member_sponsorships_unknown_person_returns_error():
+    db = AsyncMock()
+    # primary query → no rows; then the existence check → absent
+    db.execute.side_effect = [_rows([]), _first(None)]
+    out = json.loads(
+        await _tool_get_member_sponsorships({"person_id": "NX-PERSON", "congress": "110"}, db, None)
+    )
+    assert out == {"error": "Person 'NX-PERSON' not found."}
+
+
+async def test_get_member_sponsorships_real_member_no_primary_bills_returns_empty():
+    db = AsyncMock()
+    # primary query → no rows; existence check → the person IS present (empty-list answer, no error)
+    db.execute.side_effect = [_rows([]), _first(("p1",))]
+    out = json.loads(
+        await _tool_get_member_sponsorships({"person_id": "p1", "congress": "110"}, db, None)
+    )
+    assert out == {"person_id": "p1", "congress": "110", "bills": [], "count": 0}
+
+
+async def test_get_member_sponsorships_db_error_no_traceback_leak():
+    db = AsyncMock()
+    db.execute.side_effect = RuntimeError("DataError: invalid input syntax for type ...")
+    out = json.loads(
+        await _tool_get_member_sponsorships({"person_id": "weird", "congress": "110"}, db, None)
+    )
+    assert out == {"error": "Failed to retrieve the member sponsorships."}
+    assert "DataError" not in json.dumps(out)  # DB internals must not reach the agent/trace
+
+
+@pytest.mark.requires_pg
+async def test_get_member_sponsorships_filters_to_primary_role_and_congress():
+    """The tool returns the member's PRIMARY-sponsored bills and EXCLUDES bills where they only
+    cosponsor; it scopes to the requested congress (a different congress → empty); a nonexistent
+    person errors. Inserts a synthetic session/bills/sponsorships, asserts, rolls back. Skips if
+    PG down."""
+    from src.database import async_session_factory
+    from src.models.bill import Bill
+    from src.models.person import Person
+    from src.models.sponsorship import Sponsorship
+
+    # Best-effort like the sibling async requires_pg tests: a prior async pg test binds the asyncpg
+    # pool to its now-closed loop, so this skips gracefully in the full suite and runs when it's the
+    # first pg test (isolation / a focused CI shard).
+    async with async_session_factory() as db:
+        try:
+            await db.execute(text("SELECT 1"))
+        except Exception as exc:  # noqa: BLE001 — unreachable means skip, not fail
+            pytest.skip(f"Postgres unreachable: {exc}")
+        juris = (await db.execute(text("SELECT id FROM jurisdictions LIMIT 1"))).scalar()
+        row = (await db.execute(text("SELECT id, identifier FROM sessions LIMIT 1"))).first()
+        if juris is None or row is None:
+            pytest.skip("no jurisdiction/session to anchor synthetic bills")
+        sid, cong = row
+        led, cosponsored = "ZZ-MS-LED", "ZZ-MS-COSPON"
+        try:
+            db.add(
+                Bill(
+                    id=led,
+                    jurisdiction_id=juris,
+                    session_id=sid,
+                    identifier="ZZ MS LED 1",
+                    title="Synthetic primary-sponsored bill",
+                )
+            )
+            db.add(
+                Bill(
+                    id=cosponsored,
+                    jurisdiction_id=juris,
+                    session_id=sid,
+                    identifier="ZZ MS COSPON 1",
+                    title="Synthetic cosponsored-only bill",
+                )
+            )
+            db.add(Person(id="ZZ-MEMBER", name="Rep. Member", party="D"))
+            # primary on `led`; only a cosponsor on `cosponsored` → `cosponsored` must be EXCLUDED.
+            db.add(Sponsorship(bill_id=led, person_id="ZZ-MEMBER", classification="primary"))
+            db.add(
+                Sponsorship(bill_id=cosponsored, person_id="ZZ-MEMBER", classification="cosponsor")
+            )
+            await db.flush()  # FK-checked INSERTs WITHOUT committing
+
+            out = json.loads(
+                await _tool_get_member_sponsorships(
+                    {"person_id": "ZZ-MEMBER", "congress": cong}, db, None
+                )
+            )
+            # a different congress for a real member → empty list (not an error)
+            other = json.loads(
+                await _tool_get_member_sponsorships(
+                    {"person_id": "ZZ-MEMBER", "congress": "ZZ-NOPE-CONG"}, db, None
+                )
+            )
+            # a nonexistent person → clean not-found error
+            nf = json.loads(
+                await _tool_get_member_sponsorships(
+                    {"person_id": "ZZ-NX-PERSON", "congress": cong}, db, None
+                )
+            )
+        finally:
+            await db.rollback()  # discard all synthetic rows
+
+    assert out["bills"] == [{"bill_id": led}], (
+        "only the PRIMARY-sponsored bill; cosponsored EXCLUDED"
+    )
+    assert out["count"] == 1
+    assert other == {"person_id": "ZZ-MEMBER", "congress": "ZZ-NOPE-CONG", "bills": [], "count": 0}
+    assert nf == {"error": "Person 'ZZ-NX-PERSON' not found."}
