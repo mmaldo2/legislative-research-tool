@@ -120,10 +120,10 @@ independent, so light member-reuse across pairs is fine (no anti-clustering need
 - [ ] `generate_covoting_disagreement` emits same-party-same-chamber answerable instances (gold = the
   differing `vote_event_id` set) + Twin-A (cross-body) + Twin-B (nonexistent); `is_refusal == (gold ==
   REFUSAL)` and `X != Y` asserted per emit.
-- [ ] `_same_party_pair_keys` is a pure helper: filters party+floor, sorts, canonical dedup'd pair-keys,
-  no self-pair (hermetic test).
-- [ ] Registered in `TEMPLATE_REGISTRY`; `SUBMIT_SCHEMAS`/`SET_MATCH_FIELD`/`TEMPLATE_TOOLS=_MEMBER_TOOLS`;
-  grader `set_match`; submit description says "empty list if none".
+- [x] `_same_party_pair_keys` is a pure helper: filters party+floor, sorts, canonical dedup'd pair-keys,
+  no self-pair (hermetic test — 4 cases).
+- [x] Registered in `TEMPLATE_REGISTRY`; `SUBMIT_SCHEMAS`/`SET_MATCH_FIELD`/`TEMPLATE_TOOLS=_MEMBER_TOOLS`;
+  grader `set_match`; submit description says "an empty list if none".
 - [ ] `requires_pg`: each gold eid is a roll-call where both cast yea/nay and differ; no gold eid in the
   prompt; the uniqueness assert returns zero rows; **Twin-A senator proven 0 `(119,house)` records of ANY
   option**; Twin-B name absent.
@@ -149,18 +149,19 @@ independent, so light member-reuse across pairs is fine (no anti-clustering need
 ## Implementation Phases (checkpoints — STOP after each)
 
 ### Phase 0 — Branch + carry-over docs
-- [ ] New branch `feat/lab-covoting-disagreement` off `main`.
-- [ ] First commit carries the uncommitted working-tree docs: the quote-deprioritization record (backlog
+- [x] New branch `feat/lab-covoting-disagreement` off `main`.
+- [x] First commit carries the uncommitted working-tree docs: the quote-deprioritization record (backlog
   re-score, `2026-06-28-family10-quote-in-bill-text-scope.md` status=deprioritized,
   `lab/experiments/quote_discrimination_probe.py`) + this slice's scope + plan.
 
 ### Phase 1 — Generator + seam + hermetic test  → STOP
-- [ ] `TEMPLATE_COVOTING = "family6.covoting_disagreement"`, `_ACTIVE_FLOOR` constant,
+- [x] `TEMPLATE_COVOTING = "family6.covoting_disagreement"`, `_COVOTING_ACTIVE_FLOOR` constant,
   `_same_party_pair_keys` (pure), `generate_covoting_disagreement` (pool → pair-keys → `sample` → gold SQL
   → answerable + Twin-A/Twin-B via `_covoting_refusal`), registry entry.
-- [ ] `lab/solvers.py`: `SUBMIT_SCHEMAS` + `SET_MATCH_FIELD` + `TEMPLATE_TOOLS` entries.
-- [ ] Hermetic test: `_same_party_pair_keys` (determinism, canonical dedup, no self-pair).
-- [ ] `pytest tests/test_lab -q` + `ruff` green; commit; **STOP**.
+- [x] `lab/solvers.py`: `SUBMIT_SCHEMAS` + `SET_MATCH_FIELD` + `TEMPLATE_TOOLS` entries.
+- [x] Hermetic test: `_same_party_pair_keys` (determinism, canonical dedup, no self-pair).
+- [x] `pytest` green (full suite **880 passed, 30 skipped**; `test_hashes` split holds — `content_hash`
+  moved, `grading_contract_hash` UNMOVED) + `ruff` clean; commit; **STOP**.
 
 ### Phase 2 — requires_pg tests + invariants + hashes + PR  → STOP
 - [ ] `tests/test_lab/test_covoting_disagreement.py`: gold predicate, the uniqueness assert, twin per-emit

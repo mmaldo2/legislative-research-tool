@@ -209,6 +209,15 @@ SUBMIT_SCHEMAS = {
         },
         **_REFUSED_FIELD,
     },
+    "family6.covoting_disagreement": {
+        "vote_event_ids": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "The vote_event_ids on which the two members cast opposing votes, as a "
+            "list of strings (an empty list if none).",
+        },
+        **_REFUSED_FIELD,
+    },
 }
 
 # set_match is keyed per-template (the submit field NAME differs: crossed lists members, closest
@@ -219,6 +228,7 @@ SET_MATCH_FIELD = {
     "family1.closest_by_margin": "roll_call_ids",
     "family2.cosponsored_and_voted_against": "member_ids",
     "family9.member_party_at_vote": "party",
+    "family6.covoting_disagreement": "vote_event_ids",
 }
 
 _SUBMIT_DESCRIPTION = (
@@ -264,6 +274,8 @@ TEMPLATE_TOOLS = {
     ],
     # Family 9: the OURS arm reads vote-time party straight from get_vote_event's as-of join.
     "family9.member_party_at_vote": _EVENT_TOOLS,
+    # Family 6: two members' full records -> the agent computes the disagreement set (the join).
+    "family6.covoting_disagreement": _MEMBER_TOOLS,
 }
 
 
