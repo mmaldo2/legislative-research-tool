@@ -17,6 +17,10 @@ import math
 import re
 import time
 
+from lab.experiments.lift_instances import (
+    TEMPLATE_LIFT_MEMBER_SUMMARY,
+    TEMPLATE_LIFT_PAIRWISE,
+)
 from lab.graders import REFUSAL
 from lab.harness import Instance
 from src.ingestion.vote_parsers import OPTION_BUCKETS, VOTE_OPTION_MAP
@@ -277,6 +281,19 @@ TEMPLATE_TOOLS = {
     # Family 6: two members' full records -> the agent computes the disagreement set (the join).
     "family6.covoting_disagreement": _MEMBER_TOOLS,
 }
+
+# Lift-study templates (harness-lift ablation, REV 4.2) reuse the member_summary / pairwise answer
+# contract VERBATIM under non-frozen ids (lab/experiments/lift_instances.py); alias them into the
+# per-template-id maps so the agent-sdk solver's lookups resolve. solvers.py is in neither hash;
+# test_lift_solver_registration guards against drift between the constants and these maps.
+for _lift_id, _frozen_id in (
+    (TEMPLATE_LIFT_MEMBER_SUMMARY, "family1.member_summary"),
+    (TEMPLATE_LIFT_PAIRWISE, "family1.pairwise_agreement"),
+):
+    GOLD_KEYS[_lift_id] = GOLD_KEYS[_frozen_id]
+    NUMERIC_FIELDS[_lift_id] = NUMERIC_FIELDS[_frozen_id]
+    SUBMIT_SCHEMAS[_lift_id] = SUBMIT_SCHEMAS[_frozen_id]
+    TEMPLATE_TOOLS[_lift_id] = TEMPLATE_TOOLS[_frozen_id]
 
 
 def research_tool_for(name: str) -> dict:
@@ -598,19 +615,21 @@ def _make_fetch_url_tool(observations: list):
     return _fetch_url
 
 
-# --- web-surface run_python (ablation): a GUARDED code-execution conduit ------------------------
-# "web + code" is the honest baseline (a generic-tool model computes over what it scrapes). The
-# built-in Bash is uncontrollable (it could curl our DB / read gold off disk), so the web arm uses
+# --- run_python (ablation): a GUARDED code-execution conduit, on BOTH surfaces ------------------
+# Code execution is held CONSTANT across surfaces (REV 4.3) so the ours-vs-web lift isolates DATA
+# ACCESS (our domain tools vs web scrape) + retrieval reliability, NOT "ours can't compute." The
+# built-in Bash is uncontrollable (it could curl our DB / read gold off disk), so BOTH arms use
 # THIS instead: `python -I -S` (isolated + NO site-packages, so psycopg2/asyncpg are NOT importable
-# -> the code CANNOT connect to our Postgres) in a subprocess with a scrubbed env (no DATABASE_URL /
+# -> the code CANNOT connect to our Postgres -- the agent must COMPUTE over records it already
+# retrieved via tools, never re-fetch gold) in a subprocess with a scrubbed env (no DATABASE_URL /
 # keys / tokens) + a throwaway cwd, time- and output-capped. EXPERIMENT-GRADE: not network-namespace
-# isolated -- the trust-bar trace-read must confirm no baseline rollout reached our data, and a
-# PUBLISHED run wants OS-level isolation + a security-sentinel pass. surface="web" only.
+# isolated -- the trust-bar trace-read must confirm no rollout reached our data, and a PUBLISHED run
+# wants OS-level isolation + a security-sentinel pass.
 _RUN_PYTHON_DESC = (
-    "Execute a short Python 3 script and return its stdout/stderr. Use it to COMPUTE over data "
-    "you gathered from WebSearch/fetch_url (count, aggregate, compare) -- print your result. It "
-    "runs in an isolated subprocess with only the standard library and NO access to any private "
-    "database or credentials."
+    "Execute a short Python 3 script and return its stdout/stderr. Use it to COMPUTE over data you "
+    "gathered from the available tools -- a member's voting record, web pages -- (count, "
+    "aggregate, compare); print your result. It runs in an isolated subprocess with only the "
+    "standard library and NO access to any private database or credentials."
 )
 _RUN_PYTHON_SCHEMA = {
     "type": "object",
@@ -816,12 +835,15 @@ class AgentSolver:
     def _sdk_tool_config(self, inst: Instance, observations: list, submit_tool):
         """Build (mcp_tools, allowed_tools, disallowed_tools) for the instance's SURFACE.
 
-        ours: the template's product @tools + submit; mcp__lab__* allowed; built-ins disallowed.
-        web:  WebSearch (built-in) + a GUARDED fetch_url (lab @tool, SSRF-blocked) + submit — NO lab
-              data tools. The built-in WebFetch STAYS blocked (uncontrollable target); fetch_url is
-              our own guarded conduit so web can read public pages but not reach our DB; run_python
-              (a stdlib-only sandboxed subprocess) lets it COMPUTE over what it reads. NEVER mutates
-              the global disallow list (web builds a FRESH list, only WebSearch removed).
+        ours: the template's product @tools + a GUARDED run_python + submit; mcp__lab__* allowed;
+              built-ins disallowed. run_python lets ours COMPUTE over the records it retrieved (the
+              compute surface is held constant vs web, REV 4.3).
+        web:  WebSearch (built-in) + a GUARDED fetch_url (lab @tool, SSRF-blocked) + run_python +
+              submit — NO lab data tools. The built-in WebFetch STAYS blocked (uncontrollable
+              target); fetch_url is our own guarded conduit so web can read public pages but not
+              reach our DB; run_python (a stdlib-only sandboxed subprocess) lets it COMPUTE over
+              what it reads. NEVER mutates the global disallow list (web builds a FRESH list, only
+              WebSearch removed).
         """
         if self.surface == "web":
             fetch_url = _make_fetch_url_tool(observations)
@@ -838,8 +860,12 @@ class AgentSolver:
         product_tools = [
             _make_sdk_product_tool(research_tool_for(n), observations) for n in tool_names
         ]
-        allowed = [f"mcp__lab__{n}" for n in tool_names] + ["mcp__lab__submit_answer"]
-        return [*product_tools, submit_tool], allowed, _DISALLOWED_BUILTINS
+        run_python = _make_run_python_tool(observations)  # compute held constant vs web (REV 4.3)
+        allowed = [f"mcp__lab__{n}" for n in tool_names] + [
+            "mcp__lab__run_python",
+            "mcp__lab__submit_answer",
+        ]
+        return [*product_tools, run_python, submit_tool], allowed, _DISALLOWED_BUILTINS
 
     async def _asolve_sdk(self, inst: Instance):
         """Option W: drive the in-process Agent SDK (subscription-native, no rate wall). Builds a

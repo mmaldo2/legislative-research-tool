@@ -111,6 +111,26 @@ def test_pairwise_gold_yea_nay_filtered():
     }
 
 
+# --- the agent-sdk solver must resolve the lift ids in every per-template map -----------------
+def test_lift_solver_registration():
+    """The lift ids reuse the frozen member_summary/pairwise answer contract; assert they are
+    aliased into ALL four per-template-id solver maps (else _asolve_sdk KeyErrors mid-run)."""
+    from lab import solvers
+
+    for lift_id, frozen_id in (
+        (TEMPLATE_LIFT_MEMBER_SUMMARY, "family1.member_summary"),
+        (TEMPLATE_LIFT_PAIRWISE, "family1.pairwise_agreement"),
+    ):
+        for table in (
+            solvers.GOLD_KEYS,
+            solvers.NUMERIC_FIELDS,
+            solvers.SUBMIT_SCHEMAS,
+            solvers.TEMPLATE_TOOLS,
+        ):
+            assert lift_id in table, f"{lift_id} missing from {table}"
+            assert table[lift_id] == table[frozen_id], f"{lift_id} != {frozen_id} in a solver map"
+
+
 # --- requires_pg: live generator shape --------------------------------------------------------
 def _conn():
     from lab.harness import get_connection

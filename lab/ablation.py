@@ -44,15 +44,15 @@ def _resolve_template(name):
     )
 
 
-# Per-rollout caps. ours submits in ~3 turns. The WEB arm needs more (WebSearch -> fetch_url ->
-# re-search past a landing/Cloudflare page -> submit); pass 2's TEMPORAL task is turn-hungrier still
-# (it must establish the vote's date AND the member's party then), so web gets a higher cap (PR-5) —
-# a truncated reasoning chain classifies as `errored`, which would SILENTLY MASK the moat. The $1
-# budget (total_cost_usd IS populated under subscription, ~$0.1/rollout) + the 180s timeout bound
-# cost/latency regardless. (A fairness fix for web, NOT a moat tweak.)
-_MAX_TURNS = 10  # ours
-_MAX_TURNS_WEB = 20  # web (temporal reasoning is multi-search)
-_MAX_BUDGET_USD = 1.0
+# Per-rollout caps. Single-event tasks (vote_lookup) submit in ~3 ours turns, but the lift study's
+# WINDOW tasks (member_summary / pairwise) retrieve a large record set then run_python to tally it,
+# so ours needs real headroom too (the n=1 cost probe truncated ours at 10 turns mid-tally). Both
+# arms now compute (REV 4.3), so ours and web get the same turn cap. A truncated chain classifies
+# as `errored` (truncation is NOT a wrong answer); the $ budget + timeout bound cost/latency too.
+# PROVISIONAL pilot values — frozen into the pre-registration after the post-run_python re-probe.
+_MAX_TURNS = 20  # ours (window retrieve + run_python tally)
+_MAX_TURNS_WEB = 20  # web (WebSearch -> fetch_url -> run_python)
+_MAX_BUDGET_USD = 2.5  # ~3x the $0.80 observed on the easiest web cell (opus x web is costlier)
 _TIMEOUT_S = 180.0
 
 _BUCKETS = ("correct", "hallucination", "over_refusal", "format_fail", "errored")

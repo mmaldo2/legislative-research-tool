@@ -82,7 +82,12 @@ def test_sdk_backend_drives_tools_maps_and_locks_down(monkeypatch):
     assert solver.history[-1]["retrieved"] is True  # bare name != submit_answer
     # integrity lockdown on the options
     opts = captured["options"]
-    assert opts.allowed_tools == ["mcp__lab__get_vote_event", "mcp__lab__submit_answer"]
+    # ours arm now also carries the guarded run_python (compute held constant vs web, REV 4.3)
+    assert opts.allowed_tools == [
+        "mcp__lab__get_vote_event",
+        "mcp__lab__run_python",
+        "mcp__lab__submit_answer",
+    ]
     assert opts.disallowed_tools == solvers._DISALLOWED_BUILTINS
     assert opts.setting_sources == []
     assert opts.permission_mode == "bypassPermissions"
@@ -159,12 +164,18 @@ def test_sdk_backend_window_template_provisions_window_tools(monkeypatch):
 
     # the fields shape maps (all-int coercion)
     assert ans == {"yea": 10, "nay": 5, "other": 2}
-    # exactly the member subset built (no get_vote_event), submit always present
-    assert set(sdk_tools) == {"find_people", "get_member_voting_record", "submit_answer"}
-    # P9 lockstep: allowed_tools == the mcp__lab__* whitelist for THIS subset + submit
+    # exactly the member subset built (no get_vote_event) + run_python (REV 4.3), submit always
+    assert set(sdk_tools) == {
+        "find_people",
+        "get_member_voting_record",
+        "run_python",
+        "submit_answer",
+    }
+    # P9 lockstep: allowed_tools == the mcp__lab__* whitelist for THIS subset + run_python + submit
     assert captured["options"].allowed_tools == [
         "mcp__lab__find_people",
         "mcp__lab__get_member_voting_record",
+        "mcp__lab__run_python",
         "mcp__lab__submit_answer",
     ]
     # multi-tool trajectory captured with bare names, in order
@@ -287,5 +298,9 @@ def test_sdk_ours_surface_keeps_web_disallowed(monkeypatch):
 
     opts = captured["options"]
     assert "WebSearch" in opts.disallowed_tools and "WebFetch" in opts.disallowed_tools
-    assert opts.allowed_tools == ["mcp__lab__get_vote_event", "mcp__lab__submit_answer"]
+    assert opts.allowed_tools == [
+        "mcp__lab__get_vote_event",
+        "mcp__lab__run_python",
+        "mcp__lab__submit_answer",
+    ]
     assert solver.policy["surface"] == "ours"
