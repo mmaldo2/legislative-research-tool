@@ -50,10 +50,13 @@ def _resolve_template(name):
 # arms now compute (REV 4.3), so ours and web get the same turn cap. A truncated chain classifies
 # as `errored` (truncation is NOT a wrong answer); the $ budget + timeout bound cost/latency too.
 # PROVISIONAL pilot values — frozen into the pre-registration after the post-run_python re-probe.
+# The n=6 pilot showed opus x web TIMED OUT 67% on the HONEST WebSearch+fetch_url path at 180s, so
+# web accuracy is CONFOUNDED with the wall clock -> raise the web timeout/turns so the baseline gets
+# a fair shot, and lift the budget so a longer honest run is not budget-truncated (a new confound).
 _MAX_TURNS = 20  # ours (window retrieve + run_python tally)
-_MAX_TURNS_WEB = 20  # web (WebSearch -> fetch_url -> run_python)
-_MAX_BUDGET_USD = 2.5  # ~3x the $0.80 observed on the easiest web cell (opus x web is costlier)
-_TIMEOUT_S = 180.0
+_MAX_TURNS_WEB = 30  # web (multi-search WebSearch -> fetch_url -> run_python honest path)
+_MAX_BUDGET_USD = 3.5  # headroom over the $1.33 opus x web observed at 180s
+_TIMEOUT_S = 300.0  # was 180s; opus's honest path needs the room (pilot: 67% timeout)
 
 _BUCKETS = ("correct", "hallucination", "over_refusal", "format_fail", "errored")
 _TAG = {
