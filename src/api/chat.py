@@ -345,6 +345,52 @@ async def _tool_get_bill_cosponsors(
         return json.dumps({"error": "Failed to retrieve the bill cosponsors."})
 
 
+async def _tool_get_member_sponsorships(
+    arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
+) -> str:
+    """The bills a member PRIMARY-sponsored in a congress (RAW bill rows, NOT pre-joined to votes).
+
+    One index-backed query on `sponsorships.person_id`, filtered to the `primary` (lead-author) role
+    and the congress, `DISTINCT`-ed. NOT pre-filtered by whether a bill received a vote -- the agent
+    loops `get_bill_votes` over these ids itself. The body is guarded so a malformed/absent id can
+    never surface a DB traceback. A real member with no primary bills in the congress returns an
+    empty list; a nonexistent person returns a clean not-found error (the distinction is the agent's
+    refusal signal).
+    """
+    person_id = arguments.get("person_id", "")
+    congress = arguments.get("congress", "")
+    try:
+        stmt = (
+            select(Bill.id)
+            .join(Sponsorship, Sponsorship.bill_id == Bill.id)
+            .join(LegislativeSession, LegislativeSession.id == Bill.session_id)
+            .where(
+                Sponsorship.person_id == person_id,
+                Sponsorship.classification == "primary",
+                LegislativeSession.identifier == congress,
+            )
+            .distinct()
+            .order_by(Bill.id)
+        )
+        rows = (await db.execute(stmt)).all()
+        if not rows:
+            # Only on an empty result do we pay the existence check: a missing person is the refusal
+            # basis; a real member with no primary bills in the congress is a distinct (empty-list)
+            # answer.
+            exists = (await db.execute(select(Person.id).where(Person.id == person_id))).first()
+            if exists is None:
+                return json.dumps({"error": f"Person '{person_id}' not found."})
+        bills = [{"bill_id": bid} for (bid,) in rows]
+        return json.dumps(
+            {"person_id": person_id, "congress": congress, "bills": bills, "count": len(bills)}
+        )
+    except Exception:
+        logger.exception(
+            "get_member_sponsorships failed for person_id=%r congress=%r", person_id, congress
+        )
+        return json.dumps({"error": "Failed to retrieve the member sponsorships."})
+
+
 async def _tool_list_vote_events(
     arguments: dict[str, Any], db: AsyncSession, harness: LLMHarness
 ) -> str:
@@ -716,6 +762,7 @@ _TOOL_HANDLERS: dict[str, _ToolHandler] = {
     "get_vote_event": _tool_get_vote_event,
     "get_bill_votes": _tool_get_bill_votes,
     "get_bill_cosponsors": _tool_get_bill_cosponsors,
+    "get_member_sponsorships": _tool_get_member_sponsorships,
     "list_vote_events": _tool_list_vote_events,
     "find_people": _tool_find_people,
     "get_member_voting_record": _tool_get_member_voting_record,

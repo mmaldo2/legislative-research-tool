@@ -114,6 +114,31 @@ RESEARCH_TOOLS = [
         },
     },
     {
+        "name": "get_member_sponsorships",
+        "description": (
+            "List the bills a member PRIMARY-sponsored (authored) in a given congress, by their "
+            "person_id: one row per bill with its bill_id. These are the bills the member led -- "
+            "NOT cosponsored, and NOT pre-filtered by whether they received a vote. To find which "
+            "got a roll-call vote, call get_bill_votes on each bill_id. An empty list means the "
+            "member primary-sponsored no bills in that congress; an error means no such person "
+            "exists."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "person_id": {
+                    "type": "string",
+                    "description": "The internal person ID.",
+                },
+                "congress": {
+                    "type": "string",
+                    "description": "The congress number, e.g. '110'.",
+                },
+            },
+            "required": ["person_id", "congress"],
+        },
+    },
+    {
         "name": "list_vote_events",
         "description": (
             "List every roll-call vote event in a (congress, chamber) window with its official "
