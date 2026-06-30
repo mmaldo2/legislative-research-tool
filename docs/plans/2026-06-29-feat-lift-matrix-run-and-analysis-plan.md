@@ -218,21 +218,28 @@ is required — the join is deterministic over already-validated casts.
       live traces. `ruff` clean; 282 lab green.
 
 #### Phase 2: pairwise validation + all-cells smoke + read discordance/cost — STOP for review
-- [ ] `lift_pairwise_validate.py`: the join-logic cross-check (Python recompute == `_pairwise_gold`,
-      seeded pairs) is the GATE + at most ONE sanity cast pair (review-trimmed). Must pass before
-      pairwise enters a run.
+- [x] `lift_pairwise_validate.py`: the join-logic cross-check (Python recompute == `_pairwise_gold`,
+      seeded pairs) is the GATE (review-trimmed: no separate cast pair — the recompute reads the same
+      casts the 40/40 roster spotcheck validated). **Live: 8/8 pairs MATCH** -> the pairwise join is
+      trustworthy; pairwise may enter the run. Hermetic recompute test + a `requires_pg` live gate.
+      (Also: `ablation.py --exclude` so the smoke runs the pre-registered 5 cells, skipping opus:ours.)
 - [ ] All-cells SMOKE: `ablation --run-id smoke1 --template lift_member_summary,lift_pairwise
       --models haiku,sonnet,opus --surfaces ours,web` at n=6, repeats=1 — BUT only the pre-registered
       cells (haiku/sonnet×{ours,web} + opus×web; opus×ours is goal #2, NOT run). ~$15. Sequential,
       agent-sdk. Mechanical trace-grep clean (the integrity tripwire).
-- [ ] `lift_analysis --run-id smoke1` -> read: (a) discordance in the small×web cells (the lift
-      signal), (b) real per-cell cost/latency -> the n=40 envelope, (c) **cost coverage** (the primary
-      endpoint's go/no-go — blocking if subscription cost is null and the token fallback didn't fire),
-      (d) any cell that errors/over-refuses systematically. NOTE: `run_ablation` runs the ANSWERABLE arm
-      only (`ablation.py:188` filters `is_refusal`), so over-refusal is read from the answerable arm
-      (`classify` -> `decision_correct==0`), NOT from refusal twins (which never reach a trace unless the
-      filter changes — review arch-M6). PRESENT: the smoke report + a proposed REV 4.5 (n, Δ, budget
-      ceiling) decision.
+- [x] `lift_analysis --run-id smoke1` (5 cells x 2 templates, n=6, integrity-grep CLEAN). The pipeline
+      handled the full matrix; cost coverage 100% on every non-errored cell (real `total_cost_usd`).
+      **RICHER than the all-ceiling fear — two stories:** (1) PUNCH-UP S+H vs F+T = `[6,0,0,0]` in ALL
+      4 cells (haiku/sonnet ours TIE opus-web at 100%) at 2-10x lower cost (haiku-ours 9.7x cheaper than
+      opus-web on member_summary, 4.6x on pairwise); accuracy McNemar degenerate (parity at ceiling).
+      (2) LIFT S+H vs S+T (same model) = LARGE: sonnet-web HALLUCINATES the join (member_summary 0/6
+      100%-halluc; pairwise 1/6 83%-halluc) vs sonnet-ours 100% -> McNemar p=0.031 (member_summary)
+      ALREADY significant at n=6; haiku-web can't COMPLETE (0-17%, all errored). Validates the
+      "generic-tools go confidently-wrong on multi-record joins; the harness computes them" thesis.
+      **Envelope (real per-rollout $):** haiku-ours $0.13-0.23, sonnet-ours $0.55-0.61, sonnet-web
+      $0.59-0.83, opus-web $1.05-1.24 -> **n=40,k=3 ~= $650** (above the plan's $300-450 guess; staging
+      caught it). **USER DECISION: full n=40, k=3 (~$650), Δ=0.10** (δ=0.05 unachievable; even n=40 gives
+      punch-up parity CI ~+-0.09). STOP -> Phase 3 commits REV 4.5 then runs.
 
   **The smoke -> power DECISION RULE (resolves scope open-Q2):**
   - If discordant pairs ~0 across all cells (all ceiling, as Phase 3 hinted): accuracy is uninformative

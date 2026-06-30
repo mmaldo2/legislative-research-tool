@@ -251,7 +251,54 @@ rollout + investigate. Before any PUBLISHED number: OS egress isolation + **file
 
 **Strong-baseline check.** Before trusting "parity at lower cost," run a **WebFetch / higher-cap /
 browser sensitivity arm** on a ≥10-instance sample of one task; if S+H's cost/reliability edge
-survives the stronger baseline, the `fetch_url` caps weren't manufacturing it.
+survives the stronger baseline, the `fetch_url` caps weren't manufacturing it. (Largely SATISFIED by
+the egress work: under the 32MB fetch-to-mount cap the web arm reaches VoteView and hits 100% on
+member_summary — not cap-starved; see REV 4.5.)
+
+**REV 4.4 (2026-06-29): the egress integrity GATE is built + merged (PR #52 + #53, main @ f0bafd3).**
+`run_python` executes in a `--network none` Docker container (zero egress to our PG/API); the web arm
+reaches bulk public data ONLY via the SSRF-guarded `fetch_url` streamed to a RO `/sandbox/inputs/`
+mount (cap 32MB, sized for the ~14.6MB H118 votes matrix; `--memory 2g`). security-sentinel passed
+(M2 fixed; M1 = accepted residual). Re-pilot validated the gate is NEUTRAL (web 33%->100%, no drop;
+mechanical trace-grep EMPTY on live web traces). The "OS egress isolation + filesystem confinement"
+the rev-4 integrity clause demanded before publishing is now DONE. DB-cred rotation remains deferred
+(deny-by-default egress already blocks the path).
+
+**REV 4.5 (2026-06-29): FROZEN powered-run pre-registration (after the n=6 all-cells smoke `smoke1`).**
+The git commit of THIS doc is the anchor, passed to `ablation --prereg-sha` and stamped into
+`manifest_<run_id>.json`; any change after a powered cell runs invalidates the result.
+- **Templates:** `lift_member_summary` + `lift_pairwise` (118th House; pairwise JOIN gold cross-checked
+  8/8 vs an independent recompute, `lift_pairwise_validate.py`). Reported PER TEMPLATE (never pooled).
+- **Instances:** **n = 40** answerable per template, **seed = 42**, the SAME instance_ids in every cell
+  (the pairing). Refusal twins are filtered before cells run (`ablation.py` answerable-only), so the
+  over-refusal signal is read from the answerable arm (`decision_correct==0`), not refusal rows.
+- **Cells (5):** `haiku/sonnet x {ours, web}` + `opus x web`; `opus x ours` EXCLUDED (goal #2) via
+  `--exclude opus:ours`. Backend **agent-sdk**, **SEQUENTIAL** (the `ANTHROPIC_API_KEY` pop is a
+  process-global race). Models pinned: `claude-haiku-4-5`, `claude-sonnet-4-6`, `claude-opus-4-8`.
+- **Rollouts:** **k = 3** per instance per cell. **As-run caps (REV 4.4):** `max_turns` 20 (ours) /
+  30 (web), `max_budget_usd` $3.5, `timeout_s` 300; sandbox image digest-pinned, fetch cap 32MB,
+  `--memory 2g`.
+- **Exclusion:** keep `result_subtype == "success"` for the conditional/paired population; report BOTH
+  the **conditional** (complete-case) and **ITT** (truncation = wrong) bounds + the **completion rate**
+  (Wilson) and **flip-rate**. PAIRWISE cost exclusion (drop an instance from the cost vectors if EITHER
+  arm's cost is null).
+- **Stats (`lift_analysis.py`; estimation-first):** exact-binomial McNemar; **Newcombe (1998) method-10**
+  paired-difference CI = the PARITY interval; Wilson per-proportion; **paired cluster bootstrap** of the
+  cost ratio, **B = 10000**, the bootstrap seed pinned in `lift_analysis_<run_id>.json` (the rollout
+  seed is the manifest's). Majority-vote rep aggregation (post-exclusion 1-1 tie -> incorrect). **Holm
+  deferred** (no family-wise claim registered).
+- **Parity margin Δ = 0.10** (NOT 0.05): the smoke confirms even n=40 with both arms at ceiling gives a
+  punch-up parity CI of ~±0.09; δ=0.05 is unachievable, and claiming it would be dishonest (Card 2020).
+- **PRIMARY endpoint (one, no multiplicity correction):** the **cost ratio at accuracy parity, S+H vs
+  F+T** on the designated cell **`haiku/ours` vs `opus/web`, member_summary**. SECONDARY (reported with
+  CIs, labeled): the per-model S+H−S+T controlled lift, and pairwise.
+- **Smoke evidence (`smoke1`, n=6, k=1; the pilot motivating these numbers):** punch-up = `[6,0,0,0]`
+  in all 4 cells (parity at ceiling) at 2-10x lower cost; lift = sonnet-web hallucinates the join
+  (member_summary 0/6, McNemar p=0.031 ALREADY) and haiku-web can't complete (0-17%). Integrity-grep
+  clean. Envelope ~$650.
+- **Provenance chain:** pre-reg doc SHA -> `--prereg-sha` -> `manifest_pre45.json` (+ rollout seed,
+  caps, cell files) -> the per-cell traces (carry contract/content/fingerprint hashes) ->
+  `lift_analysis_pre45.json` (asserts hash-homogeneity; copies the hashes + seeds in).
 
 ## Sources & References
 - Scope: `docs/scopes/2026-06-29-harness-lift-ablation-scope.md`. Design:
