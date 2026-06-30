@@ -1225,11 +1225,15 @@ class AgentSolver:
             None  # ResultMessage.usage -> token fallback when total_cost_usd is null (subscription)
         )
         result_subtype = None  # P7: SDK stop reason — tells truncation apart from a wrong answer
+        served_models: set[str] = set()  # the model the SDK ACTUALLY served (drift guard)
 
         async def _drive():
             nonlocal cost, usage, result_subtype
             async for msg in query(prompt=inst.prompt, options=options):  # PROMPT ONLY
                 if isinstance(msg, AssistantMessage):
+                    served = getattr(msg, "model", None)
+                    if served:
+                        served_models.add(served)
                     for b in msg.content:
                         if isinstance(b, TextBlock):
                             text_parts.append(b.text)
@@ -1292,6 +1296,14 @@ class AgentSolver:
         # instead of scoring the agent's downstream refusal/guess as a real miss (panel blocker).
         if any(o.get("error_kind") == "sandbox_infra" for o in observations):
             result_subtype = "sandbox_infra"
+        # MODEL-DRIFT GUARD: the SDK must serve the EXACT pinned snapshot. If a friendly alias
+        # silently routed to a newer model (e.g. a fresh Sonnet), served != self.model -> INVALIDATE
+        # loudly (lift_analysis.load_run hard-errors on model_drift) so a swap can't skew the
+        # pre-registered numbers; the served model is recorded in `raw`.
+        served = {m for m in served_models if m}
+        if served and served != {self.model}:
+            result_subtype = "model_drift"
+            text_parts.insert(0, f"<MODEL_DRIFT requested={self.model} served={sorted(served)}>")
         in_tok, out_tok = _usage_tokens(usage)
         extras = {
             "trajectory": observations,

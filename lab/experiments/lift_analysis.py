@@ -130,6 +130,16 @@ def load_run(run_id: str, runs_dir: Path = RUNS_DIR) -> tuple[list[dict], RunMan
         raise RuntimeError(
             f"run {run_id!r}: manifest lists no rows ({len(manifest.cell_files)} files)"
         )
+    # MODEL-DRIFT: a rollout whose SERVED model != the pinned snapshot (a silent alias swap, e.g. a
+    # freshly-released Sonnet) corrupts the comparison -> refuse to analyze the run until it is
+    # investigated + the drifted cells re-run. Never silently average a model swap into the result.
+    drifted = [r for r in rows if r.get("result_subtype") == "model_drift"]
+    if drifted:
+        models = {r["policy"]["model"] for r in drifted}
+        raise RuntimeError(
+            f"run {run_id!r}: {len(drifted)} MODEL-DRIFT rollouts (served model != pinned "
+            f"{models}); refusing to analyze -- investigate + re-run the drifted cells."
+        )
     sigs = {
         (
             r["grading_contract_hash"],

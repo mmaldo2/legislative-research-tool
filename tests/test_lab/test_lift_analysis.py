@@ -291,6 +291,25 @@ def test_load_run_missing_manifest(tmp_path):
         la.load_run("nope", runs_dir=tmp_path)
 
 
+def test_load_run_rejects_model_drift(tmp_path):
+    """A served-model swap (e.g. a freshly-released Sonnet aliased in) must HARD-ERROR the analysis,
+    never be silently averaged into the pre-registered comparison."""
+    mdl = "claude-sonnet-4-6"
+    _write_run(
+        tmp_path,
+        "drift",
+        [
+            ("ablation_drift_a.jsonl", [_trace_row("lift.t:1", mdl, "ours")]),
+            (
+                "ablation_drift_b.jsonl",
+                [_trace_row("lift.t:2", mdl, "ours", subtype="model_drift")],
+            ),
+        ],
+    )
+    with pytest.raises(RuntimeError, match="MODEL-DRIFT"):
+        la.load_run("drift", runs_dir=tmp_path)
+
+
 def test_refusal_rows_excluded_from_pairing(tmp_path):
     mdl = "claude-haiku-4-5"
     rows = [
