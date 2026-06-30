@@ -356,6 +356,20 @@ def _classify_agent_error(reason: str) -> str:
     return "agent_infra"
 
 
+def _model_matches(served: str, pinned: str) -> bool:
+    """Is the SDK-served model id the SAME model as the pinned one? A friendly alias
+    (`claude-haiku-4-5`) and its dated snapshot (`claude-haiku-4-5-20251001`) are equivalent -- the
+    snapshot extends the alias with a `-<date>` suffix -- so accept either direction. A genuine swap
+    to a different model (`claude-sonnet-4-6`, a fresh `claude-sonnet-5-...`) shares no such prefix
+    and is rejected. The `-` separator stops `claude-haiku-4-5` matching `claude-haiku-4-50`.
+    PURE -> hermetically testable."""
+    return (
+        served == pinned
+        or served.startswith(pinned + "-")
+        or pinned.startswith(served + "-")
+    )
+
+
 def _usage_tokens(usage) -> tuple[int | None, int | None]:
     """Pull (input_tokens, output_tokens) from an SDK ResultMessage.usage, which may be a dict or an
     object. Returns (None, None) when absent -> the token-based cost proxy is simply unavailable for
@@ -1296,12 +1310,15 @@ class AgentSolver:
         # instead of scoring the agent's downstream refusal/guess as a real miss (panel blocker).
         if any(o.get("error_kind") == "sandbox_infra" for o in observations):
             result_subtype = "sandbox_infra"
-        # MODEL-DRIFT GUARD: the SDK must serve the EXACT pinned snapshot. If a friendly alias
-        # silently routed to a newer model (e.g. a fresh Sonnet), served != self.model -> INVALIDATE
-        # loudly (lift_analysis.load_run hard-errors on model_drift) so a swap can't skew the
-        # pre-registered numbers; the served model is recorded in `raw`.
+        # MODEL-DRIFT GUARD: the SDK must serve the pinned model. A friendly alias and its dated
+        # snapshot are the SAME model (the API non-deterministically echoes either
+        # `claude-haiku-4-5` or `claude-haiku-4-5-20251001` across a rollout's AssistantMessages),
+        # so accept the snapshot of the pin via _model_matches; only a genuine swap to a DIFFERENT
+        # model (e.g. a fresh Sonnet) drifts. INVALIDATE loudly on real drift (load_run hard-errors
+        # on model_drift) so a swap can't skew the pinned numbers; served model recorded in `raw`.
         served = {m for m in served_models if m}
-        if served and served != {self.model}:
+        drifted = {m for m in served if not _model_matches(m, self.model)}
+        if drifted:
             result_subtype = "model_drift"
             text_parts.insert(0, f"<MODEL_DRIFT requested={self.model} served={sorted(served)}>")
         in_tok, out_tok = _usage_tokens(usage)

@@ -53,6 +53,22 @@ def test_classify_agent_error_turns_budget_vs_infra():
     assert _classify_agent_error("401 authentication_error") == "agent_infra"
 
 
+def test_model_matches_alias_snapshot_equivalence():
+    from lab.solvers import _model_matches
+
+    # the SAME model: a friendly alias and its dated snapshot are equivalent (the API echoes either
+    # across a rollout) -- accept in BOTH directions so the drift guard does not false-positive.
+    assert _model_matches("claude-haiku-4-5-20251001", "claude-haiku-4-5")
+    assert _model_matches("claude-haiku-4-5", "claude-haiku-4-5-20251001")
+    assert _model_matches("claude-haiku-4-5", "claude-haiku-4-5")
+    # GENUINE drift: a different model shares no alias prefix -> rejected (guard still fires).
+    assert not _model_matches("claude-sonnet-4-6", "claude-haiku-4-5")
+    assert not _model_matches("claude-sonnet-5-20260615", "claude-sonnet-4-6")
+    assert not _model_matches("claude-haiku-4-6", "claude-haiku-4-5")
+    # the `-` separator stops a numeric-extension false match.
+    assert not _model_matches("claude-haiku-4-50", "claude-haiku-4-5")
+
+
 def test_usage_tokens_dict_object_and_none():
     from lab.solvers import _usage_tokens
 
