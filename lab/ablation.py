@@ -18,10 +18,12 @@ import argparse
 import asyncio
 from collections import Counter
 from datetime import datetime
+from pathlib import Path
 
 from lab import templates
 from lab.experiments.lift_instances import LIFT_TEMPLATES
 from lab.harness import RUNS_DIR, prepare_run, solve_grade_write
+from lab.manifest import RunManifest
 from lab.solvers import _SANDBOX_IMAGE, AgentSolver, ensure_sandbox_image
 from src.ingestion.vote_parsers import OPTION_BUCKETS
 
@@ -101,7 +103,7 @@ def _partition_by_kind(instances) -> dict[str, list]:
     return by_kind
 
 
-def _run_cell(model: str, surface: str, kind: str, instances, ctx, seed: int) -> dict:
+def _run_cell(model: str, surface: str, kind: str, instances, ctx, seed: int, run_id=None) -> dict:
     """Run one (model, surface, kind) cell over the kind's answerable instances. Fresh solver +
     guaranteed close() (disposes the asyncpg pool on its Runner's loop). The web arm gets a higher
     turn cap (PR-5). Additively accumulates a per-switcher bucket breakdown (the cluster check) —
@@ -122,7 +124,8 @@ def _run_cell(model: str, surface: str, kind: str, instances, ctx, seed: int) ->
     subtypes: Counter = Counter()
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y-%m-%d_%H%M%S_%f")
-    out_path = RUNS_DIR / f"ablation_{model}_{surface}_{kind}_{ts}.jsonl"
+    tag = f"{run_id}_" if run_id else ""  # run-id tag -> the manifest groups a run's cell files
+    out_path = RUNS_DIR / f"ablation_{tag}{model}_{surface}_{kind}_{ts}.jsonl"
     try:
         with open(out_path, "a", encoding="utf-8") as fh:
             for _s, inst, verdict in solve_grade_write(instances, [solver], ctx, seed, fh):
@@ -153,6 +156,7 @@ def _run_cell(model: str, surface: str, kind: str, instances, ctx, seed: int) ->
         "model": model,
         "surface": surface,
         "kind": kind,
+        "out_path": str(out_path),  # the manifest enumerates a run's cell files from this
         "n": n,
         "counts": dict(counts),
         "rates": {b: (counts[b] / n if n else 0.0) for b in _BUCKETS},
@@ -168,10 +172,15 @@ def _fmt_pct(x: float) -> str:
     return f"{100 * x:4.0f}%"
 
 
-def run_ablation(template_name, models, surfaces, n, seed, repeats) -> list[dict]:
+def run_ablation(template_name, models, surfaces, n, seed, repeats, *, run_id=None, manifest=None):
     """Run the full matrix on `template_name` and print the trust-weighted report. Returns the
     per-cell-run records. The switcher/control split is a MATRIX AXIS (kind), so the headline
-    ours-vs-web delta is read on the SWITCHER subset, never averaged with the control."""
+    ours-vs-web delta is read on the SWITCHER subset, never averaged with the control.
+
+    `run_id` tags each cell's output filename. `manifest` (a lab.manifest.RunManifest, optional) is
+    stamped with this template's RunContext hashes (before the first cell) and gets each completed
+    cell's path appended + re-persisted -> crash-safe provenance for run_matrix's multi-template.
+    """
     # Generate the answerable set ONCE and reuse across ALL cells + repeats (P10): so ours-vs-web
     # compares the SAME questions, and the repeats measure model variance, not sample variance.
     # SANDBOX PRE-FLIGHT: ensure the pinned run_python image is present (pull if missing) BEFORE any
@@ -185,6 +194,8 @@ def run_ablation(template_name, models, surfaces, n, seed, repeats) -> list[dict
 
     template = _resolve_template(template_name)
     all_instances, ctx = prepare_run(template, n, seed, set(OPTION_BUCKETS))
+    if manifest is not None:  # stamp the run's hashes before any cell (crash-safe provenance)
+        manifest.stamp_hashes(ctx, RUNS_DIR)
     answerable = [i for i in all_instances if not i.is_refusal]  # answerable arm only (B1)
     by_kind = _partition_by_kind(answerable)
     kinds = sorted(by_kind)  # e.g. ["control", "switcher"], or ["all"] for vote_lookup
@@ -205,8 +216,10 @@ def run_ablation(template_name, models, surfaces, n, seed, repeats) -> list[dict
         for surface in surfaces:
             for kind in kinds:
                 for rep in range(repeats):
-                    r = _run_cell(model, surface, kind, by_kind[kind], ctx, seed)
+                    r = _run_cell(model, surface, kind, by_kind[kind], ctx, seed, run_id=run_id)
                     runs.append(r)
+                    if manifest is not None:
+                        manifest.add_cell(Path(r["out_path"]), RUNS_DIR)
                     cost_str = "n/a" if r["mean_cost"] is None else f"${r['mean_cost']:.2f}"
                     rr = r["rates"]
                     print(
@@ -219,6 +232,43 @@ def run_ablation(template_name, models, surfaces, n, seed, repeats) -> list[dict
                     )
     _print_summary(runs, models, surfaces, kinds)
     return runs
+
+
+def run_matrix(template_names, models, surfaces, n, seed, repeats, *, run_id, prereg_sha=None):
+    """Run the matrix over MULTIPLE templates under ONE run_id, writing a single CRASH-SAFE manifest
+    (params + seed + prereg_sha persisted before any cell; each cell file appended as it completes).
+    Loops the validated single-template run_ablation per template (preserving its per-template
+    summary + the SANDBOX pre-flight). The manifest is what lift_analysis reads to find a run's
+    files deterministically. Returns the concatenated per-cell records."""
+    manifest = RunManifest(
+        run_id=run_id,
+        params={
+            "templates": template_names,
+            "models": models,
+            "surfaces": surfaces,
+            "n": n,
+            "repeats": repeats,
+            "max_turns": _MAX_TURNS,
+            "max_turns_web": _MAX_TURNS_WEB,
+            "max_budget_usd": _MAX_BUDGET_USD,
+            "timeout_s": _TIMEOUT_S,
+            "sandbox_image": _SANDBOX_IMAGE,
+            "backend": "agent-sdk",
+        },
+        rollout_seed=seed,
+        prereg_doc_sha=prereg_sha,
+    )
+    manifest.save(RUNS_DIR)  # persist the param block BEFORE any cell runs (crash-safe)
+    all_runs: list[dict] = []
+    for name in template_names:
+        all_runs += run_ablation(
+            name, models, surfaces, n, seed, repeats, run_id=run_id, manifest=manifest
+        )
+    print(
+        f"\n  manifest: {RunManifest.path_for(run_id, RUNS_DIR)} "
+        f"({len(manifest.cell_files)} cell files across {len(template_names)} templates)"
+    )
+    return all_runs
 
 
 def _agg(runs, model, surface, kind, rate):
@@ -320,22 +370,35 @@ def main(argv=None) -> int:
         pass
     p = argparse.ArgumentParser(description="Tool-surface moat ablation (pass 1/2)")
     # frozen (vote_lookup, member_party_at_vote, ...) or lift-study (lift_member_summary,
-    # lift_pairwise — the harness-lift ablation, REV 4.2).
+    # lift_pairwise — the harness-lift ablation, REV 4.2). Comma-separated for a multi-template run.
     p.add_argument("--template", default="vote_lookup")
     p.add_argument("--models", default="haiku,sonnet")
     p.add_argument("--surfaces", default="ours,web")
     p.add_argument("--n", type=int, default=10)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--repeats", type=int, default=3)
+    # --run-id -> write a manifest (lift_analysis reads it); --prereg-sha is the committed
+    # pre-registration doc SHA (stamped explicitly, NOT auto-derived from repo HEAD).
+    p.add_argument("--run-id", default=None)
+    p.add_argument("--prereg-sha", default=None)
     args = p.parse_args(argv)
-    run_ablation(
-        args.template,
-        [m.strip() for m in args.models.split(",")],
-        [s.strip() for s in args.surfaces.split(",")],
-        args.n,
-        args.seed,
-        args.repeats,
-    )
+    template_names = [t.strip() for t in args.template.split(",")]
+    models = [m.strip() for m in args.models.split(",")]
+    surfaces = [s.strip() for s in args.surfaces.split(",")]
+    if args.run_id:
+        run_matrix(
+            template_names,
+            models,
+            surfaces,
+            args.n,
+            args.seed,
+            args.repeats,
+            run_id=args.run_id,
+            prereg_sha=args.prereg_sha,
+        )
+    else:  # back-compat: no manifest, single or multi template
+        for name in template_names:
+            run_ablation(name, models, surfaces, args.n, args.seed, args.repeats)
     return 0
 
 

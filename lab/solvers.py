@@ -341,6 +341,20 @@ def _safe_err(exc: Exception, limit: int = 300) -> str:
     return f"<agent error: {type(exc).__name__}: {msg}>"
 
 
+def _usage_tokens(usage) -> tuple[int | None, int | None]:
+    """Pull (input_tokens, output_tokens) from an SDK ResultMessage.usage, which may be a dict or an
+    object. Returns (None, None) when absent -> the token-based cost proxy is simply unavailable for
+    that rollout (and lift_analysis reports reduced cost-coverage). Never raises."""
+    if usage is None:
+        return None, None
+
+    def _get(key: str):
+        val = usage.get(key) if isinstance(usage, dict) else getattr(usage, key, None)
+        return val if isinstance(val, int) else None
+
+    return _get("input_tokens"), _get("output_tokens")
+
+
 _AGENT_SYSTEM_PROMPT = (
     "You answer factual questions about U.S. Congressional roll-call votes. Use the available "
     "retrieval tools to gather the relevant vote records, then COMPUTE the answer the question "
@@ -1192,10 +1206,13 @@ class AgentSolver:
         started = time.monotonic()
         text_parts: list[str] = []
         cost = None
+        usage = (
+            None  # ResultMessage.usage -> token fallback when total_cost_usd is null (subscription)
+        )
         result_subtype = None  # P7: SDK stop reason — tells truncation apart from a wrong answer
 
         async def _drive():
-            nonlocal cost, result_subtype
+            nonlocal cost, usage, result_subtype
             async for msg in query(prompt=inst.prompt, options=options):  # PROMPT ONLY
                 if isinstance(msg, AssistantMessage):
                     for b in msg.content:
@@ -1217,6 +1234,7 @@ class AgentSolver:
                             builtin_by_id[b.tool_use_id]["result"] = b.content
                 elif isinstance(msg, ResultMessage):
                     cost = getattr(msg, "total_cost_usd", None)
+                    usage = getattr(msg, "usage", None)
                     result_subtype = getattr(msg, "subtype", None)
 
         try:
@@ -1246,11 +1264,14 @@ class AgentSolver:
         # instead of scoring the agent's downstream refusal/guess as a real miss (panel blocker).
         if any(o.get("error_kind") == "sandbox_infra" for o in observations):
             result_subtype = "sandbox_infra"
+        in_tok, out_tok = _usage_tokens(usage)
         extras = {
             "trajectory": observations,
             "raw": "\n".join(text_parts),
             "latency_ms": latency_ms,
             "cost": cost,
+            "input_tokens": in_tok,  # token fallback -> a token x public-price cost proxy in
+            "output_tokens": out_tok,  # lift_analysis when total_cost_usd is null (subscription)
             "result_subtype": result_subtype,
         }
         return answer, extras
