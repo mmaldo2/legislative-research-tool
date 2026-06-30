@@ -172,7 +172,9 @@ def _fmt_pct(x: float) -> str:
     return f"{100 * x:4.0f}%"
 
 
-def run_ablation(template_name, models, surfaces, n, seed, repeats, *, run_id=None, manifest=None):
+def run_ablation(
+    template_name, models, surfaces, n, seed, repeats, *, run_id=None, manifest=None, exclude=None
+):
     """Run the full matrix on `template_name` and print the trust-weighted report. Returns the
     per-cell-run records. The switcher/control split is a MATRIX AXIS (kind), so the headline
     ours-vs-web delta is read on the SWITCHER subset, never averaged with the control.
@@ -180,7 +182,10 @@ def run_ablation(template_name, models, surfaces, n, seed, repeats, *, run_id=No
     `run_id` tags each cell's output filename. `manifest` (a lab.manifest.RunManifest, optional) is
     stamped with this template's RunContext hashes (before the first cell) and gets each completed
     cell's path appended + re-persisted -> crash-safe provenance for run_matrix's multi-template.
+    `exclude` is a set of "model:surface" cells to SKIP (e.g. {"opus:ours"} -- goal #2, not in the
+    pre-registered 5-cell design).
     """
+    exclude = exclude or set()
     # Generate the answerable set ONCE and reuse across ALL cells + repeats (P10): so ours-vs-web
     # compares the SAME questions, and the repeats measure model variance, not sample variance.
     # SANDBOX PRE-FLIGHT: ensure the pinned run_python image is present (pull if missing) BEFORE any
@@ -215,6 +220,8 @@ def run_ablation(template_name, models, surfaces, n, seed, repeats, *, run_id=No
     for model in models:
         for surface in surfaces:
             for kind in kinds:
+                if f"{model}:{surface}" in exclude:
+                    continue  # a deselected cell (e.g. opus:ours = goal #2)
                 for rep in range(repeats):
                     r = _run_cell(model, surface, kind, by_kind[kind], ctx, seed, run_id=run_id)
                     runs.append(r)
@@ -234,7 +241,9 @@ def run_ablation(template_name, models, surfaces, n, seed, repeats, *, run_id=No
     return runs
 
 
-def run_matrix(template_names, models, surfaces, n, seed, repeats, *, run_id, prereg_sha=None):
+def run_matrix(
+    template_names, models, surfaces, n, seed, repeats, *, run_id, prereg_sha=None, exclude=None
+):
     """Run the matrix over MULTIPLE templates under ONE run_id, writing a single CRASH-SAFE manifest
     (params + seed + prereg_sha persisted before any cell; each cell file appended as it completes).
     Loops the validated single-template run_ablation per template (preserving its per-template
@@ -254,6 +263,7 @@ def run_matrix(template_names, models, surfaces, n, seed, repeats, *, run_id, pr
             "timeout_s": _TIMEOUT_S,
             "sandbox_image": _SANDBOX_IMAGE,
             "backend": "agent-sdk",
+            "exclude": sorted(exclude or set()),
         },
         rollout_seed=seed,
         prereg_doc_sha=prereg_sha,
@@ -262,7 +272,15 @@ def run_matrix(template_names, models, surfaces, n, seed, repeats, *, run_id, pr
     all_runs: list[dict] = []
     for name in template_names:
         all_runs += run_ablation(
-            name, models, surfaces, n, seed, repeats, run_id=run_id, manifest=manifest
+            name,
+            models,
+            surfaces,
+            n,
+            seed,
+            repeats,
+            run_id=run_id,
+            manifest=manifest,
+            exclude=exclude,
         )
     print(
         f"\n  manifest: {RunManifest.path_for(run_id, RUNS_DIR)} "
@@ -381,10 +399,13 @@ def main(argv=None) -> int:
     # pre-registration doc SHA (stamped explicitly, NOT auto-derived from repo HEAD).
     p.add_argument("--run-id", default=None)
     p.add_argument("--prereg-sha", default=None)
+    # cells to SKIP, comma-separated "model:surface" (e.g. opus:ours -- goal #2, off the 5 cells)
+    p.add_argument("--exclude", default="")
     args = p.parse_args(argv)
     template_names = [t.strip() for t in args.template.split(",")]
     models = [m.strip() for m in args.models.split(",")]
     surfaces = [s.strip() for s in args.surfaces.split(",")]
+    exclude = {x.strip() for x in args.exclude.split(",") if x.strip()}
     if args.run_id:
         run_matrix(
             template_names,
@@ -395,6 +416,7 @@ def main(argv=None) -> int:
             args.repeats,
             run_id=args.run_id,
             prereg_sha=args.prereg_sha,
+            exclude=exclude,
         )
     else:  # back-compat: no manifest, single or multi template
         for name in template_names:
