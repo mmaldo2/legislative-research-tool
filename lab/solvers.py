@@ -1239,16 +1239,32 @@ class AgentSolver:
 
         try:
             # per-rollout wall-clock backstop (a hung WebSearch must fail this instance, not stall
-            # the matrix); a TimeoutError is an Exception → falls into the NO_ANSWER arm below.
+            # the matrix).
             if self.timeout_s is not None:
                 await asyncio.wait_for(_drive(), timeout=self.timeout_s)
             else:
                 await _drive()
-        except Exception as exc:  # noqa: BLE001 — a live failure FAILS the instance, never crashes
+        except TimeoutError as exc:
+            # the wall-clock fired: the agent RAN but did not finish in time -- a legitimate
+            # non-completion (the agent's reliability), NOT an apparatus failure. Scored as a
+            # non-success rollout (counts against completion), not excluded.
             return NO_ANSWER, {
                 "trajectory": observations,
                 "raw": _safe_err(exc),
                 "latency_ms": (time.monotonic() - started) * 1000,
+                "result_subtype": "timeout",
+            }
+        except Exception as exc:  # noqa: BLE001 — a live failure FAILS the instance, never crashes
+            # an SDK / transport / auth / CREDIT-exhaustion failure is the APPARATUS, not the agent
+            # (query() raised before the agent produced a result_subtype) -> mark infra-excludable
+            # so the lift analysis DROPS the rollout, never scoring a credit/SDK outage as "this arm
+            # can't do the task" (pre45ms's web cells were all-errored from a mid-run credit
+            # exhaustion -- this guard makes that auto-excludable, not a fabricated 0%).
+            return NO_ANSWER, {
+                "trajectory": observations,
+                "raw": _safe_err(exc),
+                "latency_ms": (time.monotonic() - started) * 1000,
+                "result_subtype": "agent_infra",
             }
         finally:
             if saved_key is not None:

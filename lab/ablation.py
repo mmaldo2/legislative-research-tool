@@ -135,8 +135,8 @@ def _run_cell(model: str, surface: str, kind: str, instances, ctx, seed: int, ru
                 # already-non-trust `errored` bucket instead of letting classify() score the agent's
                 # downstream refusal/guess as a real miss (panel blocker; the subtype stays visible
                 # in result_subtypes below).
-                if x.get("result_subtype") == "sandbox_infra":
-                    bucket = "errored"
+                if x.get("result_subtype") in ("sandbox_infra", "agent_infra"):
+                    bucket = "errored"  # apparatus failure (sandbox / SDK / credit) -> excluded
                 else:
                     bucket = classify(verdict.subscores, h["errored"])
                 counts[bucket] += 1

@@ -146,9 +146,19 @@ def load_run(run_id: str, runs_dir: Path = RUNS_DIR) -> tuple[list[dict], RunMan
     return rows, manifest
 
 
+# APPARATUS failures (sandbox down / OOM / SDK-transport / auth / CREDIT exhaustion) -- NOT a
+# capability outcome. Dropped ENTIRELY (not even counted against completion), unlike a `timeout` or
+# `error_max_turns` which are legitimate non-completions the agent owns.
+_INFRA_SUBTYPES = {"sandbox_infra", "agent_infra"}
+
+
 # --- pure aggregation helpers (decomposed for testability) ------------------------------------
 def _cell_key(row: dict) -> tuple[str, str, str]:
     return (row["template_id"], row["policy"]["model"], row["policy"]["surface"])
+
+
+def _is_infra(row: dict) -> bool:
+    return row.get("result_subtype") in _INFRA_SUBTYPES
 
 
 def _rep_success(row: dict) -> bool:
@@ -165,7 +175,7 @@ def pair_by_instance(rows: list[dict]) -> dict[tuple[str, str, str], dict[str, l
     field, never an id substring)."""
     cells: dict[tuple[str, str, str], dict[str, list[dict]]] = {}
     for r in rows:
-        if r.get("is_refusal"):
+        if r.get("is_refusal") or _is_infra(r):  # drop refusal twins + apparatus failures entirely
             continue
         cells.setdefault(_cell_key(r), {}).setdefault(r["instance_id"], []).append(r)
     return cells

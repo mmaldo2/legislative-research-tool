@@ -300,3 +300,20 @@ def test_refusal_rows_excluded_from_pairing(tmp_path):
     cells = la.pair_by_instance(rows)
     # the refusal twin is filtered; only the answerable instance is in the cell
     assert set(cells[("lift.t", mdl, "ours")]) == {"lift.t:1"}
+
+
+def test_infra_rollouts_dropped_entirely():
+    """An apparatus failure (sandbox/SDK/credit) is dropped ENTIRELY -- not counted against
+    completion -- unlike a `timeout`, a legitimate non-completion the agent owns."""
+    mdl = "claude-sonnet-4-6"
+    rows = [
+        _trace_row("lift.t:1", mdl, "web", subtype="success", ac=1.0),
+        _trace_row("lift.t:2", mdl, "web", subtype="agent_infra", ac=0.0),  # credit/SDK -> dropped
+        _trace_row("lift.t:3", mdl, "web", subtype="sandbox_infra", ac=0.0),  # sandbox -> dropped
+        _trace_row("lift.t:4", mdl, "web", subtype="timeout", ac=0.0),  # KEPT (non-completion)
+    ]
+    cell = la.pair_by_instance(rows)[("lift.t", mdl, "web")]
+    assert set(cell) == {"lift.t:1", "lift.t:4"}  # the two infra rollouts are gone
+    summ = la.arm_summary(cell)
+    # completion = 1 success / 2 kept rollouts (timeout counts against it; infra does not)
+    assert summ["rollouts"] == 2 and summ["completion"] == 0.5
