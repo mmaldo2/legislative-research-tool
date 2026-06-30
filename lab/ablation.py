@@ -222,7 +222,15 @@ def run_ablation(
             for kind in kinds:
                 if f"{model}:{surface}" in exclude:
                     continue  # a deselected cell (e.g. opus:ours = goal #2)
-                for rep in range(repeats):
+                # RESUME: skip reps already on disk for this (run_id, model, surface, kind) -- an
+                # interrupted long run (machine sleep) re-launches with --resume and continues.
+                prefix = f"ablation_{run_id}_{model}_{surface}_{kind}_" if run_id else None
+                done = (
+                    sum(1 for f in manifest.cell_files if f.startswith(prefix))
+                    if (manifest is not None and prefix)
+                    else 0
+                )
+                for rep in range(done, repeats):
                     r = _run_cell(model, surface, kind, by_kind[kind], ctx, seed, run_id=run_id)
                     runs.append(r)
                     if manifest is not None:
@@ -242,32 +250,52 @@ def run_ablation(
 
 
 def run_matrix(
-    template_names, models, surfaces, n, seed, repeats, *, run_id, prereg_sha=None, exclude=None
+    template_names,
+    models,
+    surfaces,
+    n,
+    seed,
+    repeats,
+    *,
+    run_id,
+    prereg_sha=None,
+    exclude=None,
+    resume=False,
 ):
     """Run the matrix over MULTIPLE templates under ONE run_id, writing a single CRASH-SAFE manifest
     (params + seed + prereg_sha persisted before any cell; each cell file appended as it completes).
     Loops the validated single-template run_ablation per template (preserving its per-template
     summary + the SANDBOX pre-flight). The manifest is what lift_analysis reads to find a run's
-    files deterministically. Returns the concatenated per-cell records."""
-    manifest = RunManifest(
-        run_id=run_id,
-        params={
-            "templates": template_names,
-            "models": models,
-            "surfaces": surfaces,
-            "n": n,
-            "repeats": repeats,
-            "max_turns": _MAX_TURNS,
-            "max_turns_web": _MAX_TURNS_WEB,
-            "max_budget_usd": _MAX_BUDGET_USD,
-            "timeout_s": _TIMEOUT_S,
-            "sandbox_image": _SANDBOX_IMAGE,
-            "backend": "agent-sdk",
-            "exclude": sorted(exclude or set()),
-        },
-        rollout_seed=seed,
-        prereg_doc_sha=prereg_sha,
-    )
+    files deterministically. `resume=True` LOADS an existing manifest and continues (run_ablation
+    skips reps already recorded) -- so an interrupted long run re-launches and picks up where it
+    stopped. Returns the concatenated per-cell records."""
+    manifest = None
+    if resume:
+        try:
+            manifest = RunManifest.load(run_id, RUNS_DIR)
+            print(f"  RESUME run {run_id!r}: {len(manifest.cell_files)} cells already done")
+        except FileNotFoundError:
+            print(f"  RESUME requested but no manifest for {run_id!r}; starting fresh")
+    if manifest is None:
+        manifest = RunManifest(
+            run_id=run_id,
+            params={
+                "templates": template_names,
+                "models": models,
+                "surfaces": surfaces,
+                "n": n,
+                "repeats": repeats,
+                "max_turns": _MAX_TURNS,
+                "max_turns_web": _MAX_TURNS_WEB,
+                "max_budget_usd": _MAX_BUDGET_USD,
+                "timeout_s": _TIMEOUT_S,
+                "sandbox_image": _SANDBOX_IMAGE,
+                "backend": "agent-sdk",
+                "exclude": sorted(exclude or set()),
+            },
+            rollout_seed=seed,
+            prereg_doc_sha=prereg_sha,
+        )
     manifest.save(RUNS_DIR)  # persist the param block BEFORE any cell runs (crash-safe)
     all_runs: list[dict] = []
     for name in template_names:
@@ -401,6 +429,9 @@ def main(argv=None) -> int:
     p.add_argument("--prereg-sha", default=None)
     # cells to SKIP, comma-separated "model:surface" (e.g. opus:ours -- goal #2, off the 5 cells)
     p.add_argument("--exclude", default="")
+    # resume an interrupted run-id: load its manifest + skip reps already on disk (long runs survive
+    # machine sleep / interruption by re-launching with --resume).
+    p.add_argument("--resume", action="store_true")
     args = p.parse_args(argv)
     template_names = [t.strip() for t in args.template.split(",")]
     models = [m.strip() for m in args.models.split(",")]
@@ -417,6 +448,7 @@ def main(argv=None) -> int:
             run_id=args.run_id,
             prereg_sha=args.prereg_sha,
             exclude=exclude,
+            resume=args.resume,
         )
     else:  # back-compat: no manifest, single or multi template
         for name in template_names:
