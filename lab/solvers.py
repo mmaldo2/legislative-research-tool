@@ -341,6 +341,21 @@ def _safe_err(exc: Exception, limit: int = 300) -> str:
     return f"<agent error: {type(exc).__name__}: {msg}>"
 
 
+def _classify_agent_error(reason: str) -> str:
+    """Map an SDK-raised error message to a result_subtype. The SDK raises BOTH legitimate
+    non-completions AND apparatus failures as 'Claude Code returned an error result: <reason>';
+    they score OPPOSITELY. Fair-shot non-completions (the agent ran out of turns / budget) are KEPT
+    (count against completion -- the agent's reliability); apparatus failures (credit exhaustion,
+    auth, transport) -> 'agent_infra' (infra-EXCLUDED, never scored as 'this arm can't do it').
+    PURE -> hermetically testable."""
+    r = reason.lower()
+    if "maximum number of turns" in r or "max_turns" in r:
+        return "error_max_turns"
+    if "budget" in r or "max cost" in r or "cost limit" in r:
+        return "error_max_budget"
+    return "agent_infra"
+
+
 def _usage_tokens(usage) -> tuple[int | None, int | None]:
     """Pull (input_tokens, output_tokens) from an SDK ResultMessage.usage, which may be a dict or an
     object. Returns (None, None) when absent -> the token-based cost proxy is simply unavailable for
@@ -1255,16 +1270,13 @@ class AgentSolver:
                 "result_subtype": "timeout",
             }
         except Exception as exc:  # noqa: BLE001 — a live failure FAILS the instance, never crashes
-            # an SDK / transport / auth / CREDIT-exhaustion failure is the APPARATUS, not the agent
-            # (query() raised before the agent produced a result_subtype) -> mark infra-excludable
-            # so the lift analysis DROPS the rollout, never scoring a credit/SDK outage as "this arm
-            # can't do the task" (pre45ms's web cells were all-errored from a mid-run credit
-            # exhaustion -- this guard makes that auto-excludable, not a fabricated 0%).
+            # _classify_agent_error splits a fair-shot non-completion (turns/budget -> KEEP) from an
+            # APPARATUS failure (credit/auth/transport -> infra-excluded).
             return NO_ANSWER, {
                 "trajectory": observations,
                 "raw": _safe_err(exc),
                 "latency_ms": (time.monotonic() - started) * 1000,
-                "result_subtype": "agent_infra",
+                "result_subtype": _classify_agent_error(str(exc)),
             }
         finally:
             if saved_key is not None:

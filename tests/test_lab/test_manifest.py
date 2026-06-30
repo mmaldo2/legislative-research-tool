@@ -36,6 +36,23 @@ def test_manifest_load_missing_raises(tmp_path):
         RunManifest.load("absent", tmp_path)
 
 
+def test_classify_agent_error_turns_budget_vs_infra():
+    from lab.solvers import _classify_agent_error
+
+    # fair-shot non-completions (KEEP -- count against completion)
+    assert (
+        _classify_agent_error(
+            "Claude Code returned an error result: Reached maximum number of turns"
+        )
+        == "error_max_turns"
+    )
+    assert _classify_agent_error("exceeded max budget of $3.5") == "error_max_budget"
+    # apparatus failures (infra-EXCLUDED) -- incl. the credit-exhaustion "error result: success"
+    assert _classify_agent_error("Claude Code returned an error result: success") == "agent_infra"
+    assert _classify_agent_error("Connection reset by peer") == "agent_infra"
+    assert _classify_agent_error("401 authentication_error") == "agent_infra"
+
+
 def test_usage_tokens_dict_object_and_none():
     from lab.solvers import _usage_tokens
 
