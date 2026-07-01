@@ -300,6 +300,50 @@ The git commit of THIS doc is the anchor, passed to `ablation --prereg-sha` and 
   caps, cell files) -> the per-cell traces (carry contract/content/fingerprint hashes) ->
   `lift_analysis_pre45.json` (asserts hash-homogeneity; copies the hashes + seeds in).
 
+## REV 4.6 (2026-07-01): RESULTS — `pre45ms` (member_summary powered run)
+Post-hoc results addendum. The pre-registration NUMBERS above are UNCHANGED; the frozen anchor
+`--prereg-sha 9fe4ffbb2871877592c0f008efaae57caa8d5192` is stamped immutably into
+`manifest_pre45ms.json`. This section is a later commit and does not alter the pre-reg. Full machine
+output: `lab/runs/lift_analysis_pre45ms.json`. `lift_pairwise` (`pre45pw`) is PENDING.
+
+**Per-cell (member_summary, n=40, k=3; completion / correct-of-completed):**
+
+| cell | completion | correct | dominant failure |
+|---|---|---|---|
+| `haiku/ours` | 100% | **120/120** | — |
+| `haiku/web` | 5.8% | 0/7 | can't complete the join (113 errored) |
+| `sonnet/ours` | 99.2% | 118/120 | — |
+| `sonnet/web` | 95.0% | 12/114 | **hallucinates** (102 wrong; flip-rate 25%) |
+| `opus/web` | 99.2% | **119/120** | — |
+
+**PRIMARY (cost ratio at accuracy parity, S+H vs F+T = `haiku/ours` vs `opus/web`):** accuracy 2×2
+`[40,0,0,0]` → **parity within Δ=0.10** (McNemar p=1.000, Newcombe diff-CI [−0.088,+0.088]); cost
+ratio **4.24× cheaper** (paired cluster bootstrap, 95% CI **[3.94, 4.56]**, coverage 100%, n=40). The
+headline holds: a small model + our harness matches the frontier model + generic web/code at PERFECT
+accuracy, ~4× cheaper. (`sonnet/ours` vs `opus/web`: also parity, 1.79× cheaper.)
+
+**SECONDARY — controlled same-model lift (S+H − S+T):** LARGE at both tiers, via two distinct failure
+modes. `haiku`: web can't complete (5.8%); on the 7 it finished, ours wins all 7 (`[0,7,0,0]`,
+p=0.016), 3.61× cheaper. `sonnet`: web completes (95%) but **hallucinates** (`[2,38,0,0]`, p=0.000,
+diff-CI [+0.805,+0.986]), 1.81× cheaper.
+
+**Honest framing (the crux):** `opus/web` IS accurate (119/120) — the frontier model CAN do the
+multi-record join with generic tools. So the finding is NOT "web tools are useless"; it is **"generic
+web+code needs a frontier model; the harness lets a small, cheap model match it — the harness
+substitutes for model scale."**
+
+**Integrity:** egress-grep over all 9 web cells CLEAN — the only hit (`legis:`) was a Python variable
+name in an `opus` `run_python` snippet, not the DB credential; credential tokens (`legis_dev`,
+`@localhost`, `:5432`, `psycopg2`, `asyncpg`) all zero. The `--network none` gate held.
+
+**Operational notes (not part of the result):** two drift-guard false positives were fixed live at the
+harness layer without touching any frozen hash — alias↔dated-snapshot (`2900a93`) and the SDK
+`<synthetic>` sentinel (`b54922a`); `lift_analysis.load_run` now triages benign drift and restores the
+true subtype while a genuine foreign model still hard-errors. A mid-run credit exhaustion contaminated
+`sonnet/web` rep1–2 + all `opus/web` (160 `agent_infra` rollouts); those 5 cells were evicted from the
+manifest (backup `manifest_pre45ms.json.bak_precredit`, garbage in `runs/contaminated_pre45ms/`) and
+re-run clean after top-up. Neither issue touched the grading contract or the pre-reg numbers.
+
 ## Sources & References
 - Scope: `docs/scopes/2026-06-29-harness-lift-ablation-scope.md`. Design:
   [[project_condorcet_experimental_design]] (arms, lift, bias defense).
