@@ -21,8 +21,10 @@ Run: PYTHONPATH=. uv run python -m lab.experiments.lift_analysis --run-id <id>
 """
 
 import argparse
+import ast
 import json
 import math
+import re
 from pathlib import Path
 
 import numpy as np
@@ -114,6 +116,42 @@ def boot_ratio_ci(
     )
 
 
+# --- model-drift triage (benign SDK sentinel/alias echo vs a genuine foreign-model swap) ------
+_DRIFT_RE = re.compile(r"<MODEL_DRIFT requested=(\S+) served=(\[[^\]]*\])>")
+
+
+def _model_matches(served: str, pinned: str) -> bool:
+    """Alias<->dated-snapshot of the SAME model are equivalent (mirrors lab.solvers._model_matches;
+    duplicated to avoid importing the SDK-heavy solvers module into the analysis layer)."""
+    return (
+        served == pinned
+        or served.startswith(pinned + "-")
+        or pinned.startswith(served + "-")
+    )
+
+
+def _benign_drift(row: dict) -> tuple[bool, str | None]:
+    """A `model_drift` row is BENIGN iff every REAL served id (dropping `<synthetic>`-style SDK
+    sentinels) is the pinned model or its dated snapshot -- i.e. the pinned model DID serve the
+    rollout and the guard mis-fired. Returns (is_benign, restored_subtype). Fails CLOSED (not
+    benign) if the marker can't be parsed, so a genuine swap can never be reclassified away."""
+    m = _DRIFT_RE.search(row.get("raw", "") or "")
+    if not m:
+        return False, None
+    requested = m.group(1)
+    try:
+        served = ast.literal_eval(m.group(2))
+    except (ValueError, SyntaxError):
+        return False, None
+    real = [s for s in served if s and not s.startswith("<")]
+    if not all(_model_matches(s, requested) for s in real):
+        return False, None
+    # the rollout genuinely completed on the pinned model -> restore its pre-guard subtype the same
+    # way solvers.py derived it (sandbox_infra override, else the completion = success).
+    infra = any(o.get("error_kind") == "sandbox_infra" for o in row.get("trajectory", []))
+    return True, ("sandbox_infra" if infra else "success")
+
+
 # --- trace loading + hash homogeneity --------------------------------------------------------
 def load_run(run_id: str, runs_dir: Path = RUNS_DIR) -> tuple[list[dict], RunManifest]:
     """Load ONLY the cell files the run's manifest enumerates (deterministic provenance, not a
@@ -130,15 +168,25 @@ def load_run(run_id: str, runs_dir: Path = RUNS_DIR) -> tuple[list[dict], RunMan
         raise RuntimeError(
             f"run {run_id!r}: manifest lists no rows ({len(manifest.cell_files)} files)"
         )
-    # MODEL-DRIFT: a rollout whose SERVED model != the pinned snapshot (a silent alias swap, e.g. a
-    # freshly-released Sonnet) corrupts the comparison -> refuse to analyze the run until it is
-    # investigated + the drifted cells re-run. Never silently average a model swap into the result.
+    # MODEL-DRIFT: a rollout whose SERVED model is a genuinely DIFFERENT model (a silent alias swap,
+    # e.g. a fresh Sonnet) corrupts the comparison -> refuse to analyze until investigated + re-run.
+    # But the guard also mis-fires on BENIGN cases: an SDK `<synthetic>` sentinel message, or the
+    # dated snapshot of the pinned alias -- there the pinned model DID serve the rollout, so the
+    # (correctly graded) row is restored to its true subtype rather than blocking the run. A real
+    # foreign model still hard-errors; benign triage fails CLOSED on any unparseable marker.
     drifted = [r for r in rows if r.get("result_subtype") == "model_drift"]
-    if drifted:
-        models = {r["policy"]["model"] for r in drifted}
+    real_drift = []
+    for r in drifted:
+        benign, restored = _benign_drift(r)
+        if benign:
+            r["result_subtype"] = restored
+        else:
+            real_drift.append(r)
+    if real_drift:
+        models = {r["policy"]["model"] for r in real_drift}
         raise RuntimeError(
-            f"run {run_id!r}: {len(drifted)} MODEL-DRIFT rollouts (served model != pinned "
-            f"{models}); refusing to analyze -- investigate + re-run the drifted cells."
+            f"run {run_id!r}: {len(real_drift)} MODEL-DRIFT rollouts (served a FOREIGN model != "
+            f"pinned {models}); refusing to analyze -- investigate + re-run the drifted cells."
         )
     sigs = {
         (

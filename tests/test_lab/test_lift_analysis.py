@@ -151,6 +151,7 @@ def _trace_row(
     refusal=False,
     ch="C1",
     coh="CT1",
+    raw="",
 ):
     return {
         "trace_schema_version": "v1",
@@ -167,7 +168,7 @@ def _trace_row(
         "solver_kind": "agent",
         "answer": {},
         "trajectory": [],
-        "raw": "",
+        "raw": raw,
         "verdict": {
             "passed": True,
             "score": 1.0,
@@ -291,10 +292,11 @@ def test_load_run_missing_manifest(tmp_path):
         la.load_run("nope", runs_dir=tmp_path)
 
 
-def test_load_run_rejects_model_drift(tmp_path):
-    """A served-model swap (e.g. a freshly-released Sonnet aliased in) must HARD-ERROR the analysis,
-    never be silently averaged into the pre-registered comparison."""
+def test_load_run_rejects_foreign_model_drift(tmp_path):
+    """A genuine served-model swap (e.g. a freshly-released Sonnet 5 aliased in) must HARD-ERROR the
+    analysis, never be silently averaged into the pre-registered comparison."""
     mdl = "claude-sonnet-4-6"
+    marker = "<MODEL_DRIFT requested=claude-sonnet-4-6 served=['claude-sonnet-5-20260601']>"
     _write_run(
         tmp_path,
         "drift",
@@ -302,12 +304,55 @@ def test_load_run_rejects_model_drift(tmp_path):
             ("ablation_drift_a.jsonl", [_trace_row("lift.t:1", mdl, "ours")]),
             (
                 "ablation_drift_b.jsonl",
-                [_trace_row("lift.t:2", mdl, "ours", subtype="model_drift")],
+                [_trace_row("lift.t:2", mdl, "ours", subtype="model_drift", raw=marker)],
             ),
         ],
     )
-    with pytest.raises(RuntimeError, match="MODEL-DRIFT"):
+    with pytest.raises(RuntimeError, match="FOREIGN model"):
         la.load_run("drift", runs_dir=tmp_path)
+
+
+def test_load_run_unparseable_drift_fails_closed(tmp_path):
+    """A `model_drift` row whose marker can't be parsed is treated as REAL drift (fail closed) --
+    the benign reclassification must never be reachable without a verified served set."""
+    mdl = "claude-sonnet-4-6"
+    _write_run(
+        tmp_path,
+        "drift",
+        [("ablation_drift_a.jsonl", [_trace_row("lift.t:1", mdl, "ours", subtype="model_drift")])],
+    )
+    with pytest.raises(RuntimeError, match="MODEL-DRIFT|FOREIGN"):
+        la.load_run("drift", runs_dir=tmp_path)
+
+
+def test_load_run_tolerates_benign_drift_and_restores_subtype(tmp_path):
+    """The guard MIS-FIRES on an SDK `<synthetic>` sentinel and on the pinned alias's dated snapshot
+    -- there the pinned model DID serve the (correctly graded) rollout, so the row is restored to
+    its true subtype and analyzed, not blocked."""
+    mdl = "claude-sonnet-4-6"
+    synthetic = (
+        "<MODEL_DRIFT requested=claude-sonnet-4-6 "
+        "served=['<synthetic>', 'claude-sonnet-4-6']>"
+    )
+    snapshot = "<MODEL_DRIFT requested=claude-sonnet-4-6 served=['claude-sonnet-4-6-20250930']>"
+    _write_run(
+        tmp_path,
+        "benign",
+        [
+            (
+                "ablation_benign_a.jsonl",
+                [_trace_row("lift.t:1", mdl, "ours", subtype="model_drift", raw=synthetic)],
+            ),
+            (
+                "ablation_benign_b.jsonl",
+                [_trace_row("lift.t:2", mdl, "ours", subtype="model_drift", raw=snapshot)],
+            ),
+        ],
+    )
+    rows, _ = la.load_run("benign", runs_dir=tmp_path)  # does NOT raise
+    # both benign drifts restored to `success` (they completed with a passing verdict)
+    assert [r["result_subtype"] for r in rows] == ["success", "success"]
+    assert all(la._rep_correct(r) for r in rows)
 
 
 def test_refusal_rows_excluded_from_pairing(tmp_path):

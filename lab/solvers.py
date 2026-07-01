@@ -1246,7 +1246,9 @@ class AgentSolver:
             async for msg in query(prompt=inst.prompt, options=options):  # PROMPT ONLY
                 if isinstance(msg, AssistantMessage):
                     served = getattr(msg, "model", None)
-                    if served:
+                    # skip SDK sentinels like `<synthetic>` (locally-generated continuation
+                    # messages, not model routing) -- only real `claude-*` ids gate drift.
+                    if served and not served.startswith("<"):
                         served_models.add(served)
                     for b in msg.content:
                         if isinstance(b, TextBlock):
