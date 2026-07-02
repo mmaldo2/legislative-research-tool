@@ -341,6 +341,49 @@ def _safe_err(exc: Exception, limit: int = 300) -> str:
     return f"<agent error: {type(exc).__name__}: {msg}>"
 
 
+def _classify_agent_error(reason: str) -> str:
+    """Map an SDK-raised error message to a result_subtype. The SDK raises BOTH legitimate
+    non-completions AND apparatus failures as 'Claude Code returned an error result: <reason>';
+    they score OPPOSITELY. Fair-shot non-completions (the agent ran out of turns / budget) are KEPT
+    (count against completion -- the agent's reliability); apparatus failures (credit exhaustion,
+    auth, transport) -> 'agent_infra' (infra-EXCLUDED, never scored as 'this arm can't do it').
+    PURE -> hermetically testable."""
+    r = reason.lower()
+    if "maximum number of turns" in r or "max_turns" in r:
+        return "error_max_turns"
+    if "budget" in r or "max cost" in r or "cost limit" in r:
+        return "error_max_budget"
+    return "agent_infra"
+
+
+def _model_matches(served: str, pinned: str) -> bool:
+    """Is the SDK-served model id the SAME model as the pinned one? A friendly alias
+    (`claude-haiku-4-5`) and its dated snapshot (`claude-haiku-4-5-20251001`) are equivalent -- the
+    snapshot extends the alias with a `-<date>` suffix -- so accept either direction. A genuine swap
+    to a different model (`claude-sonnet-4-6`, a fresh `claude-sonnet-5-...`) shares no such prefix
+    and is rejected. The `-` separator stops `claude-haiku-4-5` matching `claude-haiku-4-50`.
+    PURE -> hermetically testable."""
+    return (
+        served == pinned
+        or served.startswith(pinned + "-")
+        or pinned.startswith(served + "-")
+    )
+
+
+def _usage_tokens(usage) -> tuple[int | None, int | None]:
+    """Pull (input_tokens, output_tokens) from an SDK ResultMessage.usage, which may be a dict or an
+    object. Returns (None, None) when absent -> the token-based cost proxy is simply unavailable for
+    that rollout (and lift_analysis reports reduced cost-coverage). Never raises."""
+    if usage is None:
+        return None, None
+
+    def _get(key: str):
+        val = usage.get(key) if isinstance(usage, dict) else getattr(usage, key, None)
+        return val if isinstance(val, int) else None
+
+    return _get("input_tokens"), _get("output_tokens")
+
+
 _AGENT_SYSTEM_PROMPT = (
     "You answer factual questions about U.S. Congressional roll-call votes. Use the available "
     "retrieval tools to gather the relevant vote records, then COMPUTE the answer the question "
@@ -1192,12 +1235,21 @@ class AgentSolver:
         started = time.monotonic()
         text_parts: list[str] = []
         cost = None
+        usage = (
+            None  # ResultMessage.usage -> token fallback when total_cost_usd is null (subscription)
+        )
         result_subtype = None  # P7: SDK stop reason — tells truncation apart from a wrong answer
+        served_models: set[str] = set()  # the model the SDK ACTUALLY served (drift guard)
 
         async def _drive():
-            nonlocal cost, result_subtype
+            nonlocal cost, usage, result_subtype
             async for msg in query(prompt=inst.prompt, options=options):  # PROMPT ONLY
                 if isinstance(msg, AssistantMessage):
+                    served = getattr(msg, "model", None)
+                    # skip SDK sentinels like `<synthetic>` (locally-generated continuation
+                    # messages, not model routing) -- only real `claude-*` ids gate drift.
+                    if served and not served.startswith("<"):
+                        served_models.add(served)
                     for b in msg.content:
                         if isinstance(b, TextBlock):
                             text_parts.append(b.text)
@@ -1217,20 +1269,34 @@ class AgentSolver:
                             builtin_by_id[b.tool_use_id]["result"] = b.content
                 elif isinstance(msg, ResultMessage):
                     cost = getattr(msg, "total_cost_usd", None)
+                    usage = getattr(msg, "usage", None)
                     result_subtype = getattr(msg, "subtype", None)
 
         try:
             # per-rollout wall-clock backstop (a hung WebSearch must fail this instance, not stall
-            # the matrix); a TimeoutError is an Exception → falls into the NO_ANSWER arm below.
+            # the matrix).
             if self.timeout_s is not None:
                 await asyncio.wait_for(_drive(), timeout=self.timeout_s)
             else:
                 await _drive()
-        except Exception as exc:  # noqa: BLE001 — a live failure FAILS the instance, never crashes
+        except TimeoutError as exc:
+            # the wall-clock fired: the agent RAN but did not finish in time -- a legitimate
+            # non-completion (the agent's reliability), NOT an apparatus failure. Scored as a
+            # non-success rollout (counts against completion), not excluded.
             return NO_ANSWER, {
                 "trajectory": observations,
                 "raw": _safe_err(exc),
                 "latency_ms": (time.monotonic() - started) * 1000,
+                "result_subtype": "timeout",
+            }
+        except Exception as exc:  # noqa: BLE001 — a live failure FAILS the instance, never crashes
+            # _classify_agent_error splits a fair-shot non-completion (turns/budget -> KEEP) from an
+            # APPARATUS failure (credit/auth/transport -> infra-excluded).
+            return NO_ANSWER, {
+                "trajectory": observations,
+                "raw": _safe_err(exc),
+                "latency_ms": (time.monotonic() - started) * 1000,
+                "result_subtype": _classify_agent_error(str(exc)),
             }
         finally:
             if saved_key is not None:
@@ -1246,11 +1312,25 @@ class AgentSolver:
         # instead of scoring the agent's downstream refusal/guess as a real miss (panel blocker).
         if any(o.get("error_kind") == "sandbox_infra" for o in observations):
             result_subtype = "sandbox_infra"
+        # MODEL-DRIFT GUARD: the SDK must serve the pinned model. A friendly alias and its dated
+        # snapshot are the SAME model (the API non-deterministically echoes either
+        # `claude-haiku-4-5` or `claude-haiku-4-5-20251001` across a rollout's AssistantMessages),
+        # so accept the snapshot of the pin via _model_matches; only a genuine swap to a DIFFERENT
+        # model (e.g. a fresh Sonnet) drifts. INVALIDATE loudly on real drift (load_run hard-errors
+        # on model_drift) so a swap can't skew the pinned numbers; served model recorded in `raw`.
+        served = {m for m in served_models if m}
+        drifted = {m for m in served if not _model_matches(m, self.model)}
+        if drifted:
+            result_subtype = "model_drift"
+            text_parts.insert(0, f"<MODEL_DRIFT requested={self.model} served={sorted(served)}>")
+        in_tok, out_tok = _usage_tokens(usage)
         extras = {
             "trajectory": observations,
             "raw": "\n".join(text_parts),
             "latency_ms": latency_ms,
             "cost": cost,
+            "input_tokens": in_tok,  # token fallback -> a token x public-price cost proxy in
+            "output_tokens": out_tok,  # lift_analysis when total_cost_usd is null (subscription)
             "result_subtype": result_subtype,
         }
         return answer, extras

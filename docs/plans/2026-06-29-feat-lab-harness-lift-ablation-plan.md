@@ -251,7 +251,135 @@ rollout + investigate. Before any PUBLISHED number: OS egress isolation + **file
 
 **Strong-baseline check.** Before trusting "parity at lower cost," run a **WebFetch / higher-cap /
 browser sensitivity arm** on a ≥10-instance sample of one task; if S+H's cost/reliability edge
-survives the stronger baseline, the `fetch_url` caps weren't manufacturing it.
+survives the stronger baseline, the `fetch_url` caps weren't manufacturing it. (Largely SATISFIED by
+the egress work: under the 32MB fetch-to-mount cap the web arm reaches VoteView and hits 100% on
+member_summary — not cap-starved; see REV 4.5.)
+
+**REV 4.4 (2026-06-29): the egress integrity GATE is built + merged (PR #52 + #53, main @ f0bafd3).**
+`run_python` executes in a `--network none` Docker container (zero egress to our PG/API); the web arm
+reaches bulk public data ONLY via the SSRF-guarded `fetch_url` streamed to a RO `/sandbox/inputs/`
+mount (cap 32MB, sized for the ~14.6MB H118 votes matrix; `--memory 2g`). security-sentinel passed
+(M2 fixed; M1 = accepted residual). Re-pilot validated the gate is NEUTRAL (web 33%->100%, no drop;
+mechanical trace-grep EMPTY on live web traces). The "OS egress isolation + filesystem confinement"
+the rev-4 integrity clause demanded before publishing is now DONE. DB-cred rotation remains deferred
+(deny-by-default egress already blocks the path).
+
+**REV 4.5 (2026-06-29): FROZEN powered-run pre-registration (after the n=6 all-cells smoke `smoke1`).**
+The git commit of THIS doc is the anchor, passed to `ablation --prereg-sha` and stamped into
+`manifest_<run_id>.json`; any change after a powered cell runs invalidates the result.
+- **Templates:** `lift_member_summary` + `lift_pairwise` (118th House; pairwise JOIN gold cross-checked
+  8/8 vs an independent recompute, `lift_pairwise_validate.py`). Reported PER TEMPLATE (never pooled).
+- **Instances:** **n = 40** answerable per template, **seed = 42**, the SAME instance_ids in every cell
+  (the pairing). Refusal twins are filtered before cells run (`ablation.py` answerable-only), so the
+  over-refusal signal is read from the answerable arm (`decision_correct==0`), not refusal rows.
+- **Cells (5):** `haiku/sonnet x {ours, web}` + `opus x web`; `opus x ours` EXCLUDED (goal #2) via
+  `--exclude opus:ours`. Backend **agent-sdk**, **SEQUENTIAL** (the `ANTHROPIC_API_KEY` pop is a
+  process-global race). Models pinned: `claude-haiku-4-5`, `claude-sonnet-4-6`, `claude-opus-4-8`.
+- **Rollouts:** **k = 3** per instance per cell. **As-run caps (REV 4.4):** `max_turns` 20 (ours) /
+  30 (web), `max_budget_usd` $3.5, `timeout_s` 300; sandbox image digest-pinned, fetch cap 32MB,
+  `--memory 2g`.
+- **Exclusion:** keep `result_subtype == "success"` for the conditional/paired population; report BOTH
+  the **conditional** (complete-case) and **ITT** (truncation = wrong) bounds + the **completion rate**
+  (Wilson) and **flip-rate**. PAIRWISE cost exclusion (drop an instance from the cost vectors if EITHER
+  arm's cost is null).
+- **Stats (`lift_analysis.py`; estimation-first):** exact-binomial McNemar; **Newcombe (1998) method-10**
+  paired-difference CI = the PARITY interval; Wilson per-proportion; **paired cluster bootstrap** of the
+  cost ratio, **B = 10000**, the bootstrap seed pinned in `lift_analysis_<run_id>.json` (the rollout
+  seed is the manifest's). Majority-vote rep aggregation (post-exclusion 1-1 tie -> incorrect). **Holm
+  deferred** (no family-wise claim registered).
+- **Parity margin Δ = 0.10** (NOT 0.05): the smoke confirms even n=40 with both arms at ceiling gives a
+  punch-up parity CI of ~±0.09; δ=0.05 is unachievable, and claiming it would be dishonest (Card 2020).
+- **PRIMARY endpoint (one, no multiplicity correction):** the **cost ratio at accuracy parity, S+H vs
+  F+T** on the designated cell **`haiku/ours` vs `opus/web`, member_summary**. SECONDARY (reported with
+  CIs, labeled): the per-model S+H−S+T controlled lift, and pairwise.
+- **Smoke evidence (`smoke1`, n=6, k=1; the pilot motivating these numbers):** punch-up = `[6,0,0,0]`
+  in all 4 cells (parity at ceiling) at 2-10x lower cost; lift = sonnet-web hallucinates the join
+  (member_summary 0/6, McNemar p=0.031 ALREADY) and haiku-web can't complete (0-17%). Integrity-grep
+  clean. Envelope ~$650.
+- **Provenance chain:** pre-reg doc SHA -> `--prereg-sha` -> `manifest_pre45.json` (+ rollout seed,
+  caps, cell files) -> the per-cell traces (carry contract/content/fingerprint hashes) ->
+  `lift_analysis_pre45.json` (asserts hash-homogeneity; copies the hashes + seeds in).
+
+## REV 4.6 (2026-07-01): RESULTS — `pre45ms` (member_summary powered run)
+Post-hoc results addendum. The pre-registration NUMBERS above are UNCHANGED; the frozen anchor
+`--prereg-sha 9fe4ffbb2871877592c0f008efaae57caa8d5192` is stamped immutably into
+`manifest_pre45ms.json`. This section is a later commit and does not alter the pre-reg. Full machine
+output: `lab/runs/lift_analysis_pre45ms.json`. `lift_pairwise` (`pre45pw`) results below.
+
+**Per-cell (member_summary, n=40, k=3; completion / correct-of-completed):**
+
+| cell | completion | correct | dominant failure |
+|---|---|---|---|
+| `haiku/ours` | 100% | **120/120** | — |
+| `haiku/web` | 5.8% | 0/7 | can't complete the join (113 errored) |
+| `sonnet/ours` | 99.2% | 118/120 | — |
+| `sonnet/web` | 95.0% | 12/114 | **hallucinates** (102 wrong; flip-rate 25%) |
+| `opus/web` | 99.2% | **119/120** | — |
+
+**PRIMARY (cost ratio at accuracy parity, S+H vs F+T = `haiku/ours` vs `opus/web`):** accuracy 2×2
+`[40,0,0,0]` → **parity within Δ=0.10** (McNemar p=1.000, Newcombe diff-CI [−0.088,+0.088]); cost
+ratio **4.24× cheaper** (paired cluster bootstrap, 95% CI **[3.94, 4.56]**, coverage 100%, n=40). The
+headline holds: a small model + our harness matches the frontier model + generic web/code at PERFECT
+accuracy, ~4× cheaper. (`sonnet/ours` vs `opus/web`: also parity, 1.79× cheaper.)
+
+**SECONDARY — controlled same-model lift (S+H − S+T):** LARGE at both tiers, via two distinct failure
+modes. `haiku`: web can't complete (5.8%); on the 7 it finished, ours wins all 7 (`[0,7,0,0]`,
+p=0.016), 3.61× cheaper. `sonnet`: web completes (95%) but **hallucinates** (`[2,38,0,0]`, p=0.000,
+diff-CI [+0.805,+0.986]), 1.81× cheaper.
+
+**Honest framing (the crux):** `opus/web` IS accurate (119/120) — the frontier model CAN do the
+multi-record join with generic tools. So the finding is NOT "web tools are useless"; it is **"generic
+web+code needs a frontier model; the harness lets a small, cheap model match it — the harness
+substitutes for model scale."**
+
+**Integrity:** egress-grep over all 9 web cells CLEAN — the only hit (`legis:`) was a Python variable
+name in an `opus` `run_python` snippet, not the DB credential; credential tokens (`legis_dev`,
+`@localhost`, `:5432`, `psycopg2`, `asyncpg`) all zero. The `--network none` gate held.
+
+**Operational notes (not part of the result):** two drift-guard false positives were fixed live at the
+harness layer without touching any frozen hash — alias↔dated-snapshot (`2900a93`) and the SDK
+`<synthetic>` sentinel (`b54922a`); `lift_analysis.load_run` now triages benign drift and restores the
+true subtype while a genuine foreign model still hard-errors. A mid-run credit exhaustion contaminated
+`sonnet/web` rep1–2 + all `opus/web` (160 `agent_infra` rollouts); those 5 cells were evicted from the
+manifest (backup `manifest_pre45ms.json.bak_precredit`, garbage in `runs/contaminated_pre45ms/`) and
+re-run clean after top-up. Neither issue touched the grading contract or the pre-reg numbers.
+
+### `pre45pw` — lift_pairwise powered run (REPLICATES member_summary)
+Same frozen anchor/manifest discipline (`manifest_pre45pw.json`). Full output:
+`lab/runs/lift_analysis_pre45pw.json`. Run survived a mid-run machine reboot (monitor swap) — the
+crash-safe `--resume` manifest reconstructed all completed cells; only one thrashing haiku_web partial
+was lost (orphan in `runs/crashed_pre45pw/`). Egress-grep over all 9 web cells CLEAN.
+
+**Per-cell (pairwise, n=40, k=3; completion / correct-of-completed):**
+
+| cell | completion | correct | dominant failure |
+|---|---|---|---|
+| `haiku/ours` | 100% | **120/120** | — |
+| `haiku/web` | 15.0% | 0/18 | can't complete (102 errored) |
+| `sonnet/ours` | 100% | **119/119** | — |
+| `sonnet/web` | 98.3% | 19/118 | **hallucinates** (99 wrong; flip 17.5%) |
+| `opus/web` | 100% | **114/120** | 6 hallucinations |
+
+**PRIMARY (`haiku/ours` vs `opus/web`):** accuracy 2×2 `[38,2,0,0]` — haiku/ours won 2 discordant pairs,
+opus/web won 0 (McNemar p=0.500, diff-CI **[−0.045,+0.165]**). haiku/ours is **non-inferior / slightly
+ahead** (unlike member_summary's tight two-sided parity, the upper CI 0.165 exceeds Δ=0.10 because ours
+*leads*, not lags). Cost **4.20× cheaper** (95% CI [3.72, 4.71]). Headline replicates: small+harness
+matches-or-beats frontier+web at ~4× lower cost. (`sonnet/ours` vs `opus/web`: same 2×2, 1.55× cheaper.)
+
+**SECONDARY — same-model lift:** LARGE at both tiers again, same two failure modes. `haiku`: web can't
+complete (15%); ours wins all 14 head-to-heads (`[0,14,0,0]`, p=0.000), 2.70× cheaper. `sonnet`: web
+completes (98%) but **hallucinates** (`[4,36,0,0]`, p=0.000, diff-CI [+0.743,+0.960]), 1.26× cheaper.
+`opus/web` accurate (114/120) — reaffirms the harness substitutes for model scale, both templates.
+
+### MAX_TURNS robustness census (decided with user 2026-07-01)
+Are the web arm's many `error_max_turns` a turn-cap artifact (near-complete, need more turns) or doomed
+thrash? Census over **ALL 224 truncated web rollouts** (`error_max_turns`/`timeout`) across BOTH runs:
+**222 (99.1%) NEVER reached `submit_answer`**, median **14** redundant `fetch_url` calls (max 80). The
+cap cuts off flailing, not near-misses. Corroborating: on the SAME instances, `opus/web` submits a
+correct answer in 7–9 tool calls within the identical 30-turn web cap (and the web cap 30 > ours 20),
+and `sonnet/web`'s failures are confident hallucination, not truncation. So the claim is framed as
+"less reliable/costlier within a disclosed, generous budget," NOT "incapable." A higher-cap sensitivity
+probe (~5 haiku_web @ 60 turns) is available but not run — the census + opus anchor already settle it.
 
 ## Sources & References
 - Scope: `docs/scopes/2026-06-29-harness-lift-ablation-scope.md`. Design:
