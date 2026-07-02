@@ -304,7 +304,7 @@ The git commit of THIS doc is the anchor, passed to `ablation --prereg-sha` and 
 Post-hoc results addendum. The pre-registration NUMBERS above are UNCHANGED; the frozen anchor
 `--prereg-sha 9fe4ffbb2871877592c0f008efaae57caa8d5192` is stamped immutably into
 `manifest_pre45ms.json`. This section is a later commit and does not alter the pre-reg. Full machine
-output: `lab/runs/lift_analysis_pre45ms.json`. `lift_pairwise` (`pre45pw`) is PENDING.
+output: `lab/runs/lift_analysis_pre45ms.json`. `lift_pairwise` (`pre45pw`) results below.
 
 **Per-cell (member_summary, n=40, k=3; completion / correct-of-completed):**
 
@@ -343,6 +343,43 @@ true subtype while a genuine foreign model still hard-errors. A mid-run credit e
 `sonnet/web` rep1–2 + all `opus/web` (160 `agent_infra` rollouts); those 5 cells were evicted from the
 manifest (backup `manifest_pre45ms.json.bak_precredit`, garbage in `runs/contaminated_pre45ms/`) and
 re-run clean after top-up. Neither issue touched the grading contract or the pre-reg numbers.
+
+### `pre45pw` — lift_pairwise powered run (REPLICATES member_summary)
+Same frozen anchor/manifest discipline (`manifest_pre45pw.json`). Full output:
+`lab/runs/lift_analysis_pre45pw.json`. Run survived a mid-run machine reboot (monitor swap) — the
+crash-safe `--resume` manifest reconstructed all completed cells; only one thrashing haiku_web partial
+was lost (orphan in `runs/crashed_pre45pw/`). Egress-grep over all 9 web cells CLEAN.
+
+**Per-cell (pairwise, n=40, k=3; completion / correct-of-completed):**
+
+| cell | completion | correct | dominant failure |
+|---|---|---|---|
+| `haiku/ours` | 100% | **120/120** | — |
+| `haiku/web` | 15.0% | 0/18 | can't complete (102 errored) |
+| `sonnet/ours` | 100% | **119/119** | — |
+| `sonnet/web` | 98.3% | 19/118 | **hallucinates** (99 wrong; flip 17.5%) |
+| `opus/web` | 100% | **114/120** | 6 hallucinations |
+
+**PRIMARY (`haiku/ours` vs `opus/web`):** accuracy 2×2 `[38,2,0,0]` — haiku/ours won 2 discordant pairs,
+opus/web won 0 (McNemar p=0.500, diff-CI **[−0.045,+0.165]**). haiku/ours is **non-inferior / slightly
+ahead** (unlike member_summary's tight two-sided parity, the upper CI 0.165 exceeds Δ=0.10 because ours
+*leads*, not lags). Cost **4.20× cheaper** (95% CI [3.72, 4.71]). Headline replicates: small+harness
+matches-or-beats frontier+web at ~4× lower cost. (`sonnet/ours` vs `opus/web`: same 2×2, 1.55× cheaper.)
+
+**SECONDARY — same-model lift:** LARGE at both tiers again, same two failure modes. `haiku`: web can't
+complete (15%); ours wins all 14 head-to-heads (`[0,14,0,0]`, p=0.000), 2.70× cheaper. `sonnet`: web
+completes (98%) but **hallucinates** (`[4,36,0,0]`, p=0.000, diff-CI [+0.743,+0.960]), 1.26× cheaper.
+`opus/web` accurate (114/120) — reaffirms the harness substitutes for model scale, both templates.
+
+### MAX_TURNS robustness census (decided with user 2026-07-01)
+Are the web arm's many `error_max_turns` a turn-cap artifact (near-complete, need more turns) or doomed
+thrash? Census over **ALL 224 truncated web rollouts** (`error_max_turns`/`timeout`) across BOTH runs:
+**222 (99.1%) NEVER reached `submit_answer`**, median **14** redundant `fetch_url` calls (max 80). The
+cap cuts off flailing, not near-misses. Corroborating: on the SAME instances, `opus/web` submits a
+correct answer in 7–9 tool calls within the identical 30-turn web cap (and the web cap 30 > ours 20),
+and `sonnet/web`'s failures are confident hallucination, not truncation. So the claim is framed as
+"less reliable/costlier within a disclosed, generous budget," NOT "incapable." A higher-cap sensitivity
+probe (~5 haiku_web @ 60 turns) is available but not run — the census + opus anchor already settle it.
 
 ## Sources & References
 - Scope: `docs/scopes/2026-06-29-harness-lift-ablation-scope.md`. Design:
